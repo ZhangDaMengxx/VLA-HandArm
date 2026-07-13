@@ -1,0 +1,27 @@
+# ---- 第三方依赖(单独下载,不入库)----
+/dex-retargeting-main/
+/dex-urdf-main/
+/pinocchio-kinematics-lite-main/
+/pyAgxArm-master/
+/egozero-main/
+/xr_teleoperate-main/
+/unitree_sdk2-main/
+*.zip
+*:Zone.Identifier
+
+# ---- 生成物 / 训练输出(可重建,不入库)----
+/outputs/
+sim/out/
+# build_nero_inspire.py 生成(含绝对路径,换机需重建)
+sim/assets/nero_inspire_right.urdf
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 编辑器/系统 / 工具 ----
+.vscode/
+.idea/
+.DS_Store
+.claude/

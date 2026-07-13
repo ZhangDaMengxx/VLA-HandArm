@@ -1,0 +1,20 @@
+retargeting:
+  type: vector
+  urdf_path: inspire_hand/inspire_hand_right.urdf
+
+  # Same actuated joints as the original config (controlled comparison)
+  target_joint_names: [ 'pinky_proximal_joint', 'ring_proximal_joint', 'middle_proximal_joint', 'index_proximal_joint',
+                        'thumb_proximal_pitch_joint', 'thumb_proximal_yaw_joint' ]
+
+  # Shadow-style: 5 fingertip vectors + 5 middle/PIP vectors (10 total), all from base.
+  target_origin_link_names: [ "base", "base", "base", "base", "base",
+                              "base", "base", "base", "base", "base" ]
+  target_task_link_names: [ "thumb_tip",  "index_tip", "middle_tip", "ring_tip", "pinky_tip",
+                            "thumb_intermediate", "index_intermediate", "middle_intermediate", "ring_intermediate", "pinky_intermediate" ]
+  scaling_factor: 1.15
+
+  # Human side: tips (4,8,12,16,20) + PIP/middle joints (2,6,10,14,18), mirroring shadow_hand_right.yml.
+  target_link_human_indices: [ [ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ],
+                               [ 4, 8, 12, 16, 20, 2, 6, 10, 14, 18 ] ]
+
+  low_pass_alpha: 0.2

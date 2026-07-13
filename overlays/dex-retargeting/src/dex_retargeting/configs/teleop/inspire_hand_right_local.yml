@@ -1,0 +1,36 @@
+# Inspire right hand — "local origin" retargeting.
+#
+# Fixes the open/close amplitude problem of the shipped inspire_hand_right.yml:
+# with a single shared "base" origin for all 5 fingertip vectors, one global
+# scaling_factor cannot fit five fingers of different lengths at once. The short,
+# edge-mounted PINKY loses out and stays stuck ~half-curled (never opens flat);
+# the ring is mildly affected too.
+#
+# Here each of the 4 fingers uses ITS OWN MCP link as the vector origin
+# (index_proximal / middle_proximal / ...), so the vector is the local finger
+# shape MCP->tip, independent of the palm offset and of the other fingers.
+# Result on the test clip: pinky proximal range 37.7..81.9 -> 10.4..73.5 deg
+# (now opens fully), ring 17.9.. -> 11.1.., index/middle ~unchanged.
+#
+# The THUMB keeps the "base" origin (human wrist) because its opposition reach
+# across the palm depends on it — a local thumb origin made the thumb worse.
+# Vector order below is [thumb, index, middle, ring, pinky].
+retargeting:
+  type: vector
+  urdf_path: inspire_hand/inspire_hand_right.urdf
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: [ 'pinky_proximal_joint', 'ring_proximal_joint', 'middle_proximal_joint', 'index_proximal_joint',
+                        'thumb_proximal_pitch_joint', 'thumb_proximal_yaw_joint' ]
+  # thumb origin = base (palm); each finger origin = its own MCP link
+  target_origin_link_names: [ "base", "index_proximal", "middle_proximal", "ring_proximal", "pinky_proximal" ]
+  target_task_link_names:   [ "thumb_tip", "index_tip", "middle_tip", "ring_tip", "pinky_tip" ]
+  scaling_factor: 1.15
+
+  # Source refers to the retargeting input, which usually corresponds to the human hand
+  # row0 = origin human keypoint (wrist=0 for thumb, each finger's MCP for the fingers)
+  # row1 = task   human keypoint (fingertips)
+  target_link_human_indices: [ [ 0, 5, 9, 13, 17 ], [ 4, 8, 12, 16, 20 ] ]
+
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2
