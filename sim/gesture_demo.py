@@ -13,7 +13,7 @@ from pinocchio.visualize import MeshcatVisualizer
 sys.path.insert(0, str(Path(__file__).parent))
 from gestures import GESTURES
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 urdf = str(REPO / "sim/assets/nero_inspire_right.urdf")
 
 Q_HOME_ARM = {

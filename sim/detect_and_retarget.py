@@ -8,18 +8,17 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
-DEX = REPO / "dex-retargeting-main/dex-retargeting-main"
-sys.path.insert(0, str(DEX / "example/vector_retargeting"))
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # sim/(vendored detector)
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 from single_hand_detector import SingleHandDetector
 
-CFG = DEX / "src/dex_retargeting/configs/teleop/inspire_hand_right_local.yml"
-URDF_DIR = DEX / "assets/robots/hands"
+CFG = REPO / "configs/inspire_hand_right_local.yml"
+URDF_DIR = REPO / "assets"
 OUT = REPO / "sim/out/hand_traj.pkl"
 
-vids = sorted(glob.glob(str(DEX / "example/vector_retargeting/data/*.mp4")))
+vids = sorted(glob.glob(str(REPO / "data/*.mp4")))
 if not vids:
     vids = sorted(glob.glob(str(REPO / "**/*.mp4"), recursive=True))
 assert vids, "no mp4 found"

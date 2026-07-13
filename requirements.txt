@@ -1,0 +1,17 @@
+# Python 3.10 环境依赖(注释为本机测试通过的版本)
+# 装法示例:pip install -r requirements.txt
+#   pinocchio 的 PyPI 包名是 pin;也可用 conda install -c conda-forge pinocchio
+mujoco>=3.8          # 3.8.1  仿真/URDF 加载
+pin>=3.0             # 4.0.0   pinocchio,FK/IK(sim/nero_kin.py)+ MeshCat 可视化
+dex_retargeting      #         手部重定向(RetargetingConfig);SingleHandDetector 已 vendored 进 sim/
+mediapipe>=0.10      # 0.10.14 人手关键点检测
+lerobot>=0.4         # 0.4.4   LeRobotDataset(数据集读写)
+scipy                #         Savitzky-Golay 平滑 + 旋转四元数
+opencv-python        #         读视频
+meshcat              #         浏览器 3D 查看器
+numpy>=2             # 2.2.6
+torch                #         lerobot dataloader
+
+# 说明:
+# - assets/(URDF+网格)、configs/(重定向配置)、data/(示例视频)已内置在仓库里,无需第三方仓库。
+# - 第三方仓库(dex-retargeting/pinocchio-kinematics-lite 等)只有 overlays/ 里的可视化器和真机部署(pyAgxArm)才用到。

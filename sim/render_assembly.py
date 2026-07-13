@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import mujoco
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 TARGETS = {
     "rm75_inspire": REPO / ("dex-retargeting-main/dex-retargeting-main/"
                             "assets/robots/assembly/rm75_inspire/rm75_inspire_right_hand.urdf"),

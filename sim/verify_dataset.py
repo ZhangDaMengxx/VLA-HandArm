@@ -5,7 +5,7 @@ os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 from pathlib import Path
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-ROOT = Path("/home/zhang123/ros2_ws/lerobotTest/sim/out/lerobot_ds")
+ROOT = Path(__file__).resolve().parents[1] / "sim/out/lerobot_ds"
 ds = LeRobotDataset("local/nero_inspire_handdemo", root=str(ROOT))
 print("len(ds):", len(ds))
 for a in ["num_frames", "num_episodes", "total_frames", "total_episodes"]:

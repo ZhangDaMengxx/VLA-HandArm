@@ -14,10 +14,10 @@ import numpy as np
 from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation as Rot
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
-PKL_SRC = REPO / "pinocchio-kinematics-lite-main/pinocchio-kinematics-lite-main/src"
-sys.path.insert(0, str(PKL_SRC))
-from pinocchio_kinematics_lite import NeroKinematics
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # sim/(nero_kin)
+from nero_kin import NeroKin
+NERO_URDF = REPO / "assets/nero/nero_description.urdf"
 
 WIN, POLY = 11, 3   # SavGol 窗口(奇数帧)/ 多项式阶。窗口越大越平滑
 Q_HOME_ARM = np.array([1.2635, 0.9302, 2.6464, 1.7779, 1.0898, 0.6034, -0.6634])
@@ -46,8 +46,8 @@ quats_s /= np.linalg.norm(quats_s, axis=1, keepdims=True)
 Rs = Rot.from_quat(quats_s).as_matrix()
 
 # 2. IK(平滑朝向,位置锚定,热启动)
-kin = NeroKinematics()
-anchor = np.asarray(kin.forward_kinematics(Q_HOME_ARM))
+kin = NeroKin(NERO_URDF)
+anchor = kin.fk(Q_HOME_ARM)
 aR, ap = anchor[:3, :3], anchor[:3, 3]
 R0 = Rs[0]
 q_raw = np.zeros((F, 7))
@@ -56,11 +56,9 @@ ok = 0
 for f in range(F):
     Rt = (Rs[f] @ R0.T) @ aR
     Tt = np.eye(4); Tt[:3, :3] = Rt; Tt[:3, 3] = ap
-    res = kin.inverse_kinematics(Tt, q_init=prev)
-    if res.q is not None:
-        prev = np.asarray(res.q)
-        if res.success:
-            ok += 1
+    prev, good = kin.ik(Tt, prev)
+    if good:
+        ok += 1
     q_raw[f] = prev
 
 # 3. SavGol 臂关节 + 手指

@@ -3,7 +3,7 @@ import pickle
 from pathlib import Path
 import numpy as np
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 R = pickle.load(open(REPO / "sim/out/robot_traj.pkl", "rb"))
 arm = np.asarray(R["arm"])     # (F,7) rad
 hand = np.asarray(R["hand"])   # (F,12) rad

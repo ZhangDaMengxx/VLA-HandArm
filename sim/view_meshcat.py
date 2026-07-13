@@ -10,7 +10,7 @@ import numpy as np
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 urdf = sys.argv[1] if len(sys.argv) > 1 else str(REPO / "sim/assets/nero_inspire_right.urdf")
 
 # NERO 7 关节初始姿态:法兰伸出轴朝世界 +z(IK 求得),平贴手指即竖直朝上

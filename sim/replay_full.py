@@ -11,7 +11,7 @@ import numpy as np
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 urdf = str(REPO / "sim/assets/nero_inspire_right.urdf")
 
 with open(REPO / "sim/out/robot_traj.pkl", "rb") as f:

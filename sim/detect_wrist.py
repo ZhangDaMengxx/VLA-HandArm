@@ -10,20 +10,18 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
-DEX = REPO / "dex-retargeting-main/dex-retargeting-main"
-sys.path.insert(0, str(DEX / "example/vector_retargeting"))
-sys.path.insert(0, str(REPO / "sim"))
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # sim/(vendored detector + estimate_wrist)
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 from single_hand_detector import SingleHandDetector
 from estimate_wrist import estimate_wrist_pose
 
-CFG = DEX / "src/dex_retargeting/configs/teleop/inspire_hand_right_local.yml"
-URDF_DIR = DEX / "assets/robots/hands"
+CFG = REPO / "configs/inspire_hand_right_local.yml"
+URDF_DIR = REPO / "assets"
 OUT = REPO / "sim/out/full_traj.pkl"
 
-vids = sorted(glob.glob(str(DEX / "example/vector_retargeting/data/*.mp4")))
+vids = sorted(glob.glob(str(REPO / "data/*.mp4")))
 video = vids[0]
 print("video:", video)
 

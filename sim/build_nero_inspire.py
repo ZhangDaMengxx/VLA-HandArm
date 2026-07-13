@@ -11,11 +11,9 @@ from pathlib import Path
 
 import mujoco
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
-NERO = REPO / ("pinocchio-kinematics-lite-main/pinocchio-kinematics-lite-main/"
-               "src/pinocchio_kinematics_lite/assets/nero/nero_description.urdf")
-INSP = REPO / ("dex-retargeting-main/dex-retargeting-main/"
-               "assets/robots/hands/inspire_hand/inspire_hand_right.urdf")
+REPO = Path(__file__).resolve().parents[1]
+NERO = REPO / "assets/nero/nero_description.urdf"
+INSP = REPO / "assets/inspire_hand/inspire_hand_right.urdf"
 OUT = REPO / "sim/assets/nero_inspire_right.urdf"
 
 MOUNT_XYZ = "0 0 0"   # 平贴法兰:手掌基座直接坐在法兰面上(略包住手腕,符合真实装法)

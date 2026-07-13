@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-ROOT = Path("/home/zhang123/ros2_ws/lerobotTest/sim/out/lerobot_ds")
+ROOT = Path(__file__).resolve().parents[1] / "sim/out/lerobot_ds"
 FPS = 30
 CHUNK = 16  # 动作块长度(ACT 预测未来 16 步)
 dt = {"action": [i / FPS for i in range(CHUNK)]}   # 未来 16 步的 action

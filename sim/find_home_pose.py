@@ -4,13 +4,11 @@ import sys
 from pathlib import Path
 import numpy as np
 
-PKL = Path("/home/zhang123/ros2_ws/lerobotTest/pinocchio-kinematics-lite-main/"
-           "pinocchio-kinematics-lite-main/src")
-sys.path.insert(0, str(PKL))
-from pinocchio_kinematics_lite import NeroKinematics
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # sim/(nero_kin)
+from nero_kin import NeroKin
 
 np.set_printoptions(precision=4, suppress=True)
-kin = NeroKinematics()
+kin = NeroKin(Path(__file__).resolve().parents[1] / "assets/nero/nero_description.urdf")
 LIM = np.array([[-2.70, 2.70], [-1.74, 1.74], [-2.75, 2.75], [-1.01, 2.14],
                 [-2.75, 2.75], [-0.73, 0.95], [-1.57, 1.57]])
 
@@ -30,14 +28,11 @@ for pt in targets:
     for _ in range(80):
         tried += 1
         qi = LIM[:, 0] + rng.random(7) * (LIM[:, 1] - LIM[:, 0])
-        res = kin.inverse_kinematics(Tt, q_init=qi)
-        if res.q is None:
-            continue
-        q = np.asarray(res.q)
-        zc = np.asarray(kin.forward_kinematics(q))[:3, :3][:, 2]
+        q, ok_ = kin.ik(Tt, qi)
+        zc = kin.fk(q)[:3, :3][:, 2]
         inlim = np.all(q >= LIM[:, 0] - 1e-3) and np.all(q <= LIM[:, 1] + 1e-3)
-        if res.success and zc[2] > 0.9 and inlim:
-            best = (pt, q, zc, np.asarray(kin.forward_kinematics(q))[:3, 3])
+        if ok_ and zc[2] > 0.9 and inlim:
+            best = (pt, q, zc, kin.fk(q)[:3, 3])
             break
     if best:
         break

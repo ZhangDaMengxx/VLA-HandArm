@@ -19,7 +19,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")        # 离线:不连 huggingface.
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-REPO = Path("/home/zhang123/ros2_ws/lerobotTest")
+REPO = Path(__file__).resolve().parents[1]
 DEX = REPO / "dex-retargeting-main/dex-retargeting-main"
 ROOT = REPO / "sim/out/lerobot_ds"
 IMG = 256
@@ -35,7 +35,7 @@ act_idx = [hand_names.index(n) for n in HAND_ACTUATED]
 state = np.concatenate([arm, hand[:, act_idx]], axis=1).astype(np.float32)   # (F,13)
 action = np.concatenate([state[1:], state[-1:]], axis=0).astype(np.float32)  # 下一帧目标
 
-vids = sorted(glob.glob(str(DEX / "example/vector_retargeting/data/*.mp4")))
+vids = sorted(glob.glob(str(REPO / "data/*.mp4")))
 cap = cv2.VideoCapture(vids[0])
 fps = int(round(cap.get(cv2.CAP_PROP_FPS))) or 30
 nframe = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
