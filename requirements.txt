@@ -8,7 +8,9 @@ mediapipe>=0.10      # 0.10.14 人手关键点检测
 lerobot>=0.4         # 0.4.4   LeRobotDataset(数据集读写)
 scipy                #         Savitzky-Golay 平滑 + 旋转四元数
 opencv-python        #         读视频
-meshcat              #         浏览器 3D 查看器
+meshcat              #         浏览器 3D 查看器(replay_full.py)
+rerun-sdk>=0.26      #         同步多面板可视化(sim/replay_rerun.py:视频+3D+关节曲线)
+trimesh              #         replay_rerun.py 加载网格喂 rerun Mesh3D
 numpy>=2             # 2.2.6
 torch                #         lerobot dataloader
 

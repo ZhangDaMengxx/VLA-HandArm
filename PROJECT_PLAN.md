@@ -1,6 +1,6 @@
 # 机械臂 + 灵巧手 · 手势 / 抓取 / VLA 项目计划
 
-状态:Phase A 完成,Phase B 软件完成,Phase C 待在 RTX 上训练。更新 2026-07-11。任务见 Kiro #26–#34。
+状态:Phase A 完成,Phase B 软件完成(含 Rerun 可视化 + 手腕朝向稳定化 + 两层数据架构落地),Phase C 待在 RTX 上训练。更新 2026-07-14。任务见 Kiro #26–#34。逐次更改见 `更新日志.md`。
 
 ## 1. 目标
 
@@ -138,5 +138,9 @@ MDH 参数 `(d, a, alpha, theta_offset)`,单位 m / rad:
 
 - Phase A 完成:装配、逆解、retargeting 驱动、MeshCat 检视台、两层 schema、手势演示。
 - Phase B 软件完成:手腕 6-DoF 估计、retarget→逆解→回放(SavGol 消抖)、写 LeRobotDataset;C 路线的 dataloader 可消费性也验过。
+- 可视化升级(2026-07-13):`sim/replay_rerun.py` 用 Rerun 做同步多面板(人手视频+骨架 / 机器人 3D / 关节曲线),取代 MeshCat 单视图。
+- 手腕朝向稳定化(2026-07-14):经它暴露的「臂大幅晃」查明是单目出平面朝向噪声(占漂移 91%),加 `sim/wrist_stabilize.py`(出平面降权 + 残差门限),臂运动 184°→57°、IK 仍 710/710、保面内真手势。完整因子图待 Femto。
+- 两层数据架构落地(2026-07-14):`build_canonical.py`→`canonical_ds`(本体无关规范层)+ `derive_embodiment.py --robot X`(按 `robot_specs.py` 的 URDF 派生每本体 `lerobot_ds_X`)。换本体只加一个 RobotSpec、采集不重来。回归:派生轨迹与旧管线 max|Δ|~1e-7 rad。真第二本体属 Phase D。
 - 仓库已重构成自足可移植(路径自动定位、assets/configs/data 内置、nero_kin 加 vendored 检测器),推到了 GitHub(ZhangDaMengxx/VLA-HandArm)。
 - 剩下的都要别的资源:Phase C 真训练在 RTX(见 `训练端部署.md`)、B-1 采集等 Femto、Phase D 第二本体。
+- **逐次具体更改见 `更新日志.md`(带时间戳)。**

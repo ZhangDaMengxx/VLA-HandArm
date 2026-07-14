@@ -14,7 +14,10 @@ from pinocchio.visualize import MeshcatVisualizer
 REPO = Path(__file__).resolve().parents[1]
 urdf = str(REPO / "sim/assets/nero_inspire_right.urdf")
 
-with open(REPO / "sim/out/robot_traj.pkl", "rb") as f:
+traj_path = REPO / "sim/out/robot_traj_nero_inspire.pkl"   # 两层路径产物(默认)
+if not traj_path.exists():
+    traj_path = REPO / "sim/out/robot_traj.pkl"            # 回退旧单本体路径
+with open(traj_path, "rb") as f:
     T = pickle.load(f)
 arm = np.asarray(T["arm"])            # (F,7)
 hand = np.asarray(T["hand"])          # (F,12)

@@ -11,7 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-ROOT = Path(__file__).resolve().parents[1] / "sim/out/lerobot_ds"
+_base = Path(__file__).resolve().parents[1] / "sim/out"
+ROOT = _base / "lerobot_ds_nero_inspire"          # 两层路径产物(默认)
+if not ROOT.exists():
+    ROOT = _base / "lerobot_ds"                   # 回退旧单本体路径
 FPS = 30
 CHUNK = 16  # 动作块长度(ACT 预测未来 16 步)
 dt = {"action": [i / FPS for i in range(CHUNK)]}   # 未来 16 步的 action
