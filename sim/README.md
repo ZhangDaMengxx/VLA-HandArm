@@ -14,17 +14,43 @@ python sim/build_nero_inspire.py
 
 两个已知的坑:WSL 久空闲会休眠,首次调用可能超时,重试即可;MeshCat 端口每次重启会往上加。
 
-## 数据流
+## 数据流(端到端总线)
+
+一段 mp4 到能喂 VLA 的训练数据,经两层、五个落点。★ = 持久化产物。
 
 ```
+data/*.mp4                         唯一源头:真人第一视角手势,30fps
+   │
+   │  build_canonical.py           规范层「录母带」:MediaPipe 逐帧检测 + 估手腕位姿
+   │                               不 retarget、不平滑,纯记录「人做了什么」
+   ▼
+out/canonical_ds/  ★ 本体无关      LeRobotDataset(robot_type=canonical),每帧:
+   │                                 observation.images.ego     256×256 RGB(video)
+   │                                 observation.hand_keypoints (63,)=21×3 MANO 米
+   │                                 observation.wrist_pose     (7,)=[t3,quat4] 相机系
+   │                                 task                       语言指令
+   │                               ← 换机器人时这一步不重跑
+   │
+   │  derive_embodiment.py --robot X   本体层「编译」:canonical + RobotSpec(robot_specs.py)
+   │    手: kp → dex-retarget → 12 关节 → 取 6 驱动
+   │    臂: wrist_pose → 稳定化(gate+出平面衰减+SavGol)→ NeroKin IK(home 锚定)
+   │    拼 state/action = (13) = [7 臂 + 6 手]
+   ▼
+out/lerobot_ds_X/  ★ 训练数据      LeRobotDataset:observation.state(13) / action(13) / images.ego
+out/robot_traj_X.pkl  (--emit-traj) 仅可视化缓存,不是训练数据源
+   │
+   ▼  消费方(默认读派生产物,缺失自动回退旧产物)
+replay_rerun.py --serve   浏览器三联屏(人手视频+骨架 | 机器人3D | 关节曲线)
+verify_dataset.py / check_dataloader.py   回读校验 / dataloader 自检
+
+换本体 = 只在 robot_specs.py 加一个 RobotSpec,再 derive_embodiment.py --robot 新名字;
+①② 不动。parity_check.py 随时验两条路一致。
+
+# 装配 URDF(与上面数据流并行,供可视化/仿真加载):
 build_nero_inspire.py  → sim/assets/nero_inspire_right.urdf → view_meshcat / replay_* / gesture_demo
 
-# 两层数据管线(推荐,可跨本体复用):
-build_canonical.py     → out/canonical_ds (规范层, 本体无关)
-                         └─ derive_embodiment.py --robot X → out/lerobot_ds_X (+ robot_traj_X.pkl)
-
-# 旧单本体管线(NERO 遗留,仍可用):
-detect_wrist.py        → out/full_traj.pkl → build_robot_traj.py (wrist_stabilize) → out/robot_traj.pkl → replay_full.py / replay_rerun.py / build_dataset.py
+# 旧单本体管线(NERO 遗留,仍可用,采集时即 retarget→有损不可逆):
+detect_wrist.py        → out/full_traj.pkl → build_robot_traj.py (wrist_stabilize) → out/robot_traj.pkl → replay_full.py / build_dataset.py
 detect_and_retarget.py → out/hand_traj.pkl → replay_assembly.py
 schema.py / robot_specs.py / gestures.py → 供上面各步用
 ```
