@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NERO · Inspire — 回放工作台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;1,400;1,500&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --canvas: #F7F8FA;          /* 柔和灰白画布 */
+  --surface: #FFFFFF;         /* 卡片/面板表面 */
+  --screen: #0E0F12;          /* 深色仪表屏(Rerun 视口) */
+  --text: #16181D;            /* 主文字 */
+  --text-2: #6B7280;          /* 次要文字 */
+  --text-3: #9AA3AF;          /* 更弱 */
+  --line: #E6E8EC;            /* 浅色分隔线 hairline */
+  --line-dark: rgba(255,255,255,0.08);
+  --accent: #2F6BFF;          /* 科技蓝 */
+  --accent-soft: rgba(47,107,255,0.10);
+  --success: #12B76A;
+  --warning: #F79009;
+  --danger: #F04438;
+  --raw: #F79009;             /* A/B 原始轨迹 */
+  --stab: #2F6BFF;            /* A/B 稳定化后 */
+  --glass: rgba(255,255,255,0.75);
+  --shadow-card: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.06);
+  --shadow-screen: 0 2px 8px rgba(16,24,40,.10), 0 24px 64px rgba(16,24,40,.16);
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== 深色仪表屏视口(浮在浅色画布中央)===== */
+.stage { position: fixed; inset: 0; z-index: 0; display: flex;
+  align-items: center; justify-content: center; padding: 84px 360px 116px 116px; }
+.screen { position: relative; width: 100%; height: 100%;
+  background: var(--screen); border-radius: 16px; box-shadow: var(--shadow-screen);
+  overflow: hidden; transition: all .6s cubic-bezier(.16,1,.3,1); }
+.screen iframe { width: 100%; height: 100%; border: 0; opacity: 0;
+  transition: opacity .6s ease; }
+.screen iframe.loaded { opacity: 1; }
+
+/* 视口右上角幽灵按钮排 */
+.viewport-tools { position: absolute; top: 14px; right: 14px; z-index: 4;
+  display: flex; gap: 8px; opacity: 0; transition: opacity .4s ease; }
+.viewport-tools.visible { opacity: 1; }
+.vtool { width: 34px; height: 34px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line-dark); background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.7); display: flex; align-items: center;
+  justify-content: center; font-size: 15px; transition: all .2s ease;
+  backdrop-filter: blur(8px); }
+.vtool:hover { background: rgba(255,255,255,0.14); color: #fff; }
+
+/* 视口内空/加载态 */
+.screen-hint { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; color: rgba(255,255,255,0.5);
+  font-size: 14px; text-align: center; padding: 32px; }
+.screen-hint .spin { width: 42px; height: 42px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.14); border-top-color: var(--accent);
+  animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== 顶栏(玻璃,通栏)===== */
+.top-nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 56px;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 28px;
+  background: var(--glass); backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 11px; text-decoration: none; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; display: flex;
+  align-items: center; justify-content: center; color: #fff; font-size: 13px;
+  background: linear-gradient(135deg, var(--accent), #5B8BFF); }
+.brand-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+.brand-sub { font-size: 10px; color: var(--text-3); margin-top: 1px; letter-spacing: .04em; }
+
+/* 居中胶囊分段导航 */
+.seg-nav { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: rgba(22,24,29,0.04); border: 1px solid var(--line); }
+.seg-btn { padding: 6px 18px; border-radius: 999px; border: none; background: transparent;
+  color: var(--text-2); font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .18s ease; }
+.seg-btn.active { background: var(--surface); color: var(--accent);
+  box-shadow: 0 1px 2px rgba(16,24,40,.08); }
+
+.nav-right { display: flex; align-items: center; gap: 10px; }
+.drop { position: relative; }
+.drop-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--text); font-family: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; transition: all .18s ease; }
+.drop-btn:hover { border-color: var(--accent); color: var(--accent); }
+.serve-dot { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3);
+  transition: all .3s ease; }
+.dot.online { background: var(--success); box-shadow: 0 0 0 3px rgba(18,183,106,.15);
+  animation: breathe 2.4s ease-in-out infinite; }
+.dot.busy { background: var(--warning); box-shadow: 0 0 0 3px rgba(247,144,9,.15); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+.icon-btn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 15px;
+  display: flex; align-items: center; justify-content: center; transition: all .18s ease; }
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== 中央文案(空闲态,加载后淡出上移)===== */
+.center { position: fixed; top: 50%; left: calc(50% - 122px); transform: translate(-50%,-60%);
+  z-index: 10; text-align: center; pointer-events: none; width: 90%; max-width: 560px;
+  transition: all .8s cubic-bezier(.16,1,.3,1); }
+.center.has-data { transform: translate(-50%,-140%); opacity: 0; pointer-events: none; }
+.title { font-family: 'Playfair Display', serif; font-size: clamp(30px,4vw,46px);
+  font-weight: 500; line-height: 1.15; letter-spacing: -.02em; color: #fff;
+  text-shadow: 0 2px 30px rgba(0,0,0,.4); margin-bottom: 16px; }
+.title em { font-style: italic; color: #8FB2FF; }
+.subtitle { font-size: 14.5px; font-weight: 300; color: rgba(255,255,255,0.7);
+  line-height: 1.7; max-width: 440px; margin: 0 auto 26px; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 18px;
+  border-radius: 999px; background: rgba(255,255,255,0.10); border: 1px solid var(--line-dark);
+  font-size: 12.5px; color: rgba(255,255,255,0.8); pointer-events: auto;
+  backdrop-filter: blur(8px); }
+
+/* ===== 左侧快捷控制栏(玻璃圆钮竖排)===== */
+.left-panel { position: fixed; left: 28px; top: 50%; transform: translateY(-50%);
+  z-index: 50; display: flex; flex-direction: column; gap: 8px; }
+.ctrl { width: 46px; height: 46px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--glass); backdrop-filter: blur(16px); color: var(--text-2);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  font-size: 18px; transition: all .2s ease; position: relative; box-shadow: var(--shadow-card); }
+.ctrl:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-2px); }
+.ctrl.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ctrl.primary:hover { background: #245BEF; color: #fff; }
+.ctrl.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.ctrl .tip { position: absolute; left: calc(100% + 12px); top: 50%;
+  transform: translateY(-50%) translateX(-4px); padding: 6px 11px; border-radius: 8px;
+  background: var(--text); color: #fff; font-size: 12px; white-space: nowrap; opacity: 0;
+  pointer-events: none; transition: all .2s ease; box-shadow: var(--shadow-card); z-index: 60; }
+.ctrl:hover .tip { opacity: 1; transform: translateY(-50%) translateX(0); }
+
+/* ===== 右侧遥测面板 ===== */
+.right-panel { position: fixed; right: 28px; top: 84px; bottom: 116px; width: 312px;
+  z-index: 50; padding: 20px; border-radius: 16px; background: var(--surface);
+  border: 1px solid var(--line); box-shadow: var(--shadow-card); overflow-y: auto;
+  transition: transform .5s cubic-bezier(.16,1,.3,1), opacity .5s ease; }
+.right-panel::-webkit-scrollbar { width: 6px; }
+.right-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
+
+.card { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.card:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.card-head { display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase;
+  letter-spacing: .07em; margin-bottom: 14px; }
+.live { width: 6px; height: 6px; border-radius: 50%; background: var(--success);
+  box-shadow: 0 0 0 3px rgba(18,183,106,.15); animation: breathe 2.4s ease-in-out infinite; }
+
+.spec-name { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.spec-meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.spec-badge { display: inline-block; margin-top: 9px; padding: 3px 10px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-family: var(--mono);
+  font-size: 11px; font-weight: 500; }
+
+/* state(13) 读数行 */
+.jrow { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.jname { width: 100px; font-family: var(--mono); font-size: 10.5px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jtrack { flex: 1; height: 3px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.jfill { height: 100%; border-radius: 99px; background: var(--accent); }
+.jgroup { font-family: var(--mono); font-size: 10px; color: var(--text-3);
+  letter-spacing: .04em; margin: 2px 0 10px; }
+
+/* 管线面包屑 */
+.flow-step { font-family: var(--mono); font-size: 11.5px; color: var(--text); padding: 8px 0; }
+.flow-step .tag { color: var(--accent); }
+.flow-note { font-size: 11px; color: var(--text-3); line-height: 1.55; margin-top: 6px; }
+.flow-arrow { color: var(--text-3); font-size: 12px; padding-left: 4px; }
+
+/* 稳定化参数 */
+.kv { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.kv .k { font-size: 12px; color: var(--text-2); }
+.kv .v { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--text); }
+.stab-note { font-size: 11px; color: var(--text-3); line-height: 1.55; margin-top: 8px;
+  padding-top: 10px; border-top: 1px dashed var(--line); }
+.stab-note b { color: var(--stab); font-weight: 500; }
+
+/* ===== 底部悬浮命令胶囊(玻璃)===== */
+.bottom-bar { position: fixed; bottom: 30px; left: calc(50% - 122px);
+  transform: translateX(-50%); z-index: 100; width: 92%; max-width: 680px; }
+.cmd { display: flex; align-items: center; gap: 12px; padding: 12px 14px 12px 16px;
+  border-radius: 999px; background: var(--glass); backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--line); box-shadow: var(--shadow-card); transition: all .3s ease; }
+.cmd:focus-within, .cmd.armed { border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card); }
+.cmd-add { width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
+  border: 1px dashed var(--accent); color: var(--accent); display: flex; align-items: center;
+  justify-content: center; font-size: 20px; transition: all .2s ease; background: transparent; }
+.cmd-add:hover { background: var(--accent-soft); border-style: solid; }
+.cmd-name { flex: 1; font-size: 14px; color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.cmd-name.empty { color: var(--text-3); }
+/* A/B 分段开关 */
+.ab { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: rgba(22,24,29,0.05); flex-shrink: 0; }
+.ab-btn { padding: 6px 12px; border-radius: 999px; border: none; background: transparent;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--text-2);
+  cursor: pointer; transition: all .18s ease; }
+.ab-btn.active { background: var(--surface); box-shadow: 0 1px 2px rgba(16,24,40,.1); }
+.ab-btn[data-v="raw"].active { color: var(--raw); }
+.ab-btn[data-v="stab"].active { color: var(--stab); }
+.cmd-go { padding: 10px 22px; border-radius: 999px; border: none; background: var(--accent);
+  color: #fff; font-family: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  flex-shrink: 0; transition: all .2s ease; }
+.cmd-go:hover { background: #245BEF; transform: translateY(-1px); }
+.cmd-go:disabled { background: var(--text-3); cursor: not-allowed; transform: none; }
+.cmd-skip { display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--text-2); cursor: pointer; flex-shrink: 0; user-select: none; }
+.cmd-skip input { accent-color: var(--accent); }
+.live-stat { display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  border-radius: 999px; background: rgba(22,24,29,0.05); font-family: var(--mono);
+  font-size: 12px; color: var(--text-2); flex-shrink: 0; }
+/* 逐关节点动按钮:默认隐藏,启用控制后显示 */
+.jog { display: none; gap: 3px; margin-left: 6px; }
+.jog.on { display: inline-flex; }
+.jog-b { width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--surface); color: var(--text-2); font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 0; }
+.jog-b:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.spd { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2);
+  font-family: var(--mono); flex-shrink: 0; }
+.spd input[type=range] { width: 90px; accent-color: var(--accent); }
+.spd b { color: var(--accent); width: 34px; }
+.cmd-go.tp { background: var(--text-2); font-size: 12.5px; padding: 8px 12px; }
+.cmd-go.tp:disabled { opacity: .4; cursor: not-allowed; }
+.cmd-go.playing { background: var(--danger); }
+
+/* ===== 进度浮层(顶部居中)===== */
+.toast { position: fixed; top: 72px; left: calc(50% - 122px); transform: translateX(-50%) translateY(-16px);
+  z-index: 200; min-width: 340px; padding: 14px 20px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-card);
+  opacity: 0; pointer-events: none; transition: all .4s cubic-bezier(.16,1,.3,1); }
+.toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.toast-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.toast-pct { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.toast-track { height: 5px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.toast-fill { height: 100%; border-radius: 99px; background: var(--accent);
+  width: 0%; transition: width .45s cubic-bezier(.16,1,.3,1); }
+.toast-fill.done { background: var(--success); }
+.toast-fill.err { background: var(--danger); }
+.toast-log { margin-top: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
+  max-height: 0; overflow: hidden; line-height: 1.6; transition: max-height .3s ease; }
+.toast.show-log .toast-log { max-height: 96px; overflow-y: auto; }
+
+/* ===== 上传浮层 ===== */
+.upload-zone { position: fixed; inset: 0; z-index: 300; background: rgba(22,24,29,0.28);
+  backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+.upload-zone.active { opacity: 1; pointer-events: auto; }
+.upload-card { width: 460px; padding: 40px; border-radius: 20px; background: var(--surface);
+  border: 1px solid var(--line); text-align: center; box-shadow: var(--shadow-screen);
+  transform: scale(.96); transition: transform .3s cubic-bezier(.16,1,.3,1); }
+.upload-zone.active .upload-card { transform: scale(1); }
+.upload-ic { width: 60px; height: 60px; border-radius: 18px; border: 2px dashed var(--accent);
+  color: var(--accent); display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px; font-size: 26px; transition: all .2s ease; }
+.upload-zone.drag .upload-ic { background: var(--accent-soft); transform: scale(1.05); }
+.upload-title { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--text);
+  margin-bottom: 6px; }
+.upload-sub { font-size: 13.5px; color: var(--text-2); margin-bottom: 24px; }
+.upload-btn { padding: 11px 30px; border-radius: 999px; border: none; background: var(--accent);
+  color: #fff; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+  transition: all .2s ease; }
+.upload-btn:hover { background: #245BEF; transform: translateY(-1px); }
+.upload-hint { margin-top: 16px; font-size: 11.5px; color: var(--text-3); }
+#fileInput { display: none; }
+
+@media (max-width: 1100px) {
+  .stage { padding: 76px 24px 108px; }
+  .center { left: 50%; }
+  .bottom-bar { left: 50%; }
+  .toast { left: 50%; }
+  .right-panel { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- 深色仪表屏视口(浮在浅色画布中央) -->
+<div class="stage">
+  <div class="screen" id="screen">
+    <div class="viewport-tools" id="vtools">
+      <div class="vtool" id="vFull" title="全屏">⤢</div>
+      <div class="vtool" id="vReconnect" title="重连">↺</div>
+      <div class="vtool" id="vCopy" title="复制当前连接 URL">⧉</div>
+    </div>
+    <div class="screen-hint" id="screenHint">
+      <span></span>
+    </div>
+  </div>
+</div>
+
+<!-- 顶栏 -->
+<nav class="top-nav">
+  <a class="brand" href="#">
+    <div class="brand-mark">◈</div>
+    <div>
+      <div class="brand-name">NERO · Inspire</div>
+      <div class="brand-sub">回放工作台</div>
+    </div>
+  </a>
+  <div class="seg-nav">
+    <button class="seg-btn active" data-view="replay">回放 Replay</button>
+    <button class="seg-btn" data-view="live">实时 Live</button>
+  </div>
+  <div class="nav-right">
+    <div class="drop"><button class="drop-btn" id="robotDrop">本体 · NERO+inspire ▾</button></div>
+    <div class="drop"><button class="drop-btn" id="taskDrop">任务 · 抓取 ▾</button></div>
+    <div class="serve-dot"><span class="dot" id="serveDot"></span><span id="serveText">离线</span></div>
+    <button class="icon-btn" title="设置">⚙</button>
+  </div>
+</nav>
+
+<!-- 中央文案(空闲态) -->
+<div class="center" id="center">
+  <h1 class="title">手势,<em>映射</em></h1>
+  <p class="subtitle">上传</p>
+  <div class="pill"><span class="dot" id="centerDot"></span><span id="centerStatus">等待视频输入…</span></div>
+</div>
+
+<!-- 左侧快捷控制栏 -->
+<div class="left-panel">
+  <button class="ctrl primary" id="btnUpload">↑<span class="tip">上传视频</span></button>
+  <button class="ctrl" id="btnAB">⇄<span class="tip">A/B · Raw ↔ Stabilized</span></button>
+  <button class="ctrl" id="btnReplay">↺<span class="tip">重新生成</span></button>
+  <button class="ctrl" id="btnFull2">⤢<span class="tip">视口全屏</span></button>
+</div>
+
+<!-- 右侧遥测面板 -->
+<aside class="right-panel" id="rightPanel">
+  <div class="card">
+    <div class="card-head"><span>本体 RobotSpec</span><span class="live"></span></div>
+    <div class="spec-name">NERO + inspire</div>
+    <div class="spec-meta">7-DoF 臂 + inspire 灵巧手</div>
+    <span class="spec-badge">state(13) = 7 臂 + 6 手</span>
+  </div>
+  <div class="card">
+    <div class="card-head"><span>state(13) 读数</span></div>
+    <div class="jgroup">臂 state[0:7] · rad</div>
+    <div id="armJoints"></div>
+    <div class="jgroup" style="margin-top:12px">手 state[7:13] · 驱动</div>
+    <div id="handJoints"></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span>管线 Pipeline</span></div>
+    <div class="flow-step"><span class="tag">规范层</span> canonical_ds</div>
+    <div class="flow-arrow">↓ 派生</div>
+    <div class="flow-step"><span class="tag">本体层</span> lerobot_ds_nero_inspire</div>
+    <div class="flow-note">规范层本体无关、可共享;换本体只重派生本体层,规范层不动。</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span>稳定化参数</span></div>
+    <div class="kv"><span class="k">gate_deg</span><span class="v">8.0°</span></div>
+    <div class="kv"><span class="k">oop_alpha</span><span class="v">0.40</span></div>
+    <div class="stab-note">手腕朝向稳定化:抑制出平面漂移、保面内真手势。
+      A/B 效果:臂运动幅度 <b>184° → 57°</b>、IK 全收敛。</div>
+  </div>
+</aside>
+
+<!-- 底部命令胶囊 -->
+<div class="bottom-bar">
+  <div class="cmd" id="cmd">
+    <button class="cmd-add" id="cmdAdd" title="上传视频">+</button>
+    <span class="cmd-name empty" id="cmdName">上传视频或拖拽到此…</span>
+    <label class="cmd-skip"><input type="checkbox" id="skipChk">跳过重算</label>
+    <div class="ab" id="abToggle">
+      <button class="ab-btn active" data-v="stab">Stabilized</button>
+      <button class="ab-btn" data-v="raw">Raw</button>
+      <button class="ab-btn" data-v="ab">A/B</button>
+    </div>
+    <button class="cmd-go" id="cmdGo" disabled>生成</button>
+  </div>
+  <!-- 实时控制条(Live 模式显示;控制默认锁定,防误触)-->
+  <div class="cmd" id="liveBar" style="display:none">
+    <span class="live-stat" id="liveStat"><span class="dot" id="liveDot"></span>连接中…</span>
+    <label class="cmd-skip"><input type="checkbox" id="ctrlArm">启用控制</label>
+    <span class="spd" id="spdWrap" style="display:none">速度
+      <input type="range" id="spd" min="1" max="100" value="60"><b id="spdV">60%</b></span>
+    <span class="cmd-name" id="ctrlHint" style="flex:1">监控中 · 勾选『启用控制』解锁示教器点动(先在仿真验证)</span>
+    <button class="cmd-go tp" id="btnEnable" disabled>使能</button>
+    <button class="cmd-go tp" id="btnDisable" disabled>去使能</button>
+    <button class="cmd-go tp" id="btnHome" disabled>归零</button>
+    <button class="cmd-go tp" id="btnReset" disabled>复位</button>
+    <button class="cmd-go tp" id="btnPlay" disabled title="把视频→轨迹逐帧下发给机械臂+灵巧手">▶ 下发轨迹</button>
+    <button class="cmd-go" id="btnEstop" style="background:var(--danger)">急停</button>
+  </div>
+</div>
+
+<!-- 进度浮层 -->
+<div class="toast" id="toast">
+  <div class="toast-head">
+    <span class="toast-title" id="toastTitle">处理中…</span>
+    <span class="toast-pct" id="toastPct">0%</span>
+  </div>
+  <div class="toast-track"><div class="toast-fill" id="toastFill"></div></div>
+  <div class="toast-log" id="toastLog"></div>
+</div>
+
+<!-- 上传浮层 -->
+<div class="upload-zone" id="uploadZone">
+  <div class="upload-card">
+    <div class="upload-ic">↗</div>
+    <div class="upload-title">拖入你的视频</div>
+    <div class="upload-sub">MP4 格式,第一视角人手操作</div>
+    <button class="upload-btn" id="selectFileBtn">选择文件</button>
+    <div class="upload-hint">或拖拽到屏幕任意位置 · Esc 关闭</div>
+  </div>
+</div>
+<input type="file" id="fileInput" accept="video/mp4,video/*">
+
+<script>
+// ===== state(13):按真实 ROS 关节名建行,带各自限位(和 ros_joint_writer 一致)=====
+const ARM = [1,2,3,4,5,6,7].map(i => ({key:`joint${i}`, label:`joint${i}`, lo:-3.14159, hi:3.14159}));
+const HAND = [
+  {key:"thumb_proximal_yaw_joint",   label:"thumb_yaw",   lo:0, hi:1.308},
+  {key:"thumb_proximal_pitch_joint", label:"thumb_pitch", lo:0, hi:0.6},
+  {key:"index_proximal_joint",       label:"index",       lo:0, hi:1.47},
+  {key:"middle_proximal_joint",      label:"middle",      lo:0, hi:1.47},
+  {key:"ring_proximal_joint",        label:"ring",        lo:0, hi:1.47},
+  {key:"pinky_proximal_joint",       label:"pinky",       lo:0, hi:1.47},
+];
+const ALLJ = [...ARM, ...HAND];
+const jid = k => "j_" + k.replace(/[^\w]/g, "");
+
+const S = { video:null, name:null, abMode:"stab", running:false, hasData:false,
+            mode:"replay", ws:null, live:false };
+const $ = id => document.getElementById(id);
+
+// ===== 渲染遥测读数行 =====
+function renderJoints() {
+  $("armJoints").innerHTML = ARM.map(j => jrow(j, "arm")).join("");
+  $("handJoints").innerHTML = HAND.map(j => jrow(j, "hand")).join("");
+}
+function jrow(j, group) {
+  const id = jid(j.key);
+  return `<div class="jrow"><span class="jname">${j.label}</span>`
+       + `<span class="jtrack"><span class="jfill" id="${id}_f" style="width:0%"></span></span>`
+       + `<span id="${id}_v" style="width:42px;text-align:right;font-family:var(--mono);font-size:10.5px;color:var(--text-3)">—</span>`
+       + `<span class="jog" data-jog="1">`
+       + `<button class="jog-b" onclick="jog('${j.key}','${group}',-1)">−</button>`
+       + `<button class="jog-b" onclick="jog('${j.key}','${group}',1)">+</button></span></div>`;
+}
+// 收到一帧 {names,pos} → 保存最新角 + 更新每行的条宽与数值
+function updateJoints(row) {
+  const map = {}; (row.names||[]).forEach((n,i) => map[n] = row.pos[i]);
+  S.jmap = map;
+  for (const j of ALLJ) {
+    const v = map[j.key]; if (v === undefined) continue;
+    const pct = Math.max(0, Math.min(100, (v - j.lo)/(j.hi - j.lo)*100));
+    const f = $(jid(j.key)+"_f"), el = $(jid(j.key)+"_v");
+    if (f) f.style.width = pct + "%";
+    if (el) { el.textContent = v.toFixed(2); el.style.color = "var(--accent)"; }
+  }
+}
+renderJoints();
+
+// ===== serve 状态灯 =====
+function setServe(state) {   // "online" | "busy" | "offline"
+  const dot = $("serveDot"), cdot = $("centerDot");
+  dot.className = "dot" + (state === "online" ? " online" : state === "busy" ? " busy" : "");
+  if (cdot) cdot.className = "dot" + (state === "online" ? " online" : state === "busy" ? " busy" : "");
+  $("serveText").textContent = state === "online" ? "在线" : state === "busy" ? "处理中" : "离线";
+}
+async function pollStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const j = await r.json();
+    if (!S.running) setServe(j.serve ? "online" : "offline");
+  } catch (e) { /* 忽略 */ }
+}
+setInterval(pollStatus, 4000); pollStatus();
+
+// ===== 进度浮层 =====
+function toastShow(title) {
+  $("toastTitle").textContent = title; $("toastPct").textContent = "0%";
+  const f = $("toastFill"); f.style.width = "0%"; f.className = "toast-fill";
+  $("toastLog").textContent = ""; $("toast").classList.add("visible");
+}
+function toastProg(pct, msg) {
+  $("toastPct").textContent = Math.round(pct) + "%";
+  $("toastFill").style.width = pct + "%";
+  if (msg) $("toastTitle").textContent = msg;
+}
+function toastLog(line) {
+  const el = $("toastLog"); el.textContent += line + "\n"; el.scrollTop = el.scrollHeight;
+}
+function toastEnd(kind, msg) {   // "done" | "err"
+  const f = $("toastFill"); f.classList.add(kind === "err" ? "err" : "done");
+  if (msg) $("toastTitle").textContent = msg;
+  if (kind !== "err") setTimeout(() => $("toast").classList.remove("visible"), 1400);
+}
+
+// ===== 上传 =====
+function openUpload() { $("uploadZone").classList.add("active"); }
+function closeUpload() { $("uploadZone").classList.remove("active", "drag"); }
+$("btnUpload").onclick = openUpload;
+$("cmdAdd").onclick = openUpload;
+$("selectFileBtn").onclick = () => $("fileInput").click();
+$("fileInput").onchange = e => { if (e.target.files[0]) handleFile(e.target.files[0]); };
+$("uploadZone").onclick = e => { if (e.target === $("uploadZone")) closeUpload(); };
+
+["dragenter","dragover","dragleave","drop"].forEach(ev =>
+  document.body.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
+document.body.addEventListener("dragenter", openUpload);
+$("uploadZone").addEventListener("dragover", () => $("uploadZone").classList.add("drag"));
+$("uploadZone").addEventListener("dragleave", e => {
+  if (e.target === $("uploadZone")) $("uploadZone").classList.remove("drag"); });
+$("uploadZone").addEventListener("drop", e => {
+  closeUpload(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+
+async function handleFile(file) {
+  closeUpload();
+  $("cmdName").textContent = "上传中 · " + file.name;
+  $("cmdName").classList.remove("empty");
+  const fd = new FormData(); fd.append("file", file);
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const j = await r.json();
+    S.video = j.path; S.name = j.name || file.name;
+    $("cmdName").textContent = S.name;
+    $("cmdGo").disabled = false;
+    $("cmd").classList.add("armed");
+    $("centerStatus").textContent = "已就绪 · 点『生成』";
+  } catch (e) {
+    $("cmdName").textContent = "上传失败,重试";
+  }
+}
+
+// ===== A/B 切换 =====
+$("abToggle").querySelectorAll(".ab-btn").forEach(btn => {
+  btn.onclick = () => {
+    $("abToggle").querySelectorAll(".ab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active"); S.abMode = btn.dataset.v;
+  };
+});
+
+// ===== 生成(管线 SSE)=====
+$("cmdGo").onclick = runPipeline;
+$("btnReplay").onclick = () => { if (!S.running && S.video) runPipeline(); };
+
+function runPipeline() {
+  if (S.running || !S.video) return;
+  S.running = true; $("cmdGo").disabled = true; setServe("busy");
+  $("toast").classList.add("show-log"); toastShow("① 启动管线…");
+  const skip = $("skipChk").checked;
+  const ab = S.abMode === "ab";
+  const url = `/api/run?video=${encodeURIComponent(S.video)}&skip=${skip}&ab=${ab}`;
+  const es = new EventSource(url);
+  es.onmessage = e => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.type === "progress") { toastProg(ev.pct, ev.msg); }
+    else if (ev.type === "log") { toastLog(ev.line); }
+    else if (ev.type === "rerun_url") { embedRerun(ev.url); }
+    else if (ev.type === "done") {
+      es.close(); S.running = false; $("cmdGo").disabled = false;
+      setServe("online"); toastEnd("done"); onLoaded();
+    } else if (ev.type === "error") {
+      es.close(); S.running = false; $("cmdGo").disabled = false;
+      setServe("offline"); toastEnd("err", "⚠ " + ev.msg);
+    }
+  };
+  es.onerror = () => {
+    es.close(); S.running = false; $("cmdGo").disabled = false;
+    setServe("offline"); toastEnd("err", "连接错误,请查看日志");
+  };
+}
+
+// ===== 嵌入 Rerun iframe =====
+let _rerunUrl = null;
+function embedRerun(url) {
+  _rerunUrl = url;
+  const sc = $("screen"); $("screenHint").style.display = "none";
+  const old = sc.querySelector("iframe"); if (old) old.remove();
+  const iframe = document.createElement("iframe");
+  iframe.src = url; iframe.setAttribute("allowfullscreen", "");
+  iframe.onload = () => { iframe.classList.add("loaded"); $("vtools").classList.add("visible"); };
+  sc.appendChild(iframe);
+}
+
+// ===== 加载完成:中央文案淡出,右侧面板出现 =====
+function onLoaded() {
+  if (S.hasData) return; S.hasData = true;
+  $("center").classList.add("has-data");
+}
+
+// ===== 视口工具按钮 =====
+$("vFull").onclick = $("btnFull2").onclick = () => {
+  const sc = $("screen"); if (sc.requestFullscreen) sc.requestFullscreen();
+};
+$("vReconnect").onclick = () => { if (_rerunUrl) embedRerun(_rerunUrl); };
+$("vCopy").onclick = () => {
+  if (_rerunUrl) { navigator.clipboard.writeText(_rerunUrl).then(() => {
+    $("vCopy").textContent = "✓"; setTimeout(() => $("vCopy").textContent = "⧉", 1200); }); }
+};
+
+// ===== A/B 左栏按钮快捷切换 =====
+$("btnAB").onclick = () => {
+  const btns = [...$("abToggle").querySelectorAll(".ab-btn")];
+  const cur = btns.findIndex(b => b.classList.contains("active"));
+  btns.forEach(b => b.classList.remove("active"));
+  btns[(cur + 1) % btns.length].classList.add("active");
+  S.abMode = btns[(cur + 1) % btns.length].dataset.v;
+};
+
+// ===== 顶栏分段导航:回放 / 实时 真正切换模式 =====
+document.querySelectorAll(".seg-btn").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll(".seg-btn").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    switchMode(b.dataset.view);
+  };
+});
+
+function switchMode(view) {
+  if (view === S.mode) return;
+  S.mode = view;
+  if (view === "live") {
+    $("cmd").style.display = "none";
+    $("liveBar").style.display = "flex";
+    document.querySelector(".left-panel").style.display = "none";
+    startLive();
+  } else {
+    $("liveBar").style.display = "none";
+    $("cmd").style.display = "flex";
+    document.querySelector(".left-panel").style.display = "flex";
+    stopLive();
+  }
+}
+
+// ===== 实时模式 =====
+async function startLive() {
+  $("center").classList.add("has-data");
+  $("liveStat").innerHTML = '<span class="dot busy"></span>启动实时服务…';
+  $("screenHint").style.display = "flex";
+  $("screenHint").innerHTML = '<div class="spin"></div><span>正在连接机械臂 /joint_states 并启动实时 Rerun…</span>';
+  try {
+    const r = await fetch("/api/live/start", { method: "POST" });
+    const j = await r.json();
+    if (j.rerun_url) embedRerun(j.rerun_url);
+    connectWS();
+  } catch (e) {
+    $("liveStat").innerHTML = '<span class="dot"></span>启动失败';
+  }
+}
+async function stopLive() {
+  if (S.ws) { try { S.ws.close(); } catch(e){} S.ws = null; }
+  S.live = false;
+  try { await fetch("/api/live/stop", { method: "POST" }); } catch(e){}
+}
+
+function connectWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
+  S.ws = ws;
+  ws.onopen = () => { S.live = true; $("liveStat").innerHTML = '<span class="dot online"></span>实时监控中'; };
+  ws.onmessage = e => { try { updateJoints(JSON.parse(e.data)); } catch(_){} };
+  ws.onclose = () => { if (S.mode === "live") $("liveStat").innerHTML = '<span class="dot"></span>连接断开'; };
+  ws.onerror = () => { $("liveStat").innerHTML = '<span class="dot"></span>连接错误'; };
+}
+
+// ===== 示教器式控制(默认锁定,防误触)=====
+const JOG_STEP = { arm: 0.05, hand: 0.10 };   // 点动步长(rad)
+const CTRL_BTNS = ["btnEnable","btnDisable","btnHome","btnReset","btnPlay"];
+
+function setArmed(on) {
+  $("ctrlArm").checked = on;
+  CTRL_BTNS.forEach(id => $(id).disabled = !on);
+  document.querySelectorAll(".jog").forEach(el => el.classList.toggle("on", on));
+  $("spdWrap").style.display = on ? "flex" : "none";
+  $("ctrlHint").textContent = on
+    ? "⚠ 控制已解锁 · 点动/使能先在仿真执行,真机联调前务必核对限位"
+    : "监控中 · 勾选『启用控制』解锁示教器点动(先在仿真验证)";
+}
+$("ctrlArm").onchange = e => setArmed(e.target.checked);
+
+// 逐关节点动:拿最新角 + 步长 → 该组绝对目标数组 → 发指令
+function jog(key, group, dir) {
+  if (!$("ctrlArm").checked || !S.jmap) return;
+  const defs = group === "arm" ? ARM : HAND;
+  const arr = defs.map(j => {
+    let v = (S.jmap[j.key] ?? 0);
+    if (j.key === key) v = Math.max(j.lo, Math.min(j.hi, v + dir * JOG_STEP[group]));
+    return +v.toFixed(4);
+  });
+  sendCmd(group === "arm" ? { arm: arr, duration: 0.4 } : { hand: arr, duration: 0.4 });
+}
+
+$("btnEnable").onclick  = () => { sendCmd({ action: "enable" });  $("ctrlHint").textContent = "已发送使能"; };
+$("btnDisable").onclick = () => { sendCmd({ action: "disable" }); $("ctrlHint").textContent = "已发送去使能"; };
+$("btnReset").onclick   = () => { sendCmd({ action: "reset" });   $("ctrlHint").textContent = "已发送复位"; };
+$("btnHome").onclick    = () => {
+  sendCmd({ arm: [0,0,0,0,0,0,0], hand: [0,0,0,0,0,0], duration: 1.5 });
+  $("ctrlHint").textContent = "已发送归零";
+};
+$("btnEstop").onclick   = async () => {
+  await sendCmd({ estop: true });
+  await stopPlay();                 // 急停也终止轨迹下发
+  setArmed(false);
+  $("ctrlHint").textContent = "⛔ 已急停 · 复位后可重新使能";
+};
+
+// ===== 轨迹下发:把视频→轨迹逐帧发给机械臂+灵巧手 =====
+let playES = null;
+function setPlaying(on) {
+  const b = $("btnPlay");
+  b.textContent = on ? "■ 停止下发" : "▶ 下发轨迹";
+  b.classList.toggle("playing", on);
+}
+async function stopPlay() {
+  if (playES) { try { playES.close(); } catch(_){} playES = null; }
+  setPlaying(false);
+  try { await fetch("/api/replay/stop", { method: "POST" }); } catch(_){}
+}
+$("btnPlay").onclick = async () => {
+  if (playES) { await stopPlay(); $("ctrlHint").textContent = "已停止下发"; return; }
+  setPlaying(true);
+  const es = new EventSource("/api/replay/play?speed=1.0&fps=30");
+  playES = es;
+  es.onmessage = e => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.type === "progress") $("ctrlHint").textContent = `下发中 ${ev.pct}%(${ev.frame}/${ev.total}帧)`;
+    else if (ev.type === "start") $("ctrlHint").textContent = `开始下发 ${ev.total} 帧 @ ${ev.fps}fps ×${ev.speed}`;
+    else if (ev.type === "done")   { $("ctrlHint").textContent = "✓ 轨迹下发完成"; stopPlay(); }
+    else if (ev.type === "stopped"){ $("ctrlHint").textContent = `⛔ 下发中止(${ev.reason||""})`; stopPlay(); }
+    else if (ev.type === "error")  { $("ctrlHint").textContent = "下发失败:" + ev.msg; stopPlay(); }
+  };
+  es.onerror = () => { stopPlay(); };
+};
+let spdT = null;
+$("spd").oninput = e => {
+  $("spdV").textContent = e.target.value + "%";
+  clearTimeout(spdT);
+  spdT = setTimeout(() => sendCmd({ action: "set_speed", value: +e.target.value }), 200);
+};
+
+async function sendCmd(cmd) {
+  try {
+    const r = await fetch("/api/command", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmd) });
+    return await r.json();
+  } catch (e) { return { ok: false }; }
+}
+
+// ===== 键盘快捷键 =====
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeUpload();
+  if (e.key === " " && e.target === document.body) { e.preventDefault(); $("btnAB").click(); }
+  if (e.key === "Enter" && e.ctrlKey) $("cmdGo").click();
+});
+</script>
+
+</body>
+</html>

@@ -16,6 +16,7 @@ import os
 import sys
 import glob
 import shutil
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -53,10 +54,20 @@ def pose_to_vec(T: np.ndarray) -> np.ndarray:
 
 
 def main():
-    vids = sorted(glob.glob(str(REPO / "data/*.mp4")))
-    if not vids:
-        raise SystemExit("data/ 下没有 mp4")
-    video = vids[0]
+    ap = argparse.ArgumentParser(description="视频 → canonical_ds(本体无关规范层)")
+    ap.add_argument("--video", default=None,
+                    help="源视频路径;不传则取 data/ 下字母序第一个 mp4(原行为)")
+    args = ap.parse_args()
+
+    if args.video:
+        video = args.video
+        if not Path(video).exists():
+            raise SystemExit(f"找不到视频: {video}")
+    else:
+        vids = sorted(glob.glob(str(REPO / "data/*.mp4")))
+        if not vids:
+            raise SystemExit("data/ 下没有 mp4")
+        video = vids[0]
     print("video:", video)
 
     det = SingleHandDetector(hand_type="Right", selfie=False,
@@ -83,7 +94,7 @@ def main():
                 continue
             kp_vec, wp_vec = last_kp, last_wp   # 丢检:沿用上一帧(与 detect_wrist 一致)
             n_miss += 1
-        else:
+        else:            
             kp2d_px = SingleHandDetector.parse_keypoint_2d(kp2d, frame.shape)
             T = estimate_wrist_pose(joint_pos, kp2d_px, wrist_rot, det.operator2mano, frame.shape)
             kp_vec = joint_pos.astype(np.float32).reshape(63)     # (21,3)→(63,) MANO 米

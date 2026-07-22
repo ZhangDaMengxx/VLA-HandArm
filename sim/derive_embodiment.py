@@ -135,7 +135,13 @@ def main():
         with open(traj, "wb") as f:
             pickle.dump(dict(arm=q_arm, hand=hand12, hand_joint_names=hand_names,
                              arm_joint_names=spec.arm_joint_names), f)
-        print(f"  emit {traj}")
+        # 顺带存一份可移植 npz:本环境是 numpy 2.x,ROS2 侧是 numpy 1.x 读不了 pkl,
+        # 但 .npy/.npz 格式跨版本稳定。ROS2 的 replay_traj.py 优先读同名 npz。
+        np.savez(traj.with_suffix(".npz"),
+                 arm=q_arm.astype(np.float64), hand=hand12.astype(np.float64),
+                 arm_joint_names=np.asarray(spec.arm_joint_names),
+                 hand_joint_names=np.asarray(hand_names))
+        print(f"  emit {traj}  (+ {traj.with_suffix('.npz').name})")
 
     import shutil
     if spec.out_root.exists():
