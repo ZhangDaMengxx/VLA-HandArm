@@ -29,6 +29,10 @@ class CanonicalFrame:
     wrist_pose: np.ndarray                  # (4,4) float32   手腕 6-DoF(位置需深度)
     task: str                               # 语言指令
     timestamp: float
+    hand_keypoints_2d: Optional[np.ndarray] = None  # (21,2) float32 像素
+    hand_visibility: Optional[np.ndarray] = None    # (21,) float32
+    hand_estimator_id: Optional[float] = None        # 0=mediapipe,1=wilor
+    mano: Optional[dict] = None                      # WiLoR/MANO 富层,按需填
     ego_depth: Optional[np.ndarray] = None  # (H,W) float32 米  辅助,不喂基座 VLA
 
 

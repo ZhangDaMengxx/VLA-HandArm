@@ -10,7 +10,9 @@ ASSETS = REPO / "assets"
 DATA = REPO / "data"
 CONFIGS = REPO / "configs"
 
-NERO_URDF = ASSETS / "nero" / "nero_description.urdf"
+NERO_DESCRIPTION = ASSETS / "nero_description"
+NERO_URDF = NERO_DESCRIPTION / "urdf" / "nero_description.urdf"
+NERO_FLANGE_URDF = NERO_DESCRIPTION / "urdf" / "nero_with_hand_flange_description.urdf"
 INSPIRE_URDF = ASSETS / "inspire_hand" / "inspire_hand_right.urdf"
 RETARGET_CONFIG = CONFIGS / "inspire_hand_right_local.yml"
 RETARGET_URDF_DIR = ASSETS          # dex_retargeting.set_default_urdf_dir;配置 urdf_path 相对它

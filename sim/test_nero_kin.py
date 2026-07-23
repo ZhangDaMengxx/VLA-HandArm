@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nero_kin import NeroKin
 
-kin = NeroKin(REPO / "assets/nero/nero_description.urdf")
+kin = NeroKin(REPO / "assets/nero_description/urdf/nero_description.urdf")
 q_home = np.array([1.2635, 0.9302, 2.6464, 1.7779, 1.0898, 0.6034, -0.6634])
 T = kin.fk(q_home)
 print("nq:", kin.model.nq)

@@ -178,6 +178,117 @@ def open_video(path: Path):
     return cap
 
 
+class BlankVideo:
+    def __init__(self, width: int = 640, height: int = 360):
+        self.frame = np.full((height, width, 3), 245, dtype=np.uint8)
+        cv2.putText(self.frame, "processed hand file", (32, height // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (82, 88, 102), 2, cv2.LINE_AA)
+
+    def read(self):
+        return True, self.frame.copy()
+
+    def get(self, prop):
+        if prop == cv2.CAP_PROP_FPS:
+            return 30.0
+        return 0.0
+
+    def release(self):
+        pass
+
+
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (0, 9), (9, 10), (10, 11), (11, 12),
+    (0, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17),
+]
+
+
+class SkeletonVideo:
+    def __init__(self, points: np.ndarray, width: int = 640, height: int = 360):
+        self.points = points.astype(np.float32)
+        self.width = width
+        self.height = height
+        self.i = 0
+
+    @classmethod
+    def from_canonical(cls, root: Path):
+        import pandas as pd
+
+        files = sorted((root / "data").glob("chunk-*/file-*.parquet"))
+        if not files:
+            raise FileNotFoundError(f"canonical parquet not found under {root}")
+        df = pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
+        if "frame_index" in df.columns:
+            df = df.sort_values("frame_index")
+        kp2d = None
+        if "observation.hand_keypoints_2d" in df.columns:
+            kp2d = np.stack(df["observation.hand_keypoints_2d"].to_numpy()).reshape(-1, 21, 2)
+            valid = np.isfinite(kp2d).all() and np.nanmax(np.abs(kp2d)) > 1.0
+            if valid:
+                return cls(kp2d)
+        kps = np.stack(df["observation.hand_keypoints"].to_numpy()).reshape(-1, 21, 3)
+        return cls(cls._project_3d(kps))
+
+    @staticmethod
+    def _project_3d(kps: np.ndarray, width: int = 640, height: int = 360) -> np.ndarray:
+        pts = kps[:, :, [0, 1]].copy()
+        out = np.zeros_like(pts, dtype=np.float32)
+        for i, p in enumerate(pts):
+            p = p - np.nanmean(p, axis=0, keepdims=True)
+            span = np.nanmax(np.ptp(p, axis=0))
+            scale = 180.0 / max(float(span), 1e-4)
+            out[i, :, 0] = p[:, 0] * scale + width * 0.5
+            out[i, :, 1] = -p[:, 1] * scale + height * 0.55
+        return out
+
+    def read(self):
+        idx = min(self.i, len(self.points) - 1)
+        self.i += 1
+        return True, self._draw(self.points[idx])
+
+    def get(self, prop):
+        if prop == cv2.CAP_PROP_FPS:
+            return 30.0
+        return 0.0
+
+    def release(self):
+        pass
+
+    def _draw(self, pts: np.ndarray) -> np.ndarray:
+        img = np.full((self.height, self.width, 3), 248, dtype=np.uint8)
+        cv2.putText(img, "processed hand skeleton", (24, 34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, (82, 88, 102), 1, cv2.LINE_AA)
+        pts_i = np.rint(pts).astype(int)
+        colors = {
+            "thumb": (71, 82, 255),
+            "index": (108, 199, 82),
+            "middle": (255, 156, 64),
+            "ring": (61, 196, 255),
+            "pinky": (255, 108, 197),
+            "palm": (132, 124, 120),
+        }
+        for a, b in HAND_CONNECTIONS:
+            col = colors["palm"]
+            if max(a, b) <= 4:
+                col = colors["thumb"]
+            elif max(a, b) <= 8:
+                col = colors["index"]
+            elif max(a, b) <= 12:
+                col = colors["middle"]
+            elif max(a, b) <= 16:
+                col = colors["ring"]
+            elif max(a, b) <= 20:
+                col = colors["pinky"]
+            pa, pb = tuple(pts_i[a]), tuple(pts_i[b])
+            cv2.line(img, pa, pb, col, 2, cv2.LINE_AA)
+        for j, p in enumerate(pts_i):
+            cv2.circle(img, tuple(p), 4 if j == 0 else 3, (32, 36, 44), -1, cv2.LINE_AA)
+        return img
+
+
 def primary_ip() -> str:
     """WSL 的主 IP(非环回)——Windows 浏览器要用它连回 WSL。"""
     import socket
@@ -200,6 +311,8 @@ def main():
                     help="轨迹 pkl,可写 标签=路径;可重复做 A/B。默认 robot_traj_nero_inspire.pkl(回退 robot_traj.pkl)")
     ap.add_argument("--urdf", default=str(REPO / "sim/assets/nero_inspire_right.urdf"))
     ap.add_argument("--video", default=str(REPO / "data/hand_1.mp4"))
+    ap.add_argument("--no-video", action="store_true",
+                    help="不读取源视频,Human 面板使用占位帧;用于外部处理好的 hand file")
     ap.add_argument("--fps", type=float, default=25.0)
     ap.add_argument("--no-skeleton", dest="skeleton", action="store_false",
                     help="不在 human 面板上叠 MediaPipe 骨架(跳过重检测,更快)")
@@ -247,7 +360,15 @@ def main():
             from single_hand_detector import SingleHandDetector
         detector = SingleHandDetector(hand_type="Right", selfie=False)
 
-    cap = open_video(Path(args.video))
+    if args.no_video:
+        try:
+            cap = SkeletonVideo.from_canonical(REPO / "sim/out/canonical_ds")
+            log("Human 面板使用 canonical hand skeleton")
+        except Exception as e:
+            log(f"canonical skeleton unavailable, fallback blank: {e}")
+            cap = BlankVideo()
+    else:
+        cap = open_video(Path(args.video))
     vid_fps = cap.get(cv2.CAP_PROP_FPS)
     fps = vid_fps if vid_fps and vid_fps > 1 else args.fps   # 真实播放帧率(轨迹与视频帧 1:1)
 

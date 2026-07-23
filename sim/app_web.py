@@ -142,7 +142,8 @@ def _run_step(cmd, log, caption, floor, ceil, emit) -> bool:
     return p.returncode == 0
 
 
-def _start_replay(video: str | None, log: list[str], ab: bool = False) -> str | None:
+def _start_replay(video: str | None, log: list[str], ab: bool = False,
+                  no_video: bool = False) -> str | None:
     """后台起 replay_rerun --serve,读 stdout 直到解析出 web 地址,返回 URL(进程留活)。
     ab=True 时同时叠加 raw 与稳定化两条轨迹做 A/B 对比。"""
     global _replay_proc
@@ -153,7 +154,9 @@ def _start_replay(video: str | None, log: list[str], ab: bool = False) -> str | 
     if ab:
         cmd += ["--traj", f"raw={REPO}/sim/out/robot_traj_raw.pkl",
                 "--traj", f"stab={REPO}/sim/out/robot_traj_nero_inspire.pkl"]
-    if video:
+    if no_video:
+        cmd += ["--no-video", "--no-skeleton"]
+    elif video:
         cmd += ["--video", str(video)]
     log.append("$ " + " ".join(cmd))
     _replay_proc = subprocess.Popen(cmd, cwd=str(REPO), stdout=subprocess.PIPE,
@@ -173,15 +176,21 @@ def _start_replay(video: str | None, log: list[str], ab: bool = False) -> str | 
     return None
 
 
-def run_pipeline(video: str | None, skip_regen: bool, ab: bool, emit) -> None:
+def run_pipeline(input_path: str | None, skip_regen: bool, ab: bool, emit,
+                 source: str = "video") -> None:
     """编排三步管线,全程 emit 事件:progress / log / rerun_url / done / error。"""
     log: list[str] = []
-    if not video:
-        emit({"type": "error", "msg": "请先上传视频(.mp4)"})
+    if not input_path:
+        emit({"type": "error", "msg": "请先上传视频或处理结果文件"})
         return
     if not skip_regen:
-        if not _run_step([LEROBOT_PY, "sim/build_canonical.py", "--video", str(video)],
-                         log, "① 规范层 · 检测人手关键点", 6, 42, emit):
+        if source == "handfile":
+            cmd = [LEROBOT_PY, "sim/build_canonical_from_processed.py", "--input", str(input_path)]
+            caption = "① 规范层 · 导入外部手部结果"
+        else:
+            cmd = [LEROBOT_PY, "sim/build_canonical.py", "--video", str(input_path)]
+            caption = "① 规范层 · 检测人手关键点"
+        if not _run_step(cmd, log, caption, 6, 42, emit):
             emit({"type": "error", "msg": "① 规范层生成失败 · 看日志"})
             return
         if not _run_step([LEROBOT_PY, "sim/derive_embodiment.py", "--emit-traj"],
@@ -189,7 +198,7 @@ def run_pipeline(video: str | None, skip_regen: bool, ab: bool, emit) -> None:
             emit({"type": "error", "msg": "② 本体层生成失败 · 看日志"})
             return
     emit({"type": "progress", "pct": 84, "msg": "③ 启动 Rerun 服务"})
-    url = _start_replay(str(video), log, ab=ab)
+    url = _start_replay(str(input_path), log, ab=ab, no_video=(source == "handfile"))
     if not url:
         emit({"type": "error", "msg": "③ 未获取到 Rerun 地址 · 看日志"})
         return
@@ -354,16 +363,19 @@ async def status() -> JSONResponse:
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)) -> JSONResponse:
-    """收视频存到临时目录,返回后续管线要用的绝对路径。"""
-    safe = re.sub(r"[^\w.\-]", "_", file.filename or "upload.mp4")
+    """收视频或外部手部处理结果,存到临时目录,返回后续管线要用的绝对路径。"""
+    safe = re.sub(r"[^\w.\-]", "_", file.filename or "upload")
     dst = Path(tempfile.gettempdir()) / f"nero_web_{safe}"
     with open(dst, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    return JSONResponse({"path": str(dst), "name": file.filename})
+    suffix = Path(safe).suffix.lower()
+    source = "handfile" if suffix in {".npz", ".pkl", ".pickle", ".json"} else "video"
+    return JSONResponse({"path": str(dst), "name": file.filename, "source": source})
 
 
 @app.get("/api/run")
-async def run(video: str, skip: bool = False, ab: bool = False) -> StreamingResponse:
+async def run(video: str, skip: bool = False, ab: bool = False,
+              source: str = "video") -> StreamingResponse:
     """SSE:管线在线程里跑,事件推给浏览器(EventSource 消费)。"""
     async def stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -374,7 +386,7 @@ async def run(video: str, skip: bool = False, ab: bool = False) -> StreamingResp
 
         def worker() -> None:
             try:
-                run_pipeline(video, skip, ab, emit)
+                run_pipeline(video, skip, ab, emit, source=source)
             except Exception as e:                       # noqa: BLE001
                 emit({"type": "error", "msg": f"管线异常: {e}"})
             finally:

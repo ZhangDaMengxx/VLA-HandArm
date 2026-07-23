@@ -96,12 +96,13 @@ def solve_arm(wps, spec):
     kin = NeroKin(spec.arm_urdf, ee_frame=spec.ee_frame)
     anchor = kin.fk(spec.q_home)
     aR, ap = anchor[:3, :3], anchor[:3, 3]
+    ee_fix = Rot.from_euler("xyz", spec.ee_frame_correction_rpy).as_matrix()
     R0 = Rs[0]
     q_raw = np.zeros((N, 7))
     prev = spec.q_home.copy()
     ok = 0
     for f in range(N):
-        Rt = (Rs[f] @ R0.T) @ aR
+        Rt = (Rs[f] @ R0.T) @ aR @ ee_fix
         Tt = np.eye(4); Tt[:3, :3] = Rt; Tt[:3, 3] = ap
         prev, good = kin.ik(Tt, prev, q_rest=spec.q_home, k_null=spec.k_null)
         ok += int(good)

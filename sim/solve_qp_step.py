@@ -21,7 +21,7 @@ from pathlib import Path
 from nero_kin import NeroKin
 
 np.set_printoptions(precision=4, suppress=True, linewidth=140)
-URDF = Path(__file__).resolve().parent.parent / "assets" / "nero" / "nero_description.urdf"
+URDF = Path(__file__).resolve().parent.parent / "assets" / "nero_description" / "urdf" / "nero_description.urdf"
 kin = NeroKin(URDF)
 model = kin.model
 

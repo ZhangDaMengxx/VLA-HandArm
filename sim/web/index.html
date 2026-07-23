@@ -339,6 +339,7 @@ body {
 <!-- 左侧快捷控制栏 -->
 <div class="left-panel">
   <button class="ctrl primary" id="btnUpload">↑<span class="tip">上传视频</span></button>
+  <button class="ctrl" id="btnUploadHand">⎇<span class="tip">上传手部结果</span></button>
   <button class="ctrl" id="btnAB">⇄<span class="tip">A/B · Raw ↔ Stabilized</span></button>
   <button class="ctrl" id="btnReplay">↺<span class="tip">重新生成</span></button>
   <button class="ctrl" id="btnFull2">⤢<span class="tip">视口全屏</span></button>
@@ -379,7 +380,7 @@ body {
 <div class="bottom-bar">
   <div class="cmd" id="cmd">
     <button class="cmd-add" id="cmdAdd" title="上传视频">+</button>
-    <span class="cmd-name empty" id="cmdName">上传视频或拖拽到此…</span>
+    <span class="cmd-name empty" id="cmdName">上传视频 / 手部结果文件…</span>
     <label class="cmd-skip"><input type="checkbox" id="skipChk">跳过重算</label>
     <div class="ab" id="abToggle">
       <button class="ab-btn active" data-v="stab">Stabilized</button>
@@ -418,13 +419,13 @@ body {
 <div class="upload-zone" id="uploadZone">
   <div class="upload-card">
     <div class="upload-ic">↗</div>
-    <div class="upload-title">拖入你的视频</div>
-    <div class="upload-sub">MP4 格式,第一视角人手操作</div>
+    <div class="upload-title" id="uploadTitle">拖入视频或手部结果</div>
+    <div class="upload-sub" id="uploadSub">MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON</div>
     <button class="upload-btn" id="selectFileBtn">选择文件</button>
-    <div class="upload-hint">或拖拽到屏幕任意位置 · Esc 关闭</div>
+    <div class="upload-hint" id="uploadHint">手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭</div>
   </div>
 </div>
-<input type="file" id="fileInput" accept="video/mp4,video/*">
+<input type="file" id="fileInput" accept="video/mp4,video/*,.npz,.pkl,.pickle,.json">
 
 <script>
 // ===== state(13):按真实 ROS 关节名建行,带各自限位(和 ros_joint_writer 一致)=====
@@ -440,7 +441,8 @@ const HAND = [
 const ALLJ = [...ARM, ...HAND];
 const jid = k => "j_" + k.replace(/[^\w]/g, "");
 
-const S = { video:null, name:null, abMode:"stab", running:false, hasData:false,
+const S = { video:null, name:null, source:"video", uploadMode:"any",
+            abMode:"stab", running:false, hasData:false,
             mode:"replay", ws:null, live:false };
 const $ = id => document.getElementById(id);
 
@@ -509,17 +511,37 @@ function toastEnd(kind, msg) {   // "done" | "err"
 }
 
 // ===== 上传 =====
-function openUpload() { $("uploadZone").classList.add("active"); }
+function openUpload(mode="any") {
+  S.uploadMode = mode;
+  if (mode === "handfile") {
+    $("uploadTitle").textContent = "拖入手部处理结果";
+    $("uploadSub").textContent = "支持 NPZ / PKL / JSON,可来自 MediaPipe 或 WiLoR";
+    $("uploadHint").textContent = "最低字段: hand_keypoints(N,21,3) + wrist_pose(N,7)";
+    $("fileInput").accept = ".npz,.pkl,.pickle,.json";
+  } else if (mode === "video") {
+    $("uploadTitle").textContent = "拖入你的视频";
+    $("uploadSub").textContent = "MP4 格式,第一视角人手操作";
+    $("uploadHint").textContent = "上传后会在本机运行手部估计和重定向";
+    $("fileInput").accept = "video/mp4,video/*";
+  } else {
+    $("uploadTitle").textContent = "拖入视频或手部结果";
+    $("uploadSub").textContent = "MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON";
+    $("uploadHint").textContent = "手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭";
+    $("fileInput").accept = "video/mp4,video/*,.npz,.pkl,.pickle,.json";
+  }
+  $("uploadZone").classList.add("active");
+}
 function closeUpload() { $("uploadZone").classList.remove("active", "drag"); }
-$("btnUpload").onclick = openUpload;
-$("cmdAdd").onclick = openUpload;
+$("btnUpload").onclick = () => openUpload("video");
+$("btnUploadHand").onclick = () => openUpload("handfile");
+$("cmdAdd").onclick = () => openUpload("any");
 $("selectFileBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = e => { if (e.target.files[0]) handleFile(e.target.files[0]); };
 $("uploadZone").onclick = e => { if (e.target === $("uploadZone")) closeUpload(); };
 
 ["dragenter","dragover","dragleave","drop"].forEach(ev =>
   document.body.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
-document.body.addEventListener("dragenter", openUpload);
+document.body.addEventListener("dragenter", () => openUpload("any"));
 $("uploadZone").addEventListener("dragover", () => $("uploadZone").classList.add("drag"));
 $("uploadZone").addEventListener("dragleave", e => {
   if (e.target === $("uploadZone")) $("uploadZone").classList.remove("drag"); });
@@ -534,11 +556,14 @@ async function handleFile(file) {
   try {
     const r = await fetch("/api/upload", { method: "POST", body: fd });
     const j = await r.json();
-    S.video = j.path; S.name = j.name || file.name;
-    $("cmdName").textContent = S.name;
+    S.video = j.path; S.name = j.name || file.name; S.source = j.source || "video";
+    const prefix = S.source === "handfile" ? "手部结果 · " : "视频 · ";
+    $("cmdName").textContent = prefix + S.name;
     $("cmdGo").disabled = false;
     $("cmd").classList.add("armed");
-    $("centerStatus").textContent = "已就绪 · 点『生成』";
+    $("centerStatus").textContent = S.source === "handfile"
+      ? "外部手部结果已就绪 · 点『生成』"
+      : "视频已就绪 · 点『生成』";
   } catch (e) {
     $("cmdName").textContent = "上传失败,重试";
   }
@@ -562,7 +587,7 @@ function runPipeline() {
   $("toast").classList.add("show-log"); toastShow("① 启动管线…");
   const skip = $("skipChk").checked;
   const ab = S.abMode === "ab";
-  const url = `/api/run?video=${encodeURIComponent(S.video)}&skip=${skip}&ab=${ab}`;
+  const url = `/api/run?video=${encodeURIComponent(S.video)}&skip=${skip}&ab=${ab}&source=${encodeURIComponent(S.source)}`;
   const es = new EventSource(url);
   es.onmessage = e => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }

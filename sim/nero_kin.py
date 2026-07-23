@@ -1,4 +1,4 @@
-"""NERO 7-DoF FK/IK —— 纯 pinocchio,从 URDF 加载(默认 assets/nero)。
+"""NERO 7-DoF FK/IK —— 纯 pinocchio,从 URDF 加载(默认 assets/nero_description)。
 替代 pinocchio-kinematics-lite 的 NeroKinematics,使仓库不依赖那个第三方仓库。
 IK 用阻尼最小二乘(DLS,frame 版,含 Jlog6 修正),和 pinocchio 官方 IK 例子一致。
 """

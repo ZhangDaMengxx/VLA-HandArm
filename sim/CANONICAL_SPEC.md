@@ -89,10 +89,11 @@
 | 字段 | dtype | shape | 单位 | 坐标系 | 来源 | 状态 |
 |---|---|---|---|---|---|---|
 | `observation.hand_keypoints` | float32 | (63,)=21×3 | 米 | T0=相机系 / **T1=世界系** | 3D landmarks,序=`KP_NAMES` | ✅(单目近似米制)/🔜真米制 |
-| `observation.hand_keypoints_2d` | float32 | (42,)=21×2 | 像素 u,v | 图像 | 2D landmarks | ✅(近零成本,建议补) |
+| `observation.hand_keypoints_2d` | float32 | (42,)=21×2 | 像素 u,v | 图像 | 2D landmarks | ✅ |
 | `observation.hand_visibility` | float32 | (21,) | 0–1 | — | presence/可见度 | ✅ |
 | `observation.wrist_pose` | float32 | (7,) | `t`(m)+quat(xyzw) | T0=相机系 / **T1=世界系** | `pose_to_vec()`,rot=手腕系姿态 | ✅/🔜去 home 锚定 |
-| `handedness` | str/int | 标量 | — | — | `"right"/"left"` | ✅(单手也显式存) |
+| `observation.hand_estimator_id` | float32 | (1,) | — | — | `0=mediapipe,1=wilor` | ✅ |
+| `handedness` | str/int | 标量 | — | — | `"right"/"left"` | 🔜(单手也显式存) |
 
 **可选富层(仅 WiLoR 等参数化估计器)**
 
@@ -128,6 +129,13 @@
 | `lighting` | str | — | 光照条件标签 |
 | `date` | str | ISO8601 | 采集日期 |
 | `calib_id` | str | — | 关联到哪套内外参标定 |
+
+当前实现说明:
+
+- `build_canonical.py` 已通过 `hand_estimators.py` 走估计器适配器接口。
+- 当前可用后端为 `--hand-estimator mediapipe`。
+- `--hand-estimator wilor` 已预留入口, 但 WiLoR 模型/runtime 未接入前会显式报错。
+- `observation.hand_estimator_id` 是当前 LeRobot 写盘里的机器可读来源字段; episode 级字符串 `hand_estimator` 后续随元数据管理一起补。
 
 ---
 
