@@ -208,9 +208,9 @@ HAND_CONNECTIONS = [
 
 class SkeletonVideo:
     def __init__(self, points: np.ndarray, width: int = 640, height: int = 360):
-        self.points = points.astype(np.float32)
         self.width = width
         self.height = height
+        self.points = self._fit_to_canvas(points.astype(np.float32), width, height)
         self.i = 0
 
     @classmethod
@@ -226,15 +226,53 @@ class SkeletonVideo:
         kp2d = None
         if "observation.hand_keypoints_2d" in df.columns:
             kp2d = np.stack(df["observation.hand_keypoints_2d"].to_numpy()).reshape(-1, 21, 2)
-            valid = np.isfinite(kp2d).all() and np.nanmax(np.abs(kp2d)) > 1.0
+            valid = np.isfinite(kp2d).all() and np.nanmax(np.ptp(kp2d, axis=1)) > 1e-4
             if valid:
+                # External pipelines may export normalized image coordinates.
+                if np.nanmax(np.abs(kp2d)) <= 2.0:
+                    kp2d = kp2d.copy()
+                    kp2d[:, :, 0] *= 640.0
+                    kp2d[:, :, 1] *= 360.0
                 return cls(kp2d)
         kps = np.stack(df["observation.hand_keypoints"].to_numpy()).reshape(-1, 21, 3)
         return cls(cls._project_3d(kps))
 
     @staticmethod
+    def _fit_to_canvas(points: np.ndarray, width: int, height: int, margin: int = 42) -> np.ndarray:
+        out = np.empty_like(points, dtype=np.float32)
+        avail_w = max(float(width - 2 * margin), 1.0)
+        avail_h = max(float(height - 2 * margin), 1.0)
+        for i, pts in enumerate(points):
+            valid = np.isfinite(pts).all(axis=1)
+            if valid.sum() < 2:
+                out[i] = np.array([width * 0.5, height * 0.55], dtype=np.float32)
+                continue
+            p = pts.copy()
+            lo = np.nanmin(p[valid], axis=0)
+            hi = np.nanmax(p[valid], axis=0)
+            span = np.maximum(hi - lo, 1e-4)
+            scale = min(avail_w / float(span[0]), avail_h / float(span[1]))
+            center = (lo + hi) * 0.5
+            target = np.array([width * 0.5, height * 0.55], dtype=np.float32)
+            out[i] = (p - center) * scale + target
+        return out
+
+    @staticmethod
     def _project_3d(kps: np.ndarray, width: int = 640, height: int = 360) -> np.ndarray:
-        pts = kps[:, :, [0, 1]].copy()
+        flat = kps.reshape(-1, 3)
+        flat = flat[np.isfinite(flat).all(axis=1)]
+        if len(flat) < 3:
+            return np.full((len(kps), 21, 2), [width * 0.5, height * 0.55], dtype=np.float32)
+        center = np.nanmean(flat, axis=0, keepdims=True)
+        centered = flat - center
+        _, s, vh = np.linalg.svd(centered, full_matrices=False)
+        if len(s) >= 2 and s[1] > max(s[0] * 1e-3, 1e-6):
+            basis = vh[:2].T
+            pts = (kps - center.reshape(1, 1, 3)) @ basis
+        else:
+            spreads = np.ptp(flat, axis=0)
+            axes = np.argsort(spreads)[-2:]
+            pts = kps[:, :, axes].copy()
         out = np.zeros_like(pts, dtype=np.float32)
         for i, p in enumerate(pts):
             p = p - np.nanmean(p, axis=0, keepdims=True)
