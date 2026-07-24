@@ -14,7 +14,7 @@ out/canonical_ds/  ★ 本体无关      LeRobotDataset(canonical):ego RGB + han
    │                                 + hand_keypoints_2d + hand_visibility + wrist_pose(7,相机系) + task
    │  derive_embodiment.py --robot X   本体层「编译」:canonical + RobotSpec
    │    手: kp → dex-retarget → 12 关节 → 取 6 驱动
-   │    臂: wrist_pose → 稳定化 → NeroKin IK(home 锚定)
+   │    臂: wrist_pose → 稳定化 → NeroKin IK(home 锚定;可选位置相对首帧跟随)
    ▼
 out/lerobot_ds_X/  ★ 训练数据      LeRobotDataset:state(13) / action(13) / images.ego
 out/robot_traj_X.pkl (--emit-traj)  仅可视化缓存,非训练数据源
@@ -29,6 +29,7 @@ out/robot_traj_X.pkl (--emit-traj)  仅可视化缓存,非训练数据源
 python sim/build_nero_inspire.py             # 装配 URDF(一次即可)
 python sim/build_canonical.py                # 视频 → 规范层(--video 指定视频,--hand-estimator mediapipe)
 python sim/build_canonical_from_processed.py --input hand_result.npz
+python sim/build_canonical_from_rgbd.py --input-root kinect2_middle/kinect2_middle --camera kinect2_middle
 python sim/derive_embodiment.py --emit-traj  # 规范层 → 本体数据集 + 轨迹
 python sim/replay_rerun.py --serve           # Rerun 三面板可视化
 ```
@@ -45,7 +46,9 @@ python sim/replay_rerun.py --serve           # Rerun 三面板可视化
 
 **外部处理结果导入** `build_canonical_from_processed.py`:把其他电脑跑好的 MediaPipe/WiLoR 结果导成 canonical。支持 `.npz/.pkl/.json`;最低字段为 `hand_keypoints` `(N,21,3)`/`(N,63)` 和 `wrist_pose` `(N,7)`/`(N,4,4)`,可选 `hand_keypoints_2d`、`hand_visibility`、`fps`、`hand_estimator_id`。Web 左侧“上传手部结果”按钮走这条路径;没有原视频时 Human 面板会从 canonical 画 2D/3D 投影手部骨架,用于对照机器人重定向是否贴合。
 
-**本体层** `derive_embodiment.py`:读 canonical + `RobotSpec`(`robot_specs.py`)→ 手 retarget + 臂稳定化/IK + SavGol → `out/lerobot_ds_X`(加 `--emit-traj` 出轨迹)。state/action = (13) = [7 臂 + 6 手驱动]。
+**RGB-D 融合导入** `build_canonical_from_rgbd.py`:读取 `color/frameXXX.png` + `depth/frameXXX.png` + `calibration.json`。先用 `--hand-estimator mediapipe` 得到 21 个 2D 点,再从 aligned depth 按内参反投影得到 wrist 的 metric 世界系位置,最后用 `extrinsics.direction=camera_to_world` 的 `wTc` 转世界系,写入 metric `observation.wrist_pose`。`observation.hand_keypoints` 默认仍写 MANO/手腕局部系,因为 dex-retargeting 要求 `joint_pos` 是 MANO 局部 21 点;如果强行写每个关键点的 depth-world 3D,手指容易查到物体/背景深度而误握拳。当前默认保持 MediaPipe 单手提取,默认 `--target-hand Right --max-num-hands 1`;在 `selfie=False` 下这个标签对应当前样例里画面上的目标手。需要调试逐点深度时可显式加 `--hand-keypoints-source depth_world`。
+
+**本体层** `derive_embodiment.py`:读 canonical + `RobotSpec`(`robot_specs.py`)→ 手 retarget + 臂稳定化/IK + SavGol → `out/lerobot_ds_X`(加 `--emit-traj` 出轨迹)。state/action = (13) = [7 臂 + 6 手驱动]。臂末端位置默认仍用稳定的 home 锚点;要验证腕部位置解锁可加 `--arm-position-mode relative --arm-position-limit 0.05`,脚本会使用 `wrist_pose` 相对首帧的平移量叠加到 home 末端位置。
 
 > **手腕朝向稳定化**(`wrist_stabilize.py`):臂晃动几乎全来自手腕朝向相对首帧漂到 43°,其中 91% 是**出平面**(手掌法向倾斜,单目深度估不准),面内滚转只有几度、基本是真手势。故 derive 默认开两道:`gate_deg`(残差门限剔离群跳变帧)+ `oop_alpha`(衰减出平面分量、保面内),参数在 RobotSpec 里。效果:臂运动幅度 184°→57°、IK 全收敛、真手势保留。是各向异性可观测性加权的轻量近似;完整 RTS/因子图待 Femto 深度。
 

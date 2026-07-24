@@ -30,10 +30,11 @@ class SingleHandDetector:
         min_detection_confidence=0.8,
         min_tracking_confidence=0.8,
         selfie=False,
+        max_num_hands=1,
     ):
         self.hand_detector = mp.solutions.hands.Hands(
             static_image_mode=False,
-            max_num_hands=1,
+            max_num_hands=max_num_hands,
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
@@ -79,30 +80,37 @@ class SingleHandDetector:
         return image
 
     def detect(self, rgb):
+        detections = self.detect_all(rgb)
+        for det in detections:
+            if det["label"] == self.detected_hand_type:
+                return det["num_box"], det["joint_pos"], det["keypoint_2d"], det["wrist_rot"]
+        return 0, None, None, None
+
+    def detect_all(self, rgb):
         results = self.hand_detector.process(rgb)
         if not results.multi_hand_landmarks:
-            return 0, None, None, None
+            return []
 
-        desired_hand_num = -1
+        detections = []
+        num_box = len(results.multi_hand_landmarks)
         for i in range(len(results.multi_hand_landmarks)):
             label = results.multi_handedness[i].ListFields()[0][1][0].label
-            if label == self.detected_hand_type:
-                desired_hand_num = i
-                break
-        if desired_hand_num < 0:
-            return 0, None, None, None
+            keypoint_3d = results.multi_hand_world_landmarks[i]
+            keypoint_2d = results.multi_hand_landmarks[i]
 
-        keypoint_3d = results.multi_hand_world_landmarks[desired_hand_num]
-        keypoint_2d = results.multi_hand_landmarks[desired_hand_num]
-        num_box = len(results.multi_hand_landmarks)
+            keypoint_3d_array = self.parse_keypoint_3d(keypoint_3d)
+            keypoint_3d_array = keypoint_3d_array - keypoint_3d_array[0:1, :]
+            mediapipe_wrist_rot = self.estimate_frame_from_hand_points(keypoint_3d_array)
+            joint_pos = keypoint_3d_array @ mediapipe_wrist_rot @ self.operator2mano
 
-        # Parse 3d keypoint from MediaPipe hand detector
-        keypoint_3d_array = self.parse_keypoint_3d(keypoint_3d)
-        keypoint_3d_array = keypoint_3d_array - keypoint_3d_array[0:1, :]
-        mediapipe_wrist_rot = self.estimate_frame_from_hand_points(keypoint_3d_array)
-        joint_pos = keypoint_3d_array @ mediapipe_wrist_rot @ self.operator2mano
-
-        return num_box, joint_pos, keypoint_2d, mediapipe_wrist_rot
+            detections.append({
+                "label": label,
+                "num_box": num_box,
+                "joint_pos": joint_pos,
+                "keypoint_2d": keypoint_2d,
+                "wrist_rot": mediapipe_wrist_rot,
+            })
+        return detections
 
     @staticmethod
     def parse_keypoint_3d(

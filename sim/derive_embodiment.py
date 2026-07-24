@@ -5,7 +5,7 @@
 
 对每帧:
   手:kp(21,3) → ref = kp[task_i]-kp[origin_i] → dex-retarget → 12 关节 → 取 6 驱动。
-  臂:wrist_pose → 稳定化(gate+出平面衰减+SavGol,见 wrist_stabilize)→ NeroKin IK(相对首帧,home 锚定)→ SavGol。
+  臂:wrist_pose → 稳定化(gate+出平面衰减+SavGol,见 wrist_stabilize)→ NeroKin IK(相对首帧,home 锚定;位置可相对跟随)→ SavGol。
   state/action(13)= [7 臂 + 6 手],action = 下一帧目标。ego 从 canonical_ds 取。
 
 用法:
@@ -80,9 +80,24 @@ def retarget_hand(kps, spec):
     return hand, names
 
 
-def solve_arm(wps, spec):
+def _smooth_relative_positions(wps, spec) -> np.ndarray:
+    """wrist_pose 位置 → 相对首帧的末端位移。默认用于解锁旧的固定腕部位置。"""
+    ps = np.asarray(wps[:, :3, 3], dtype=np.float64)
+    if len(ps) >= spec.savgol_win:
+        ps = savgol_filter(ps, spec.savgol_win, spec.savgol_poly, axis=0)
+    dp = (ps - ps[0]) * float(spec.arm_position_gain)
+    limit = float(spec.arm_position_limit_m)
+    if limit > 0:
+        norms = np.linalg.norm(dp, axis=1)
+        mask = norms > limit
+        dp[mask] *= (limit / norms[mask])[:, None]
+    return dp
+
+
+def solve_arm(wps, spec, arm_position_mode: str | None = None):
     """(N,4,4) 手腕位姿 → (N,7) 臂关节。稳定化 + IK(相对首帧,home 锚定)。"""
     N = len(wps)
+    arm_position_mode = arm_position_mode or spec.arm_position_mode
     quats = Rot.from_matrix(wps[:, :3, :3]).as_quat()
     for i in range(1, N):
         if np.dot(quats[i - 1], quats[i]) < 0:
@@ -98,16 +113,25 @@ def solve_arm(wps, spec):
     aR, ap = anchor[:3, :3], anchor[:3, 3]
     ee_fix = Rot.from_euler("xyz", spec.ee_frame_correction_rpy).as_matrix()
     R0 = Rs[0]
+    if arm_position_mode == "fixed":
+        dp = np.zeros((N, 3), dtype=np.float64)
+    elif arm_position_mode == "relative":
+        dp = _smooth_relative_positions(wps, spec)
+    else:
+        raise SystemExit(f"未知 arm_position_mode '{arm_position_mode}', 可选 fixed/relative")
     q_raw = np.zeros((N, 7))
     prev = spec.q_home.copy()
     ok = 0
     for f in range(N):
         Rt = (Rs[f] @ R0.T) @ aR @ ee_fix
-        Tt = np.eye(4); Tt[:3, :3] = Rt; Tt[:3, 3] = ap
+        Tt = np.eye(4); Tt[:3, :3] = Rt; Tt[:3, 3] = ap + dp[f]
         prev, good = kin.ik(Tt, prev, q_rest=spec.q_home, k_null=spec.k_null)
         ok += int(good)
         q_raw[f] = prev
-    print(f"  臂 IK success {ok}/{N}  gate={spec.gate_deg}° oop-α={spec.oop_alpha}")
+    print(
+        f"  臂 IK success {ok}/{N}  gate={spec.gate_deg}° oop-α={spec.oop_alpha} "
+        f"pos={arm_position_mode} max|dp|={np.linalg.norm(dp, axis=1).max():.3f}m"
+    )
     return savgol_filter(q_raw, spec.savgol_win, spec.savgol_poly, axis=0)
 
 
@@ -115,8 +139,18 @@ def main():
     ap = argparse.ArgumentParser(description="canonical_ds + RobotSpec → 本体 LeRobotDataset")
     ap.add_argument("--robot", default="nero_inspire", help="本体名(见 robot_specs.SPECS)")
     ap.add_argument("--emit-traj", action="store_true", help="顺带写 robot_traj_<robot>.pkl 供 replay_rerun")
+    ap.add_argument("--arm-position-mode", choices=["relative", "fixed"], default=None,
+                    help="relative=跟随 wrist_pose 相对首帧位移; fixed=旧逻辑锁定 home 末端位置")
+    ap.add_argument("--arm-position-gain", type=float, default=None,
+                    help="相对腕部平移增益;默认用 RobotSpec")
+    ap.add_argument("--arm-position-limit", type=float, default=None,
+                    help="相对 home 的最大末端平移半径(米);默认用 RobotSpec")
     args = ap.parse_args()
     spec = get_spec(args.robot)
+    if args.arm_position_gain is not None:
+        spec.arm_position_gain = args.arm_position_gain
+    if args.arm_position_limit is not None:
+        spec.arm_position_limit_m = args.arm_position_limit
     print(f"派生本体: {spec.name}")
 
     kps, wps, egos, fps = load_canonical()
@@ -125,7 +159,7 @@ def main():
 
     hand12, hand_names = retarget_hand(kps, spec)
     hand12 = np.clip(savgol_filter(hand12, spec.savgol_win, spec.savgol_poly, axis=0), 0.0, 1.55)
-    q_arm = solve_arm(wps, spec)
+    q_arm = solve_arm(wps, spec, args.arm_position_mode)
 
     act_idx = [hand_names.index(n) for n in spec.hand_actuated]
     state = np.concatenate([q_arm, hand12[:, act_idx]], axis=1).astype(np.float32)   # (N,13)

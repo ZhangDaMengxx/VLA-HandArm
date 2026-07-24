@@ -30,10 +30,13 @@ class RobotSpec:
     q_home: np.ndarray              # (nq,) home 姿态(法兰朝向 + 位置锚点)
     arm_joint_names: List[str]      # 进入 state/action 的臂关节名
     ee_frame_correction_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    arm_position_mode: str = "fixed"     # fixed=稳定默认; relative=跟随 wrist_pose 相对位移(需先做轴向/外参验证)
+    arm_position_gain: float = 1.0
+    arm_position_limit_m: float = 0.05   # 相对 home 的最大末端位移半径,避免视觉跳点甩飞 IK
     # --- 稳定化 / 平滑(见 wrist_stabilize.py + build_robot_traj)---
     gate_deg: float = 25.0  # 每帧旋转超过 8 度会被限幅，快转很容易被截掉
-    oop_alpha: float = 0.6  #出平面旋转只保留 40%，手心/手背翻转可能被压小
-    savgol_win: int = 11   #11 帧平滑，动作会变慢、峰值会被抹掉
+    oop_alpha: float = 1.0  #出平面旋转只保留 40%，手心/手背翻转可能被压小
+    savgol_win: int = 9   #11 帧平滑，动作会变慢、峰值会被抹掉
     savgol_poly: int = 3
     """
         - savgol_poly=2：用二次曲线，适合保留加速/减速动作，比线性平滑自然。
@@ -64,7 +67,7 @@ NERO_INSPIRE = RobotSpec(
     ee_frame="link7",
     # 视频手腕坐标系 -> NERO 末端坐标系的固定补偿。
     # 当前视频回放中手腕轴朝 +Y 横向;绕 X +90 deg 后映射到 +Z,手心更接近朝向相机。
-    ee_frame_correction_rpy=(np.pi / 2.0, -np.pi / 2.0, 0.0),
+    ee_frame_correction_rpy=(np.pi / 2.0, np.pi / 2.0, 0.0),
     q_home=np.array([1.2635, 0.9302, 2.6464, 1.7779, 1.0898, 0.6034, -0.6634]),
     arm_joint_names=ARM_JOINTS,
 )
