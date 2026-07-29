@@ -42,6 +42,37 @@ def physical_wrist_orientation(mediapipe_wrist_rot, operator2mano):
     return np.stack([x, y, z], axis=1)
 
 
+def depth_wrist_orientation(palm_pts, mono_R, min_planarity=0.1):
+    """用深度反投的掌骨点拟合手腕 physical 朝向(相机系)。
+
+    palm_pts: (5,3) 深度反投的 [腕, 食指MCP, 中指MCP, 环指MCP, 小指MCP](米,相机系)。
+    mono_R:   (3,3) 单目 physical 朝向,仅借它给平面法向定符号(手心/手背歧义)。
+    返回 (3x3, resid_mm) 或 (None, resid_mm)——点接近共线等退化时返回 None,调用方回退单目。
+
+    约定与 physical_wrist_orientation 一致:X=手掌法向, Z=腕->中指MCP, Y=Z x X。
+    法向来自 5 点 SVD 平面拟合(深度硬值),Z 来自深度反投的腕->中指MCP 向量。
+    """
+    pts = np.asarray(palm_pts, dtype=float)
+    c = pts.mean(axis=0)
+    _, S, Vt = np.linalg.svd(pts - c)
+    resid_mm = float(np.abs((pts - c) @ Vt[-1]).mean()) * 1000.0
+    if S[0] < 1e-9 or S[1] / S[0] < min_planarity:      # 点接近共线,法向不唯一
+        return None, resid_mm
+    n = Vt[-1] / (np.linalg.norm(Vt[-1]) + 1e-12)
+    if float(np.dot(n, np.asarray(mono_R)[:, 0])) < 0.0:  # 符号对齐单目手掌法向
+        n = -n
+    x = n
+    z = pts[2] - pts[0]                        # 腕(palm[0]) -> 中指MCP(kp9=palm[2])
+    z = z - x * float(np.dot(x, z))
+    nz = np.linalg.norm(z)
+    if nz < 1e-9:
+        return None, resid_mm
+    z /= nz
+    y = np.cross(z, x)
+    y /= np.linalg.norm(y) + 1e-12
+    return np.stack([x, y, z], axis=1), resid_mm
+
+
 # Backward-compatible name for older callers.
 wrist_orientation = mano_wrist_orientation
 

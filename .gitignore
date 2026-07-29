@@ -12,6 +12,8 @@
 # ---- 生成物 / 训练输出(可重建,不入库)----
 /outputs/
 sim/out/
+# Rerun 可视化录制(诊断用,可重建,体积大)
+*.rrd
 # build_nero_inspire.py 生成(含绝对路径,换机需重建)
 sim/assets/nero_inspire_right.urdf
 

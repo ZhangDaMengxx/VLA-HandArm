@@ -26,7 +26,7 @@ from scipy.spatial.transform import Rotation as Rot
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hand_estimators import make_hand_estimator
-from estimate_wrist import estimate_wrist_pose
+from estimate_wrist import estimate_wrist_pose, depth_wrist_orientation
 from single_hand_detector import SingleHandDetector
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -97,7 +97,7 @@ def _depth_at(depth_m: np.ndarray, u: float, v: float, radius: int) -> tuple[flo
 
 
 def _backproject(kp2d: np.ndarray, depth_m: np.ndarray, intr: dict, radius: int,
-                 max_depth_delta: float) -> tuple[np.ndarray, np.ndarray]:
+                 max_depth_delta: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     fx, fy = float(intr["fx"]), float(intr["fy"])
     cx, cy = float(intr["cx"]), float(intr["cy"])
     pts = np.zeros((21, 3), dtype=np.float32)
@@ -114,7 +114,45 @@ def _backproject(kp2d: np.ndarray, depth_m: np.ndarray, intr: dict, radius: int,
         ref_ids = [i for i in [0, 5, 9, 13, 17] if valid[i]]
         ref_depth = float(np.median(depths[ref_ids] if ref_ids else depths[valid]))
         valid &= np.abs(depths - ref_depth) <= max_depth_delta
-    return pts, valid
+    return pts, valid, depths
+
+
+class TemporalDepthGate:
+    """时序抗跳:某关键点 Z 相对上一次接受值跳变 >thresh 判为尖峰,置无效。
+
+    真实快速运动不误杀:连续 2 帧都落在新位置(彼此接近)则接受该位置为新基准。
+    孤立单帧尖峰(2D 误检越过深度边缘,Z 突跳到背景)被拦下,交给刚性模型补。
+    thresh<=0 关闭。返回被拒的关键点数。
+    """
+
+    def __init__(self, thresh_m: float):
+        self.thresh = float(thresh_m)
+        self.ref = np.full(21, np.nan)      # 上次接受的 Z
+        self.pending = np.full(21, np.nan)  # 上一帧被拒的候选 Z(用于 2 帧确认)
+
+    def filter(self, depths: np.ndarray, valid: np.ndarray) -> int:
+        if self.thresh <= 0.0:
+            return 0
+        rejected = 0
+        for i in range(21):
+            if not valid[i]:
+                self.pending[i] = np.nan
+                continue
+            z = float(depths[i])
+            r = self.ref[i]
+            if np.isnan(r) or abs(z - r) <= self.thresh:
+                self.ref[i] = z          # 首次或连续,直接接受
+                self.pending[i] = np.nan
+                continue
+            # 跳变:若和上一帧的候选一致(持续新位置)则接受,否则判尖峰拒绝
+            if not np.isnan(self.pending[i]) and abs(z - self.pending[i]) <= self.thresh:
+                self.ref[i] = z
+                self.pending[i] = np.nan
+            else:
+                valid[i] = False
+                self.pending[i] = z      # 记下候选,等下一帧确认
+                rejected += 1
+        return rejected
 
 
 def _fill_missing_from_model(
@@ -275,6 +313,14 @@ def main() -> None:
                     help="关键点深度离手掌参考深度超过该米数则丢弃,用相对手型 fallback")
     ap.add_argument("--hand-keypoints-source", default="mano", choices=["mano", "depth_world"],
                     help="写入 observation.hand_keypoints 的来源;retarget 默认需要 mano 局部系")
+    ap.add_argument("--wrist-orientation", default="mono", choices=["depth", "mono"],
+                    help="手腕朝向来源:mono=单目 MediaPipe(默认,IK 550/557 已验证稳);"
+                         "depth=掌骨点平面拟合(后备,尾部偶发大跳致 clamp 高、且需为深度约定重推 R_hand_ee,"
+                         "详见 measure_orient_source.py 诊断;待真 ToF+标定再评估)")
+    ap.add_argument("--wrist-plane-max-resid-mm", type=float, default=8.0,
+                    help="depth 朝向的平面拟合残差阈值(mm);超过则该帧回退单目")
+    ap.add_argument("--depth-jump-thresh-m", type=float, default=0.05,
+                    help="时序抗跳:关键点 Z 比上帧接受值跳 >该米数判尖峰置无效;0=关闭")
     ap.add_argument("--max-frames", type=int, default=0, help="调试用;0 表示全部帧")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help="canonical_ds 输出目录")
     args = ap.parse_args()
@@ -305,7 +351,9 @@ def main() -> None:
                                metadata_buffer_size=1)
     estimator_id = np.array([ESTIMATOR_IDS[args.hand_estimator]], dtype=np.float32)
 
-    n_frames, n_miss, n_depth_fallback = 0, 0, 0
+    PALM_IDX = [0, 5, 9, 13, 17]
+    jump_gate = TemporalDepthGate(args.depth_jump_thresh_m)
+    n_frames, n_miss, n_depth_fallback, n_depth_orient, n_jump = 0, 0, 0, 0, 0
     last = None
     last_wrist_2d = None
     for source_i, (color_path, depth_path) in enumerate(pairs):
@@ -332,11 +380,19 @@ def main() -> None:
         else:
             depth_m = depth_raw.astype(np.float32) * float(args.depth_scale)
             kp2d = obs["keypoints_2d"].astype(np.float32)
-            pts_cam, valid = _backproject(kp2d, depth_m, intr, args.depth_radius, args.max_depth_delta)
+            pts_cam, valid, depths = _backproject(kp2d, depth_m, intr, args.depth_radius, args.max_depth_delta)
+            n_jump += jump_gate.filter(depths, valid)   # 时序抗跳:尖峰点置无效
             n_depth_fallback += int((~valid).sum())
             pts_cam = _fill_missing_from_model(pts_cam, valid.copy(), obs["keypoints_3d"], obs["wrist_pose"])
             T_c_hand = obs["wrist_pose"].astype(np.float64).copy()
             T_c_hand[:3, 3] = pts_cam[0].astype(np.float64)
+            # 手腕朝向:depth=用深度反投的掌骨点拟合平面(需 5 点均为真实深度,非模型补),
+            # 高残差/共线退回单目;mono=沿用 estimate_wrist 的单目朝向。
+            if args.wrist_orientation == "depth" and valid[PALM_IDX].all():
+                R_depth, resid = depth_wrist_orientation(pts_cam[PALM_IDX], T_c_hand[:3, :3])
+                if R_depth is not None and resid <= args.wrist_plane_max_resid_mm:
+                    T_c_hand[:3, :3] = R_depth
+                    n_depth_orient += 1
             T_w_hand = T_wc @ T_c_hand
             kp_world = _transform_points(T_wc, pts_cam)
             wp_world = _pose_to_vec(T_w_hand)
@@ -373,7 +429,9 @@ def main() -> None:
         })
         n_frames += 1
     ds.save_episode()
-    print(f"wrote {n_frames} RGB-D frames ({n_miss} detector misses, {n_depth_fallback} keypoint depth fallbacks) -> {root}")
+    print(f"wrote {n_frames} RGB-D frames ({n_miss} detector misses, {n_depth_fallback} keypoint depth fallbacks, "
+          f"{n_jump} temporal-jump rejects, "
+          f"wrist_orientation={args.wrist_orientation}: {n_depth_orient} frames used depth-fit) -> {root}")
 
 
 if __name__ == "__main__":
