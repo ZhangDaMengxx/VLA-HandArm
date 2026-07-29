@@ -29,6 +29,12 @@ import numpy as np
 import pinocchio as pin
 import rerun as rr
 import rerun.blueprint as rrb
+from scipy.signal import savgol_filter
+from scipy.spatial.transform import Rotation as Rot
+
+from estimate_wrist import physical_wrist_orientation
+from robot_specs import get_spec, axis_tokens_to_R_hand_ee
+from wrist_stabilize import attenuate_out_of_plane, gate_outliers
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -82,6 +88,15 @@ class RobotModel:
             if qi is not None:
                 q[qi] = arm[k]
         for k, n in enumerate(hand_names):
+            # 平行夹爪:轨迹里是 1 个 "gripper_joint" 标量 = 开口宽度(m,与官方 SDK
+            # move_gripper_m 同量纲)。URDF 是两个对称 prismatic 手指,各走开口的一半,
+            # 所以这里乘 0.5(等价于官方 URDF 主关节 gripper 的 mimic multiplier=±0.5)。
+            if n == "gripper_joint":
+                for fj in ("gripper_finger_left_joint", "gripper_finger_right_joint"):
+                    qi = self.name_to_qidx.get(fj)
+                    if qi is not None:
+                        q[qi] = hand[k] * 0.5
+                continue
             qi = self.name_to_qidx.get(n)
             if qi is not None:
                 q[qi] = hand[k]
@@ -92,6 +107,13 @@ class RobotModel:
         pin.forwardKinematics(self.model, self.data, q)
         pin.updateGeometryPlacements(self.model, self.data, self.visual, self.gdata, q)
         return [self.gdata.oMg[i].homogeneous.copy() for i in range(self.visual.ngeoms)]
+
+    def frame_placement(self, q: np.ndarray, frame_name: str) -> np.ndarray:
+        """指定 frame 在机器人 base/world 里的位姿。"""
+        fid = self.model.getFrameId(frame_name)
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        return np.array(self.data.oMf[fid].homogeneous)
 
 
 def load_meshes(model: RobotModel) -> List[Optional[dict]]:
@@ -168,6 +190,201 @@ def load_traj(path: Path) -> dict:
                 arm_names=list(T["arm_joint_names"]), hand_names=list(T["hand_joint_names"]))
 
 
+def _pose_vec_to_mat(v: np.ndarray) -> np.ndarray:
+    T = np.eye(4, dtype=np.float64)
+    T[:3, 3] = v[:3]
+    T[:3, :3] = Rot.from_quat(v[3:7]).as_matrix()
+    return T
+
+
+def load_canonical_wrist_poses(root: Path) -> Optional[np.ndarray]:
+    """读取 canonical_ds 里的 raw wrist pose。没有 canonical 时返回 None。"""
+    try:
+        import pandas as pd
+
+        files = sorted((root / "data").glob("chunk-*/file-*.parquet"))
+        if not files:
+            return None
+        df = pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
+        if "frame_index" in df.columns:
+            df = df.sort_values("frame_index")
+        if "observation.wrist_pose" not in df.columns:
+            return None
+        vals = np.stack(df["observation.wrist_pose"].to_numpy()).astype(np.float64)
+        return np.stack([_pose_vec_to_mat(v.reshape(-1)) for v in vals])
+    except Exception as e:
+        log(f"canonical wrist pose 不可用: {e}")
+        return None
+
+
+def _smooth_relative_positions(wrist_poses: np.ndarray, spec) -> np.ndarray:
+    ps = np.asarray(wrist_poses[:, :3, 3], dtype=np.float64)
+    if len(ps) >= spec.savgol_win:
+        ps = savgol_filter(ps, spec.savgol_win, spec.savgol_poly, axis=0)
+    position_basis = Rot.from_euler("xyz", spec.wrist_position_basis_rpy).as_matrix()
+    dp = ((ps - ps[0]) @ position_basis.T) * float(spec.arm_position_gain)
+    limit = float(spec.arm_position_limit_m)
+    if limit > 0:
+        norms = np.linalg.norm(dp, axis=1)
+        mask = norms > limit
+        dp[mask] *= (limit / norms[mask])[:, None]
+    return dp
+
+
+def compute_target_ee_poses(wrist_poses: np.ndarray, spec) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """按 derive_embodiment.py 的同一套映射,重算 IK 目标末端姿态。
+
+    返回 (target_ee_poses, human_wrist_in_base):
+      - target_ee_poses: IK 目标末端 4x4(N)。
+      - human_wrist_in_base: anchored 模式下把 raw wrist 投到 base 系、并挪到 ee target 位置的
+        4x4(N),用于在同一坐标系里直观对比 current/target;legacy 模式返回 None。
+    """
+    N = len(wrist_poses)
+    quats = Rot.from_matrix(wrist_poses[:, :3, :3]).as_quat()
+    for i in range(1, N):
+        if np.dot(quats[i - 1], quats[i]) < 0:
+            quats[i] = -quats[i]
+    quats = gate_outliers(quats, spec.gate_deg)
+    if N >= spec.savgol_win:
+        quats_s = savgol_filter(quats, spec.savgol_win, spec.savgol_poly, axis=0)
+    else:
+        quats_s = quats
+    quats_s /= np.linalg.norm(quats_s, axis=1, keepdims=True)
+    Rs = Rot.from_quat(quats_s).as_matrix()
+    Rs = attenuate_out_of_plane(Rs, spec.oop_alpha, ref=0)
+
+    from nero_kin import NeroKin
+
+    kin = NeroKin(spec.arm_urdf, ee_frame=spec.ee_frame)
+    anchor = kin.fk(spec.q_home)
+    aR, ap = anchor[:3, :3], anchor[:3, 3]
+
+    out = np.repeat(np.eye(4, dtype=np.float64)[None, :, :], N, axis=0)
+
+    if spec.frame_mode == "metric":
+        # 固定 R_base_world/anchor/scale 绝对映射(与 derive_embodiment._solve_arm_metric 同公式)。
+        R_hand_ee = np.asarray(spec.R_hand_ee, dtype=np.float64).reshape(3, 3)
+        R_base_world = np.asarray(spec.R_base_world, dtype=np.float64).reshape(3, 3)
+        anchor_p = np.asarray(spec.p_base_anchor, dtype=np.float64).reshape(3)
+        scale = float(spec.metric_scale)
+        if spec.arm_position_mode == "fixed":
+            dp = np.zeros((N, 3), dtype=np.float64)
+        else:
+            ps = np.asarray(wrist_poses[:, :3, 3], dtype=np.float64)
+            if len(ps) >= spec.savgol_win:
+                ps = savgol_filter(ps, spec.savgol_win, spec.savgol_poly, axis=0)
+            dp = scale * ((ps - ps.mean(0)) @ R_base_world.T)
+        human = np.repeat(np.eye(4, dtype=np.float64)[None, :, :], N, axis=0)
+        for f in range(N):
+            out[f, :3, :3] = R_base_world @ Rs[f] @ R_hand_ee
+            out[f, :3, 3] = anchor_p + dp[f]
+            human[f, :3, :3] = R_base_world @ Rs[f]   # 人手投到 base,和 target 只差固定装配 R_hand_ee
+            human[f, :3, 3] = anchor_p + dp[f]
+        return out, human
+
+    if spec.frame_mode == "anchored":
+        R_hand_ee = np.asarray(spec.R_hand_ee, dtype=np.float64).reshape(3, 3)
+        R_base_world = aR @ R_hand_ee.T @ Rs[0].T   # 与 derive_embodiment.anchored_base_world 一致
+        if spec.arm_position_mode == "fixed":
+            dp = np.zeros((N, 3), dtype=np.float64)
+        else:
+            ps = np.asarray(wrist_poses[:, :3, 3], dtype=np.float64)
+            if len(ps) >= spec.savgol_win:
+                ps = savgol_filter(ps, spec.savgol_win, spec.savgol_poly, axis=0)
+            dp = ((ps - ps[0]) @ R_base_world.T) * float(spec.arm_position_gain)
+            limit = float(spec.arm_position_limit_m)
+            if limit > 0:
+                norms = np.linalg.norm(dp, axis=1)
+                mask = norms > limit
+                dp[mask] *= (limit / norms[mask])[:, None]
+        human = np.repeat(np.eye(4, dtype=np.float64)[None, :, :], N, axis=0)
+        for f in range(N):
+            out[f, :3, :3] = R_base_world @ Rs[f] @ R_hand_ee
+            out[f, :3, 3] = ap + dp[f]
+            # human wrist 投到 base 系,和 target 同位置 —— 两者只差固定装配旋转 R_hand_ee
+            human[f, :3, :3] = R_base_world @ Rs[f]
+            human[f, :3, 3] = ap + dp[f]
+        return out, human
+
+    ee_fix = Rot.from_euler("xyz", spec.ee_frame_correction_rpy).as_matrix()
+    B = np.asarray(spec.wrist_motion_basis_R, dtype=np.float64).reshape(3, 3)
+    R0 = Rs[0]
+    if spec.arm_position_mode == "fixed":
+        dp = np.zeros((N, 3), dtype=np.float64)
+    else:
+        dp = _smooth_relative_positions(wrist_poses, spec)
+
+    for f in range(N):
+        if spec.wrist_rotation_compose == "left":
+            dR_human = Rs[f] @ R0.T
+            dR_robot = B @ dR_human @ B.T
+            Rt = dR_robot @ aR @ ee_fix
+        else:
+            dR_human = R0.T @ Rs[f]
+            dR_robot = B @ dR_human @ B.T
+            Rt = aR @ dR_robot @ ee_fix
+        out[f, :3, :3] = Rt
+        out[f, :3, 3] = ap + dp[f]
+    return out, None
+
+
+AXIS_COLORS = np.array([
+    [255, 64, 64],
+    [64, 220, 96],
+    [64, 142, 255],
+], dtype=np.uint8)
+AXIS_COLOR_NAMES = (("X", (255, 64, 64)), ("Y", (64, 220, 96)), ("Z", (64, 142, 255)))
+
+
+def log_axes(entity: str, T: np.ndarray, length: float = 0.08, radius: float = 0.004) -> None:
+    """在 entity 处画一个 XYZ 坐标轴。X=红,Y=绿,Z=蓝。"""
+    rr.log(entity, rr.Transform3D(translation=T[:3, 3], mat3x3=T[:3, :3]))
+    rr.log(
+        f"{entity}/xyz",
+        rr.Arrows3D(
+            origins=np.zeros((3, 3), dtype=np.float32),
+            vectors=np.eye(3, dtype=np.float32) * float(length),
+            colors=AXIS_COLORS,
+            radii=np.full(3, float(radius), dtype=np.float32),
+        ),
+    )
+
+
+def draw_wrist_axes_on_image(
+    image_rgb: np.ndarray,
+    origin_px: np.ndarray,
+    R: np.ndarray,
+    length_px: float = 52.0,
+) -> np.ndarray:
+    """把 3D wrist frame 的 XYZ 方向投影到 Human 2D 面板。
+
+    只画方向,不做相机透视投影。颜色与 3D Rerun 坐标轴一致:X 红、Y 绿、Z 蓝。
+    """
+    if origin_px is None or R is None:
+        return image_rgb
+    if not np.isfinite(origin_px).all() or not np.isfinite(R).all():
+        return image_rgb
+    out = image_rgb
+    h, w = out.shape[:2]
+    origin = np.asarray(origin_px, dtype=np.float64).reshape(2)
+    if origin[0] < -w or origin[0] > 2 * w or origin[1] < -h or origin[1] > 2 * h:
+        return out
+    o = tuple(np.rint(origin).astype(int))
+    cv2.circle(out, o, 5, (24, 28, 36), -1, cv2.LINE_AA)
+    for axis_i, (label, color) in enumerate(AXIS_COLOR_NAMES):
+        v = np.asarray(R[:2, axis_i], dtype=np.float64)
+        n = float(np.linalg.norm(v))
+        if n < 1e-6:
+            continue
+        end = origin + (v / n) * float(length_px)
+        e = tuple(np.rint(end).astype(int))
+        cv2.arrowedLine(out, o, e, color, 3, cv2.LINE_AA, tipLength=0.24)
+        text_pos = tuple(np.rint(end + np.array([4.0, -4.0])).astype(int))
+        cv2.putText(out, label, text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                    color, 2, cv2.LINE_AA)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 人手视频 + 骨架
 # ---------------------------------------------------------------------------
@@ -207,10 +424,12 @@ HAND_CONNECTIONS = [
 
 
 class SkeletonVideo:
-    def __init__(self, points: np.ndarray, width: int = 640, height: int = 360):
+    def __init__(self, points: np.ndarray, wrist_poses: Optional[np.ndarray] = None,
+                 width: int = 640, height: int = 360):
         self.width = width
         self.height = height
         self.points = self._fit_to_canvas(points.astype(np.float32), width, height)
+        self.wrist_poses = wrist_poses
         self.i = 0
 
     @classmethod
@@ -223,6 +442,10 @@ class SkeletonVideo:
         df = pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
         if "frame_index" in df.columns:
             df = df.sort_values("frame_index")
+        wrist_poses = None
+        if "observation.wrist_pose" in df.columns:
+            vals = np.stack(df["observation.wrist_pose"].to_numpy()).astype(np.float64)
+            wrist_poses = np.stack([_pose_vec_to_mat(v.reshape(-1)) for v in vals])
         kp2d = None
         if "observation.hand_keypoints_2d" in df.columns:
             kp2d = np.stack(df["observation.hand_keypoints_2d"].to_numpy()).reshape(-1, 21, 2)
@@ -233,9 +456,9 @@ class SkeletonVideo:
                     kp2d = kp2d.copy()
                     kp2d[:, :, 0] *= 640.0
                     kp2d[:, :, 1] *= 360.0
-                return cls(kp2d)
+                return cls(kp2d, wrist_poses=wrist_poses)
         kps = np.stack(df["observation.hand_keypoints"].to_numpy()).reshape(-1, 21, 3)
-        return cls(cls._project_3d(kps))
+        return cls(cls._project_3d(kps), wrist_poses=wrist_poses)
 
     @staticmethod
     def _fit_to_canvas(points: np.ndarray, width: int, height: int, margin: int = 42) -> np.ndarray:
@@ -285,7 +508,10 @@ class SkeletonVideo:
     def read(self):
         idx = min(self.i, len(self.points) - 1)
         self.i += 1
-        return True, self._draw(self.points[idx])
+        wrist_pose = None
+        if self.wrist_poses is not None and len(self.wrist_poses):
+            wrist_pose = self.wrist_poses[min(idx, len(self.wrist_poses) - 1)]
+        return True, self._draw(self.points[idx], wrist_pose)
 
     def get(self, prop):
         if prop == cv2.CAP_PROP_FPS:
@@ -295,7 +521,7 @@ class SkeletonVideo:
     def release(self):
         pass
 
-    def _draw(self, pts: np.ndarray) -> np.ndarray:
+    def _draw(self, pts: np.ndarray, wrist_pose: Optional[np.ndarray]) -> np.ndarray:
         img = np.full((self.height, self.width, 3), 248, dtype=np.uint8)
         cv2.putText(img, "processed hand skeleton", (24, 34),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, (82, 88, 102), 1, cv2.LINE_AA)
@@ -324,6 +550,8 @@ class SkeletonVideo:
             cv2.line(img, pa, pb, col, 2, cv2.LINE_AA)
         for j, p in enumerate(pts_i):
             cv2.circle(img, tuple(p), 4 if j == 0 else 3, (32, 36, 44), -1, cv2.LINE_AA)
+        if wrist_pose is not None:
+            img = draw_wrist_axes_on_image(img, pts[0], wrist_pose[:3, :3])
         return img
 
 
@@ -347,7 +575,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--traj", action="append", default=[],
                     help="轨迹 pkl,可写 标签=路径;可重复做 A/B。默认 robot_traj_nero_inspire.pkl(回退 robot_traj.pkl)")
-    ap.add_argument("--urdf", default=str(REPO / "sim/assets/nero_inspire_right.urdf"))
+    ap.add_argument("--urdf", default="",
+                    help="可视化 URDF;留空则用 RobotSpec.viz_urdf(inspire=灵巧手, gripper=平行夹爪)")
     ap.add_argument("--video", default=str(REPO / "data/hand_1.mp4"))
     ap.add_argument("--no-video", action="store_true",
                     help="不读取源视频,Human 面板使用占位帧;用于外部处理好的 hand file")
@@ -361,16 +590,38 @@ def main():
     ap.add_argument("--save", default=str(REPO / "sim/out/replay.rrd"),
                     help="非 --serve 时写入的 .rrd 路径")
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--debug-frames", action=argparse.BooleanOptionalAction, default=True,
+                    help="在 3D 视图画 robot base/link7 和 canonical wrist raw 坐标轴")
+    ap.add_argument("--ee-frame", default="link7",
+                    help="调试坐标轴使用的机器人末端 frame 名")
+    ap.add_argument("--robot", default="nero_inspire",
+                    help="用于重算 debug IK target frame 的 RobotSpec 名")
+    ap.add_argument("--arm-position-mode", choices=["fixed", "relative", "absolute"], default=None,
+                    help="重算 debug IK target frame 时覆盖 RobotSpec.arm_position_mode;应与 derive_embodiment.py 生成轨迹时一致")
+    ap.add_argument("--wrist-rotation-compose", choices=["left", "right"], default=None,
+                    help="重算 debug IK target frame 时覆盖 RobotSpec.wrist_rotation_compose;应与 derive_embodiment.py 生成轨迹时一致")
+    ap.add_argument("--r-hand-ee", default=None, metavar="HX,HY,HZ",
+                    help="anchored 装配轴映射覆盖,逗号分隔(human X/Y/Z -> ee 轴,如 -Y,-Z,+X);须与 derive_embodiment 生成轨迹时一致")
     args = ap.parse_args()
 
-    _default_traj = REPO / "sim/out/robot_traj_nero_inspire.pkl"   # 两层路径产物(默认)
+    # 默认轨迹随 --robot 走(spec 名映射到 derive 产物);回退旧单本体路径。
+    _default_traj = REPO / f"sim/out/robot_traj_{args.robot}.pkl"
     if not _default_traj.exists():
-        _default_traj = REPO / "sim/out/robot_traj.pkl"            # 回退旧单本体路径
+        _alias = REPO / "sim/out/robot_traj_nero_inspire.pkl"
+        _default_traj = _alias if _alias.exists() else REPO / "sim/out/robot_traj.pkl"
     traj_items = args.traj or [f"default={_default_traj}"]
     traj_specs = parse_traj_args(traj_items)
 
-    model = RobotModel(Path(args.urdf))
+    spec = get_spec(args.robot)
+    urdf_path = Path(args.urdf) if args.urdf else spec.viz_urdf
+    model = RobotModel(urdf_path)
     meshes = load_meshes(model)
+    if args.arm_position_mode is not None:
+        spec.arm_position_mode = args.arm_position_mode
+    if args.wrist_rotation_compose is not None:
+        spec.wrist_rotation_compose = args.wrist_rotation_compose
+    if args.r_hand_ee is not None:
+        spec.R_hand_ee = axis_tokens_to_R_hand_ee(args.r_hand_ee.split(","))
 
     trajs = []
     for label, path in traj_specs:
@@ -386,6 +637,21 @@ def main():
     F = min(len(T["arm"]) for _, T in trajs)
     if args.max_frames:
         F = min(F, args.max_frames)
+
+    wrist_poses = load_canonical_wrist_poses(REPO / "sim/out/canonical_ds") if args.debug_frames else None
+    target_ee_poses = None
+    human_wrist_in_base = None
+    if wrist_poses is not None:
+        F = min(F, len(wrist_poses))
+        log(f"坐标系调试:读取 canonical wrist_pose {len(wrist_poses)} 帧")
+        target_ee_poses, human_wrist_in_base = compute_target_ee_poses(wrist_poses[:F], spec)
+        if human_wrist_in_base is not None:
+            log("坐标系调试[anchored]:human_wrist_in_base 已用 R_base_world 投到机器人 base 系,与 target 同位置;两者只应差固定装配旋转 R_hand_ee,若逐帧同步转动=坐标系已自洽")
+        else:
+            log("坐标系调试[legacy]:human_wrist_raw 直接画在 world 下,未应用 T_base_camera;只能看轴向/相对运动,不能当作已和机器人 base 对齐")
+        log("坐标系调试:robot_ee_target=derive 映射后的 IK 目标;robot_ee_current=IK 解出来后 FK(link7) 的实际末端")
+    elif args.debug_frames:
+        log("坐标系调试:未找到 canonical wrist_pose,只画 robot base/current ee")
 
     # 人手骨架检测器(可选)
     detector = None
@@ -416,15 +682,18 @@ def main():
     bp = rrb.Blueprint(
         rrb.Vertical(
             rrb.Horizontal(
-                rrb.Spatial2DView(origin="human", name="Human · 视频+骨架"),
-                rrb.Spatial3DView(origin="world", name="Robot · NERO+inspire"),
+                # 视图标题用英文:Rerun 画布 egui 字体不含 CJK 字形,中文会缺字/方块。
+                rrb.Spatial2DView(origin="human", name="Human · video + skeleton"),
+                rrb.Spatial3DView(origin="world", name="Robot · NERO + inspire"),
                 column_shares=[1.0, 1.4],
             ),
-            rrb.TimeSeriesView(origin="joints", name="关节角(rad)"),
+            rrb.TimeSeriesView(origin="joints", name="Joint angles (rad)"),
             row_shares=[3.0, 1.2],
         ),
         rrb.SelectionPanel(state="collapsed"),
-        rrb.TimePanel(state="collapsed"),
+        # timeline="frame":让查看器默认停在帧序号轴(0..N-1),而非 Rerun 自动加的 log_time
+        # 墙钟轴。这样 web 端 time_update 直接给帧号,右侧读数才能映射联动。
+        rrb.TimePanel(state="collapsed", timeline="frame"),
     )
 
     serve_uri = None
@@ -442,6 +711,11 @@ def main():
 
     # 静态:世界坐标系约定(Z 向上)+ 每条轨迹的网格(顶点在 link 局部系,逐帧只更新 Transform)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+    if args.debug_frames:
+        log_axes("world/frames/robot_base", np.eye(4), length=0.16, radius=0.006)
+        rr.log("world/frames/notes",
+               rr.TextLog("Frames: robot_base=URDF/base. robot_ee_target=derive IK target. robot_ee_current=Pinocchio link7 after IK. human_wrist_raw=canonical wrist pose without T_base_camera."),
+               static=True)
     for root in robot_roots:
         for m in meshes:
             if m is None:
@@ -466,20 +740,36 @@ def main():
                 M = placements[i]
                 rr.log(f"{root}/{m['name']}",
                        rr.Transform3D(translation=M[:3, 3], mat3x3=M[:3, :3]))
+            if args.debug_frames:
+                ee_T = model.frame_placement(q, args.ee_frame)
+                log_axes(f"{root}/frames/robot_ee_current_{args.ee_frame}", ee_T)
+                if target_ee_poses is not None:
+                    log_axes(f"{root}/frames/robot_ee_target_{args.ee_frame}",
+                             target_ee_poses[fr], length=0.11, radius=0.003)
             # --- 关节角曲线(按轨迹分组,A/B 时同图叠看每个关节的 raw vs stab) ---
             for k, n in enumerate(T["arm_names"]):
                 rr.log(f"joints/{label}/arm/{n}", rr.Scalars(float(T["arm"][fr][k])))
             for k, n in enumerate(T["hand_names"]):
                 rr.log(f"joints/{label}/hand/{n}", rr.Scalars(float(T["hand"][fr][k])))
 
+        if args.debug_frames and human_wrist_in_base is not None:
+            # anchored:投到 base 系、与 target 同位置。和 robot_ee_target 逐帧一起转 = 坐标系自洽。
+            log_axes("world/frames/human_wrist_in_base", human_wrist_in_base[fr], length=0.13, radius=0.004)
+        elif args.debug_frames and wrist_poses is not None:
+            log_axes("world/frames/human_wrist_raw", wrist_poses[fr], length=0.11, radius=0.004)
+
         # --- 人手视频帧(+骨架) ---
         ok, frame = cap.read()
         if ok:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if detector is not None:
-                num, _, keypoint_2d, _ = detector.detect(rgb)
+                num, _, keypoint_2d, wrist_rot = detector.detect(rgb)
                 if num and keypoint_2d is not None:
                     rgb = SingleHandDetector.draw_skeleton_on_image(rgb.copy(), keypoint_2d)
+                    if wrist_rot is not None:
+                        kp2d_px = SingleHandDetector.parse_keypoint_2d(keypoint_2d, rgb.shape)
+                        R_wrist = physical_wrist_orientation(wrist_rot, detector.operator2mano)
+                        rgb = draw_wrist_axes_on_image(rgb, kp2d_px[0], R_wrist)
             # JPEG 编码后再 log,体积比原始 RGB 小 1~2 个数量级
             ok_enc, buf = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
                                        [cv2.IMWRITE_JPEG_QUALITY, 85])

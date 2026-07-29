@@ -1,6 +1,6 @@
 # 机械臂 + 灵巧手 · 手势 / 抓取 / VLA 项目计划
 
-状态:Phase A 完成,Phase B 软件完成(含 Rerun 可视化 + 手腕朝向稳定化 + 两层数据架构落地),Phase C 待在 RTX 上训练。更新 2026-07-14。任务见 Kiro #26–#34。逐次更改见 `更新日志.md`。
+状态:Phase A 完成,Phase B 软件主链完成并进入 RGB-D/重定向验证(含 Rerun 可视化、手腕朝向稳定化、两层数据架构、RGB-D 离线融合、外部人手结果导入),Phase C 待在 RTX 上训练。更新 2026-07-24。任务见 Kiro #26–#34。逐次更改见 `更新日志.md`。
 
 ## 1. 目标
 
@@ -39,9 +39,9 @@
 
 | 维度 | 值 |
 |---|---|
-| 机械臂 | 松灵 NERO,7 自由度,3kg。URDF 和网格已内置在 `assets/nero` |
+| 机械臂 | 松灵 NERO,7 自由度,3kg。URDF 和网格已内置在 `assets/nero_description` |
 | 灵巧手 | inspire,6 个驱动关节 |
-| 数据源 | 真人第一视角:早期 Orbbec Femto(稠密 RGB-D),后期 Aria 类(轻量 RGB + 轨迹) |
+| 数据源 | 真人第一视角:当前支持普通 RGB 视频、外部 MediaPipe/WiLoR 风格 npz/pkl/json、离线 RGB-D 帧目录;后期接 Orbbec Femto / RealSense / Azure Kinect 类采集 |
 | 数据格式 | LeRobotDataset |
 | 目标模型 | 先 ACT 从头训验证,再上 LeRobot 生态的 VLA(X-VLA)加 LoRA |
 | 训练 | 本地 RTX |
@@ -51,14 +51,14 @@
 
 ## 4. 两层数据结构
 
-规范层(本体无关):ego RGB-D、人手关键点、手腕 6-DoF(度量、统一坐标系)、物体/场景、语言。
+规范层(本体无关):ego RGB、人手关键点、2D 关键点、可见度、手腕 6-DoF、估计器来源、语言。RGB-D 路线会用对齐深度和相机内外参把 wrist position 融合成度量位置;当前深度图本身作为原始输入资产保留,尚未作为 canonical LeRobotDataset 的 `observation.images.depth` 持久字段。
 
 本体层(每个机器人一份):对规范层按 URDF retarget 出的 LeRobotDataset:
 
 | 字段 | 内容 |
 |---|---|
 | `observation.images.ego` | 第一视角 RGB(缩到 VLA 输入尺寸,存视频),喂 VLA |
-| `observation.images.depth` | 对齐的深度图,辅助用(恢复手腕度量位姿、3D grounding),不喂基座 VLA |
+| `observation.images.depth` | 计划字段。对齐深度图用于恢复手腕度量位姿、3D grounding,不喂基座 VLA;当前实现先把深度融合结果写入 `observation.wrist_pose` |
 | `observation.state` | [7 臂 + 6 手] = 13 维当前关节 |
 | `action` | [7 臂 + 6 手] = 13 维,绝对关节目标 |
 | `task` | 自然语言指令 |
@@ -82,22 +82,24 @@
 | 1 | A | #26 | 组装 7 自由度臂 + inspire 运动链(rm75_inspire、nero_inspire) | 两装配加载 nq=19 | 完成 |
 | 2 | A | #27 | 逆解 + retargeting 驱动 + MeshCat 检视台 | 视频→retarget→回放 | 完成 |
 | 3 | A | #28 | 两层 schema + 手势预设 + 演示 | schema + 手势 demo | 完成 |
-| 4 | B | #29 | Orbbec Femto 同步 RGB-D 采集 | 原始 RGB-D | 待办(等 Femto) |
-| 5 | B | #30 | 人手 + 手腕 6-DoF 估计 | full_traj.pkl | 完成 |
-| 6 | B | #31 | retarget→逆解→回放,SavGol 消抖 | robot_traj.pkl + 回放 | 完成 |
-| 7 | B | #32 | 写 LeRobotDataset | lerobot_ds(710 帧 / 1 ep) | 完成 |
+| 4 | B | #29 | RGB-D 采集 / 导入 | 离线 RGB-D 帧目录已可导入;真实相机采集仍待接 | 部分完成 |
+| 5 | B | #30 | 人手 + 手腕 6-DoF 估计 | canonical_ds;普通 RGB 单目近似,RGB-D wrist position 度量融合 | 完成并验证中 |
+| 6 | B | #31 | retarget→逆解→回放,SavGol 消抖 | robot_traj.pkl/npz + Rerun 回放 | 完成并调参中 |
+| 7 | B | #32 | 写 LeRobotDataset | lerobot_ds_nero_inspire | 完成 |
 | 8 | C | #33 | 验证数据可训:先 ACT 从头训(A/B/C 同数据),CPU 已验 dataloader 可消费,真训在 RTX | 验证结论 | 进行中(等 RTX) |
 | 9 | D | #34 | 第二本体复跑,坐实主体无关性 | 主体无关证据 | 待办(依赖 C) |
 
 ## 7. 风险
 
 1. retarget 保真度就是标签质量的上限(真人手到 inspire 有本体差异,见张开幅度和无侧摆的问题)。
-2. 手腕 6-DoF 估计是 Phase B 的主要难点(比手指难,单目位置得靠深度)。
-3. 换设备(Femto 到 Aria)会破坏视觉一致性,视角和深度形态都变,得重采或域随机化。
+2. 手腕 6-DoF 估计是 Phase B 的主要难点(比手指难,单目位置得靠深度)。当前 RGB-D 离线融合只能解决 wrist position 的度量问题,正式空间模仿仍需要 `T_base_camera`。
+3. 换设备(Femto/RealSense/Azure Kinect 到 Aria)会破坏视觉一致性,视角和深度形态都变,得重采、做设备适配或域随机化。
 4. 数据量:窄任务也得几十到上百条 episode 才验证得出东西。
 5. NERO 7 自由度逆解有零空间,要用一致的策略(比如最小关节运动)出干净标签。
-6. 深度不喂基座 VLA(X-VLA 只吃 RGB),深度是辅助。
-7. 网格:NERO 视觉网格是 .dae、碰撞是 .stl,MuJoCo 只吃 .stl;检视台用 MeshCat(浏览器)绕开了本机的 GL 渲染问题。
+6. 深度不喂基座 VLA(X-VLA 只吃 RGB),深度是辅助;但 canonical 是否长期保存 depth 图还要定,否则后续复查深度质量会依赖原始目录。
+7. WiLoR 目前只有适配器接口和外部结果导入规范,本仓库还没有安装/接入 WiLoR runtime。
+8. Web 端当前只自动分普通视频和外部手部结果文件;RGB-D 目录/压缩包上传还未接入,需要单独加 source 类型。
+9. 网格:NERO 视觉网格是 .dae、碰撞是 .stl,MuJoCo 只吃 .stl;检视台用 MeshCat/Rerun(浏览器)绕开了本机的 GL 渲染问题。
 
 ## 8. NERO 运动学参考
 
@@ -132,15 +134,20 @@ MDH 参数 `(d, a, alpha, theta_offset)`,单位 m / rad:
 - 主管线代码在 `sim/`,说明见 `sim/README.md`;NERO 的 FK/IK 是 `sim/nero_kin.py`(纯 pinocchio)。
 - `assets/`:NERO 和 inspire 的 URDF 加网格;`configs/`:重定向配置;`data/`:示例视频。都内置在仓库里。
 - 装配 `sim/assets/nero_inspire_right.urdf` 由 `build_nero_inspire.py` 生成(NERO link7 挂 inspire base,加载 nq=19)。
+- RGB-D 离线导入入口是 `sim/build_canonical_from_rgbd.py`,要求 `color/`、`depth/`、`calibration.json`;Web 端尚未自动调用。
+- 外部 MediaPipe/WiLoR 风格结果导入入口是 `sim/build_canonical_from_processed.py`,支持 `.npz/.pkl/.json`。
 - 第三方仅这两处用得到:overlays 里的早期可视化器(配 dex-retargeting),真机部署(松灵 pyAgxArm CAN SDK)。
 
 ## 10. 现状
 
 - Phase A 完成:装配、逆解、retargeting 驱动、MeshCat 检视台、两层 schema、手势演示。
-- Phase B 软件完成:手腕 6-DoF 估计、retarget→逆解→回放(SavGol 消抖)、写 LeRobotDataset;C 路线的 dataloader 可消费性也验过。
+- Phase B 软件主链完成:手腕 6-DoF 估计、retarget→逆解→回放(SavGol 消抖)、写 LeRobotDataset;C 路线的 dataloader 可消费性也验过。
 - 可视化升级(2026-07-13):`sim/replay_rerun.py` 用 Rerun 做同步多面板(人手视频+骨架 / 机器人 3D / 关节曲线),取代 MeshCat 单视图。
 - 手腕朝向稳定化(2026-07-14):经它暴露的「臂大幅晃」查明是单目出平面朝向噪声(占漂移 91%),加 `sim/wrist_stabilize.py`(出平面降权 + 残差门限),臂运动 184°→57°、IK 仍 710/710、保面内真手势。完整因子图待 Femto。
 - 两层数据架构落地(2026-07-14):`build_canonical.py`→`canonical_ds`(本体无关规范层)+ `derive_embodiment.py --robot X`(按 `robot_specs.py` 的 URDF 派生每本体 `lerobot_ds_X`)。换本体只加一个 RobotSpec、采集不重来。回归:派生轨迹与旧管线 max|Δ|~1e-7 rad。真第二本体属 Phase D。
+- RGB-D 离线融合验证(2026-07-24):`build_canonical_from_rgbd.py` 能读取对齐 `color/depth/calibration.json`,用深度把 wrist position 写成度量位置;当前样例生成 557 帧,深度缺失帧用模型回退。为避免 depth-world 手指点污染 retarget,`observation.hand_keypoints` 默认仍保留 MANO/手腕局部 21 点。
+- 相对模仿验证(2026-07-24):`derive_embodiment.py` 已支持 `--arm-position-mode relative/fixed`,当前本地验证版默认用 wrist 相对首帧平移解锁臂末端位置,5cm 限幅;动态腕部方向用 `wrist_motion_basis_R` 矩阵做坐标基变换。正式空间模仿仍要补 `T_base_camera`,普通 RGB 视频建议继续用 fixed。
+- Web 端入口进展(2026-07-24):已支持上传普通视频和外部处理结果文件;RGB-D 目录/压缩包、纯相机录制包还没接入 Web,目前需要命令行手动生成 canonical。
 - 仓库已重构成自足可移植(路径自动定位、assets/configs/data 内置、nero_kin 加 vendored 检测器),推到了 GitHub(ZhangDaMengxx/VLA-HandArm)。
-- 剩下的都要别的资源:Phase C 真训练在 RTX(见 `训练端部署.md`)、B-1 采集等 Femto、Phase D 第二本体。
+- 剩下的关键资源/任务:Phase C 真训练在 RTX(见 `训练端部署.md`)、真实 RGB-D 相机采集接入、Web RGB-D 上传入口、`observation.images.depth` 是否入 canonical schema、正式 `T_base_camera` 标定、Phase D 第二本体。
 - **逐次具体更改见 `更新日志.md`(带时间戳)。**

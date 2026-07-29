@@ -18,13 +18,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/base_link.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/base_link.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/base_link.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/base_link.STL"/>
             </geometry>
         </collision>
     </link>
@@ -37,13 +37,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link1.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link1.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link1.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link1.STL"/>
             </geometry>
         </collision>
     </link>
@@ -63,13 +63,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link2.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link2.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link2.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link2.STL"/>
             </geometry>
         </collision>
     </link>
@@ -89,13 +89,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link3.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link3.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link3.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link3.STL"/>
             </geometry>
         </collision>
     </link>
@@ -115,13 +115,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link4.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link4.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link4.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link4.STL"/>
             </geometry>
         </collision>
     </link>
@@ -141,13 +141,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link5.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link5.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link5.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link5.STL"/>
             </geometry>
         </collision>
     </link>
@@ -167,13 +167,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link6.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link6.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link6.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link6.STL"/>
             </geometry>
         </collision>
     </link>
@@ -193,13 +193,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/dae/link7.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/dae/link7.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/Link7.STL"/>
+                <mesh filename="../../assets/nero_description/meshes/Link7.STL"/>
             </geometry>
         </collision>
     </link>
@@ -225,13 +225,13 @@
         <visual>
             <origin xyz="0 0 0" rpy="-1.57 0 -1.57"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/stand_v2.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/stand_v2.dae"/>
             </geometry>
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="-1.57 0 -1.57"/>
             <geometry>
-                <mesh filename="package://nero_description/meshes/stand_v2.dae"/>
+                <mesh filename="../../assets/nero_description/meshes/stand_v2.dae"/>
             </geometry>
         </collision>
     </link>

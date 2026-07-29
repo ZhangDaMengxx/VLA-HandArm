@@ -61,7 +61,24 @@ WEB_VIEWER_PORT = int(os.environ.get("RERUN_WEB_PORT", "9090"))
 _replay_proc: subprocess.Popen | None = None
 _player_proc: subprocess.Popen | None = None      # 轨迹下发(traj_player)进程
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-TRAJ_NPZ = REPO / "sim/out/robot_traj_nero_inspire.npz"   # derive_embodiment 产出
+
+# 数据源 -> (机器人规格名, build 脚本参数)。RGB 走 legacy 相对(可达),RGB-D 走 metric 几何。
+DATASETS = {
+    "rgb":  {"robot": "nero_inspire_rgb",  "label": "普通 RGB"},
+    "rgbd": {"robot": "nero_inspire_rgbd", "label": "kinect RGB-D"},
+}
+# RGB-D 输入是 kinect 目录(非上传视频),给默认值,可用环境变量覆盖或前端手动指定。
+RGBD_INPUT_ROOT = os.environ.get("RGBD_INPUT_ROOT", "kinect2_middle/kinect2_middle")
+RGBD_CAMERA = os.environ.get("RGBD_CAMERA", "kinect2_middle")
+
+
+def _traj_pkl(robot: str) -> Path:
+    """derive_embodiment --emit-traj 产出的 pkl(按规格名);replay/play 都据此定位。"""
+    return REPO / f"sim/out/robot_traj_{robot}.pkl"
+
+
+# /api/replay/play 用的 npz,随最近一次成功管线的机器人规格更新。
+TRAJ_NPZ = _traj_pkl("nero_inspire_rgb").with_suffix(".npz")
 
 
 def _primary_ip() -> str:
@@ -142,18 +159,17 @@ def _run_step(cmd, log, caption, floor, ceil, emit) -> bool:
     return p.returncode == 0
 
 
-def _start_replay(video: str | None, log: list[str], ab: bool = False,
+def _start_replay(video: str | None, log: list[str], robot: str = "nero_inspire_rgb",
                   no_video: bool = False) -> str | None:
     """后台起 replay_rerun --serve,读 stdout 直到解析出 web 地址,返回 URL(进程留活)。
-    ab=True 时同时叠加 raw 与稳定化两条轨迹做 A/B 对比。"""
+    按 robot 规格加载对应的 robot_traj_<robot>.pkl,并把 --robot 传给 replay 保持映射一致。"""
     global _replay_proc
     _stop_replay()
     _free_ports(log)                    # 清掉任何孤儿 replay,避免端口占用导致启动失败
     cmd = [LEROBOT_PY, "sim/replay_rerun.py", "--serve",
-           "--grpc-port", str(GRPC_PORT), "--web-port", str(WEB_VIEWER_PORT)]
-    if ab:
-        cmd += ["--traj", f"raw={REPO}/sim/out/robot_traj_raw.pkl",
-                "--traj", f"stab={REPO}/sim/out/robot_traj_nero_inspire.pkl"]
+           "--grpc-port", str(GRPC_PORT), "--web-port", str(WEB_VIEWER_PORT),
+           "--robot", robot,
+           "--traj", f"{robot}={_traj_pkl(robot)}"]
     if no_video:
         cmd += ["--no-video", "--no-skeleton"]
     elif video:
@@ -176,15 +192,34 @@ def _start_replay(video: str | None, log: list[str], ab: bool = False,
     return None
 
 
-def run_pipeline(input_path: str | None, skip_regen: bool, ab: bool, emit,
-                 source: str = "video") -> None:
-    """编排三步管线,全程 emit 事件:progress / log / rerun_url / done / error。"""
+def run_pipeline(input_path: str | None, skip_regen: bool, dataset: str, emit,
+                 source: str = "video", rgbd_dir: str = "", rgbd_camera: str = "",
+                 hand: str = "inspire") -> None:
+    """编排三步管线,全程 emit 事件:progress / log / rerun_url / done / error。
+    dataset='rgb'(上传视频,legacy 相对)或 'rgbd'(手动指定 kinect 目录,metric 几何)。
+    hand='inspire'(灵巧手 state=13)或 'gripper'(平行夹爪 state=8);本体 = nero_{hand}_{rgb|rgbd}。
+    rgbd_dir/rgbd_camera 为空时回退环境变量默认。"""
+    global TRAJ_NPZ
     log: list[str] = []
-    if not input_path:
+    ds = DATASETS.get(dataset, DATASETS["rgb"])
+    is_rgbd = dataset == "rgbd"
+    hand = hand if hand in ("inspire", "gripper") else "inspire"
+    robot = f"nero_{hand}_{'rgbd' if is_rgbd else 'rgb'}"   # 本体×数据源组合出 RobotSpec 名
+    # RGB-D 用指定 kinect 目录,不需要上传;RGB / 手部结果需要输入文件。
+    if not is_rgbd and not input_path:
         emit({"type": "error", "msg": "请先上传视频或处理结果文件"})
         return
+    rgbd_root = (rgbd_dir or RGBD_INPUT_ROOT).strip()
+    rgbd_cam = (rgbd_camera or RGBD_CAMERA).strip()
+    if is_rgbd and not (REPO / rgbd_root).exists() and not Path(rgbd_root).exists():
+        emit({"type": "error", "msg": f"RGB-D 目录不存在: {rgbd_root}"})
+        return
     if not skip_regen:
-        if source == "handfile":
+        if is_rgbd:
+            cmd = [LEROBOT_PY, "sim/build_canonical_from_rgbd.py",
+                   "--input-root", rgbd_root, "--camera", rgbd_cam]
+            caption = f"① 规范层 · {ds['label']} 深度反投手部 · {rgbd_root}"
+        elif source == "handfile":
             cmd = [LEROBOT_PY, "sim/build_canonical_from_processed.py", "--input", str(input_path)]
             caption = "① 规范层 · 导入外部手部结果"
         else:
@@ -193,12 +228,14 @@ def run_pipeline(input_path: str | None, skip_regen: bool, ab: bool, emit,
         if not _run_step(cmd, log, caption, 6, 42, emit):
             emit({"type": "error", "msg": "① 规范层生成失败 · 看日志"})
             return
-        if not _run_step([LEROBOT_PY, "sim/derive_embodiment.py", "--emit-traj"],
-                         log, "② 本体层 · 逐帧逆解 IK", 45, 80, emit):
+        if not _run_step([LEROBOT_PY, "sim/derive_embodiment.py", "--robot", robot, "--emit-traj"],
+                         log, f"② 本体层 · {ds['label']} 逐帧逆解 IK", 45, 80, emit):
             emit({"type": "error", "msg": "② 本体层生成失败 · 看日志"})
             return
+    TRAJ_NPZ = _traj_pkl(robot).with_suffix(".npz")   # 供 /api/replay/play 定位
     emit({"type": "progress", "pct": 84, "msg": "③ 启动 Rerun 服务"})
-    url = _start_replay(str(input_path), log, ab=ab, no_video=(source == "handfile"))
+    url = _start_replay(str(input_path) if input_path else None, log,
+                        robot=robot, no_video=(is_rgbd or source == "handfile"))
     if not url:
         emit({"type": "error", "msg": "③ 未获取到 Rerun 地址 · 看日志"})
         return
@@ -374,9 +411,12 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
 
 
 @app.get("/api/run")
-async def run(video: str, skip: bool = False, ab: bool = False,
-              source: str = "video") -> StreamingResponse:
-    """SSE:管线在线程里跑,事件推给浏览器(EventSource 消费)。"""
+async def run(video: str = "", skip: bool = False, dataset: str = "rgb",
+              source: str = "video", rgbd_dir: str = "", rgbd_camera: str = "",
+              hand: str = "inspire") -> StreamingResponse:
+    """SSE:管线在线程里跑,事件推给浏览器(EventSource 消费)。
+    dataset='rgb'|'rgbd' 决定 build 脚本 + 数据源;hand='inspire'|'gripper' 决定本体;
+    本体规格 = nero_{hand}_{rgb|rgbd};rgbd_dir/rgbd_camera 手动指定 RGB-D 目录。"""
     async def stream():
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_event_loop()
@@ -386,7 +426,8 @@ async def run(video: str, skip: bool = False, ab: bool = False,
 
         def worker() -> None:
             try:
-                run_pipeline(video, skip, ab, emit, source=source)
+                run_pipeline(video or None, skip, dataset, emit, source=source,
+                             rgbd_dir=rgbd_dir, rgbd_camera=rgbd_camera, hand=hand)
             except Exception as e:                       # noqa: BLE001
                 emit({"type": "error", "msg": f"管线异常: {e}"})
             finally:
@@ -425,6 +466,25 @@ async def live_stop() -> JSONResponse:
 
 
 # ---- 轨迹下发端点(视频→轨迹→机械臂回放的最后一环)----
+@app.get("/api/traj/frames")
+async def traj_frames(robot: str = "") -> JSONResponse:
+    """回放轨迹逐帧关节角(供右侧读数随 Rerun 游标联动)。
+    读 robot_traj_<robot>.npz → {fps, arm_names, hand_names, arm[N][7], hand[N][12]}。"""
+    import numpy as np
+    npz = _traj_pkl(robot).with_suffix(".npz") if robot else TRAJ_NPZ
+    if not npz.exists():
+        return JSONResponse({"error": f"无轨迹: {npz.name}"}, status_code=404)
+    d = np.load(npz, allow_pickle=True)
+    fps = float(d["fps"]) if "fps" in d.files else 30.0
+    return JSONResponse({
+        "fps": fps,
+        "arm_names": [str(x) for x in d["arm_joint_names"]],
+        "hand_names": [str(x) for x in d["hand_joint_names"]],
+        "arm": np.asarray(d["arm"], dtype=float).round(4).tolist(),
+        "hand": np.asarray(d["hand"], dtype=float).round(4).tolist(),
+    })
+
+
 @app.get("/api/replay/play")
 async def replay_play(speed: float = 1.0, fps: float = 30.0) -> StreamingResponse:
     """SSE:spawn traj_player 逐帧下发 npz 轨迹给 writer→bridge,进度推浏览器。

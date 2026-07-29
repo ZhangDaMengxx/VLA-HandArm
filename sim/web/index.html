@@ -48,9 +48,9 @@ body {
 .screen { position: relative; width: 100%; height: 100%;
   background: var(--screen); border-radius: 16px; box-shadow: var(--shadow-screen);
   overflow: hidden; transition: all .6s cubic-bezier(.16,1,.3,1); }
-.screen iframe { width: 100%; height: 100%; border: 0; opacity: 0;
+.screen iframe, .screen canvas { width: 100%; height: 100%; border: 0; opacity: 0;
   transition: opacity .6s ease; }
-.screen iframe.loaded { opacity: 1; }
+.screen iframe.loaded, .screen canvas.loaded { opacity: 1; }
 
 /* 视口右上角幽灵按钮排 */
 .viewport-tools { position: absolute; top: 14px; right: 14px; z-index: 4;
@@ -100,6 +100,18 @@ body {
   color: var(--text); font-family: inherit; font-size: 12.5px; font-weight: 500;
   cursor: pointer; transition: all .18s ease; }
 .drop-btn:hover { border-color: var(--accent); color: var(--accent); }
+.drop-menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 240px; z-index: 50;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 5px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.28); display: none; flex-direction: column; gap: 2px; }
+.drop-menu.open { display: flex; }
+.drop-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 9px 12px; border: none; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--text); font-family: inherit; font-size: 12.5px; font-weight: 500; text-align: left;
+  transition: background .14s ease; }
+.drop-opt:hover { background: var(--bg); }
+.drop-opt small { color: var(--text-3); font-family: var(--mono); font-size: 10.5px; font-weight: 400; }
+.drop-opt.sel { color: var(--accent); }
+.drop-opt.sel small { color: var(--accent); opacity: .7; }
 .serve-dot { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px;
   border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
   font-family: var(--mono); font-size: 12px; color: var(--text-2); }
@@ -207,15 +219,17 @@ body {
 .cmd-name { flex: 1; font-size: 14px; color: var(--text); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 .cmd-name.empty { color: var(--text-3); }
-/* A/B 分段开关 */
-.ab { display: flex; gap: 2px; padding: 3px; border-radius: 999px;
-  background: rgba(22,24,29,0.05); flex-shrink: 0; }
-.ab-btn { padding: 6px 12px; border-radius: 999px; border: none; background: transparent;
-  font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--text-2);
-  cursor: pointer; transition: all .18s ease; }
-.ab-btn.active { background: var(--surface); box-shadow: 0 1px 2px rgba(16,24,40,.1); }
-.ab-btn[data-v="raw"].active { color: var(--raw); }
-.ab-btn[data-v="stab"].active { color: var(--stab); }
+/* RGB-D 目录/相机输入(点左栏 RGB-D 按钮后出现)*/
+.rgbd-fields { display: flex; gap: 10px; flex-shrink: 0; }
+.rgbd-field { display: flex; flex-direction: column; gap: 3px; }
+.rgbd-lab { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--text-2); text-transform: uppercase; padding-left: 2px; }
+.rgbd-in { padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(22,24,29,0.12);
+  background: rgba(22,24,29,0.03); font-family: var(--mono); font-size: 11.5px;
+  color: var(--text-1); width: 240px; outline: none; transition: border-color .18s ease; }
+.rgbd-in::placeholder { color: var(--text-3); }
+.rgbd-in.cam { width: 150px; }
+.rgbd-in:focus { border-color: var(--stab); }
 .cmd-go { padding: 10px 22px; border-radius: 999px; border: none; background: var(--accent);
   color: #fff; font-family: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
   flex-shrink: 0; transition: all .2s ease; }
@@ -322,7 +336,13 @@ body {
     <button class="seg-btn" data-view="live">实时 Live</button>
   </div>
   <div class="nav-right">
-    <div class="drop"><button class="drop-btn" id="robotDrop">本体 · NERO+inspire ▾</button></div>
+    <div class="drop" id="robotDropWrap">
+      <button class="drop-btn" id="robotDrop">本体 · NERO+inspire ▾</button>
+      <div class="drop-menu" id="robotMenu">
+        <button class="drop-opt sel" data-hand="inspire">NERO + inspire 灵巧手<small>7-DoF 臂 + 6 驱动手 · state(13)</small></button>
+        <button class="drop-opt" data-hand="gripper">NERO + 平行夹爪<small>7-DoF 臂 + 1 夹爪开合 · state(8)</small></button>
+      </div>
+    </div>
     <div class="drop"><button class="drop-btn" id="taskDrop">任务 · 抓取 ▾</button></div>
     <div class="serve-dot"><span class="dot" id="serveDot"></span><span id="serveText">离线</span></div>
     <button class="icon-btn" title="设置">⚙</button>
@@ -340,7 +360,7 @@ body {
 <div class="left-panel">
   <button class="ctrl primary" id="btnUpload">↑<span class="tip">上传视频</span></button>
   <button class="ctrl" id="btnUploadHand">⎇<span class="tip">上传手部结果</span></button>
-  <button class="ctrl" id="btnAB">⇄<span class="tip">A/B · Raw ↔ Stabilized</span></button>
+  <button class="ctrl" id="btnRgbd">▦<span class="tip">RGB-D 源 · 手动设目录</span></button>
   <button class="ctrl" id="btnReplay">↺<span class="tip">重新生成</span></button>
   <button class="ctrl" id="btnFull2">⤢<span class="tip">视口全屏</span></button>
 </div>
@@ -364,7 +384,7 @@ body {
     <div class="card-head"><span>管线 Pipeline</span></div>
     <div class="flow-step"><span class="tag">规范层</span> canonical_ds</div>
     <div class="flow-arrow">↓ 派生</div>
-    <div class="flow-step"><span class="tag">本体层</span> lerobot_ds_nero_inspire</div>
+    <div class="flow-step"><span class="tag">本体层</span> <span id="flowRobot">lerobot_ds_nero_inspire_rgb</span></div>
     <div class="flow-note">规范层本体无关、可共享;换本体只重派生本体层,规范层不动。</div>
   </div>
   <div class="card">
@@ -372,7 +392,7 @@ body {
     <div class="kv"><span class="k">gate_deg</span><span class="v">8.0°</span></div>
     <div class="kv"><span class="k">oop_alpha</span><span class="v">0.40</span></div>
     <div class="stab-note">手腕朝向稳定化:抑制出平面漂移、保面内真手势。
-      A/B 效果:臂运动幅度 <b>184° → 57°</b>、IK 全收敛。</div>
+      RGB 走 legacy 相对(可达);RGB-D 走 anchored 几何正确装配。</div>
   </div>
 </aside>
 
@@ -382,10 +402,17 @@ body {
     <button class="cmd-add" id="cmdAdd" title="上传视频">+</button>
     <span class="cmd-name empty" id="cmdName">上传视频 / 手部结果文件…</span>
     <label class="cmd-skip"><input type="checkbox" id="skipChk">跳过重算</label>
-    <div class="ab" id="abToggle">
-      <button class="ab-btn active" data-v="stab">Stabilized</button>
-      <button class="ab-btn" data-v="raw">Raw</button>
-      <button class="ab-btn" data-v="ab">A/B</button>
+    <div class="rgbd-fields" id="rgbdFields" style="display:none">
+      <label class="rgbd-field">
+        <span class="rgbd-lab">RGB-D 目录</span>
+        <input class="rgbd-in" id="rgbdDir" placeholder="含 color/ depth/ calibration.json"
+               title="RGB-D 数据目录:里面要有 color/、depth/ 和 calibration.json">
+      </label>
+      <label class="rgbd-field">
+        <span class="rgbd-lab">相机名</span>
+        <input class="rgbd-in cam" id="rgbdCam" placeholder="calibration.json 里的相机名"
+               title="相机名:calibration.json 的 cameras 里的键名(不是文件路径)">
+      </label>
     </div>
     <button class="cmd-go" id="cmdGo" disabled>生成</button>
   </div>
@@ -430,26 +457,39 @@ body {
 <script>
 // ===== state(13):按真实 ROS 关节名建行,带各自限位(和 ros_joint_writer 一致)=====
 const ARM = [1,2,3,4,5,6,7].map(i => ({key:`joint${i}`, label:`joint${i}`, lo:-3.14159, hi:3.14159}));
-const HAND = [
-  {key:"thumb_proximal_yaw_joint",   label:"thumb_yaw",   lo:0, hi:1.308},
-  {key:"thumb_proximal_pitch_joint", label:"thumb_pitch", lo:0, hi:0.6},
-  {key:"index_proximal_joint",       label:"index",       lo:0, hi:1.47},
-  {key:"middle_proximal_joint",      label:"middle",      lo:0, hi:1.47},
-  {key:"ring_proximal_joint",        label:"ring",        lo:0, hi:1.47},
-  {key:"pinky_proximal_joint",       label:"pinky",       lo:0, hi:1.47},
-];
-const ALLJ = [...ARM, ...HAND];
+// 手部读数行按本体切换:inspire=6 驱动关节;gripper=1 个开合行程(m)。
+const HAND_SETS = {
+  inspire: [
+    {key:"thumb_proximal_yaw_joint",   label:"thumb_yaw",   lo:0, hi:1.308},
+    {key:"thumb_proximal_pitch_joint", label:"thumb_pitch", lo:0, hi:0.6},
+    {key:"index_proximal_joint",       label:"index",       lo:0, hi:1.47},
+    {key:"middle_proximal_joint",      label:"middle",      lo:0, hi:1.47},
+    {key:"ring_proximal_joint",        label:"ring",        lo:0, hi:1.47},
+    {key:"pinky_proximal_joint",       label:"pinky",       lo:0, hi:1.47},
+  ],
+  gripper: [
+    {key:"gripper_joint", label:"gripper(m)", lo:0, hi:0.04},
+  ],
+};
+const handDefs = () => HAND_SETS[S.hand] || HAND_SETS.inspire;
+const allJoints = () => [...ARM, ...handDefs()];
 const jid = k => "j_" + k.replace(/[^\w]/g, "");
 
 const S = { video:null, name:null, source:"video", uploadMode:"any",
-            abMode:"stab", running:false, hasData:false,
+            dataset:"rgb", hand:"inspire", running:false, hasData:false,
             mode:"replay", ws:null, live:false };
 const $ = id => document.getElementById(id);
+
+// nero_{inspire|gripper}_{rgb|rgbd} —— 本体×数据源 组合出 RobotSpec 名(单一真源)。
+function currentRobot() {
+  const src = S.dataset === "rgbd" ? "rgbd" : "rgb";
+  return `nero_${S.hand}_${src}`;
+}
 
 // ===== 渲染遥测读数行 =====
 function renderJoints() {
   $("armJoints").innerHTML = ARM.map(j => jrow(j, "arm")).join("");
-  $("handJoints").innerHTML = HAND.map(j => jrow(j, "hand")).join("");
+  $("handJoints").innerHTML = handDefs().map(j => jrow(j, "hand")).join("");
 }
 function jrow(j, group) {
   const id = jid(j.key);
@@ -464,7 +504,7 @@ function jrow(j, group) {
 function updateJoints(row) {
   const map = {}; (row.names||[]).forEach((n,i) => map[n] = row.pos[i]);
   S.jmap = map;
-  for (const j of ALLJ) {
+  for (const j of allJoints()) {
     const v = map[j.key]; if (v === undefined) continue;
     const pct = Math.max(0, Math.min(100, (v - j.lo)/(j.hi - j.lo)*100));
     const f = $(jid(j.key)+"_f"), el = $(jid(j.key)+"_v");
@@ -557,9 +597,10 @@ async function handleFile(file) {
     const r = await fetch("/api/upload", { method: "POST", body: fd });
     const j = await r.json();
     S.video = j.path; S.name = j.name || file.name; S.source = j.source || "video";
+    exitRgbd();                       // 上传即回 RGB 路线(RGB-D 只由按钮进入)
     const prefix = S.source === "handfile" ? "手部结果 · " : "视频 · ";
     $("cmdName").textContent = prefix + S.name;
-    $("cmdGo").disabled = false;
+    refreshGo();
     $("cmd").classList.add("armed");
     $("centerStatus").textContent = S.source === "handfile"
       ? "外部手部结果已就绪 · 点『生成』"
@@ -569,25 +610,83 @@ async function handleFile(file) {
   }
 }
 
-// ===== A/B 切换 =====
-$("abToggle").querySelectorAll(".ab-btn").forEach(btn => {
-  btn.onclick = () => {
-    $("abToggle").querySelectorAll(".ab-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active"); S.abMode = btn.dataset.v;
-  };
+// ===== 数据源:动作即路线 =====
+// 上传视频=RGB(legacy 相对,可达);上传手部结果=不变;点 RGB-D 按钮=手动填目录走 metric 几何。
+const RGBD_DEFAULT_DIR = "kinect2_middle/kinect2_middle";
+const RGBD_DEFAULT_CAM = "kinect2_middle";
+function enterRgbd() {
+  S.dataset = "rgbd";
+  $("rgbdFields").style.display = "flex";
+  $("btnRgbd").classList.add("on");
+  if (!$("rgbdDir").value) $("rgbdDir").value = RGBD_DEFAULT_DIR;
+  if (!$("rgbdCam").value) $("rgbdCam").value = RGBD_DEFAULT_CAM;
+  $("cmdName").textContent = "RGB-D 源 · 填目录后点『生成』";
+  $("cmdName").classList.remove("empty");
+  $("centerStatus").textContent = "RGB-D 源 · 设好目录点『生成』";
+  refreshGo();
+}
+function exitRgbd() {
+  S.dataset = "rgb";
+  $("rgbdFields").style.display = "none";
+  $("btnRgbd").classList.remove("on");
+  refreshGo();
+}
+$("btnRgbd").onclick = () => { S.dataset === "rgbd" ? exitRgbd() : enterRgbd(); };
+
+// ===== 本体切换:NERO+inspire 灵巧手 <-> NERO+平行夹爪 =====
+const BODIES = {
+  inspire: { drop:"本体 · NERO+inspire ▾", name:"NERO + inspire",
+             meta:"7-DoF 臂 + inspire 灵巧手", badge:"state(13) = 7 臂 + 6 手" },
+  gripper: { drop:"本体 · NERO+夹爪 ▾", name:"NERO + 平行夹爪",
+             meta:"7-DoF 臂 + 二指平行夹爪", badge:"state(8) = 7 臂 + 1 夹爪开合" },
+};
+function setHand(hand) {
+  S.hand = hand;
+  const b = BODIES[hand] || BODIES.inspire;
+  $("robotDrop").textContent = b.drop;
+  const nm = document.querySelector(".spec-name"); if (nm) nm.textContent = b.name;
+  const mt = document.querySelector(".spec-meta"); if (mt) mt.textContent = b.meta;
+  const bd = document.querySelector(".spec-badge"); if (bd) bd.textContent = b.badge;
+  document.querySelectorAll("#robotMenu .drop-opt").forEach(o =>
+    o.classList.toggle("sel", o.dataset.hand === hand));   // 选中高亮
+  renderJoints();                 // 手部读数行换成对应本体
+  refreshGo();                    // flowRobot 名 + 就绪态刷新
+}
+// 下拉:点按钮展开选项列表,点选项选定,点外部收起。
+const robotMenu = $("robotMenu");
+$("robotDrop").onclick = e => { e.stopPropagation(); robotMenu.classList.toggle("open"); };
+robotMenu.querySelectorAll(".drop-opt").forEach(o =>
+  o.onclick = () => { setHand(o.dataset.hand); robotMenu.classList.remove("open"); });
+document.addEventListener("click", e => {
+  if (!$("robotDropWrap").contains(e.target)) robotMenu.classList.remove("open");
 });
+
+// RGB-D 需目录;RGB 需先有视频/手部结果文件。
+function refreshGo() {
+  const ready = S.dataset === "rgbd" ? !!$("rgbdDir").value.trim() : !!S.video;
+  $("cmdGo").disabled = S.running || !ready;
+  const fr = $("flowRobot"); if (fr) fr.textContent = "lerobot_ds_" + currentRobot();
+}
+$("rgbdDir").oninput = refreshGo;
 
 // ===== 生成(管线 SSE)=====
 $("cmdGo").onclick = runPipeline;
-$("btnReplay").onclick = () => { if (!S.running && S.video) runPipeline(); };
+function pipelineReady() {
+  return S.dataset === "rgbd" ? !!$("rgbdDir").value.trim() : !!S.video;
+}
+$("btnReplay").onclick = () => { if (!S.running && pipelineReady()) runPipeline(); };
 
 function runPipeline() {
-  if (S.running || !S.video) return;
+  if (S.running || !pipelineReady()) return;   // RGB 需上传;RGB-D 需目录
   S.running = true; $("cmdGo").disabled = true; setServe("busy");
   $("toast").classList.add("show-log"); toastShow("① 启动管线…");
   const skip = $("skipChk").checked;
-  const ab = S.abMode === "ab";
-  const url = `/api/run?video=${encodeURIComponent(S.video)}&skip=${skip}&ab=${ab}&source=${encodeURIComponent(S.source)}`;
+  const vid = S.video ? encodeURIComponent(S.video) : "";
+  let url = `/api/run?video=${vid}&skip=${skip}&dataset=${S.dataset}&hand=${S.hand}&source=${encodeURIComponent(S.source)}`;
+  if (S.dataset === "rgbd") {
+    url += `&rgbd_dir=${encodeURIComponent($("rgbdDir").value.trim())}`
+         + `&rgbd_camera=${encodeURIComponent($("rgbdCam").value.trim())}`;
+  }
   const es = new EventSource(url);
   es.onmessage = e => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
@@ -595,29 +694,88 @@ function runPipeline() {
     else if (ev.type === "log") { toastLog(ev.line); }
     else if (ev.type === "rerun_url") { embedRerun(ev.url); }
     else if (ev.type === "done") {
-      es.close(); S.running = false; $("cmdGo").disabled = false;
+      es.close(); S.running = false; refreshGo();
       setServe("online"); toastEnd("done"); onLoaded();
     } else if (ev.type === "error") {
-      es.close(); S.running = false; $("cmdGo").disabled = false;
+      es.close(); S.running = false; refreshGo();
       setServe("offline"); toastEnd("err", "⚠ " + ev.msg);
     }
   };
   es.onerror = () => {
-    es.close(); S.running = false; $("cmdGo").disabled = false;
+    es.close(); S.running = false; refreshGo();
     setServe("offline"); toastEnd("err", "连接错误,请查看日志");
   };
 }
 
-// ===== 嵌入 Rerun iframe =====
-let _rerunUrl = null;
-function embedRerun(url) {
+// ===== 嵌入 Rerun:优先 JS 组件(可读游标→联动右侧关节读数),失败回退 iframe =====
+const RERUN_VIEWER_ESM = "https://esm.sh/@rerun-io/web-viewer@0.26.2";
+let _rerunUrl = null;      // 完整查看器 URL(含 ?url=grpc)
+let _viewer = null;        // WebViewer 实例(JS 组件路径)
+let _traj = null;          // {fps, frames:[{names,pos}]} 供游标→帧映射
+let _activeTl = "frame";   // 当前 Rerun 时间轴(蓝图默认停在 frame 序号轴;timeline_change 会更新)
+
+function _grpcFromUrl(full) {           // 从 ...?url=rerun+http://ip:9876/proxy 取 grpc 地址
+  try { return new URL(full).searchParams.get("url") || full; } catch { return full; }
+}
+async function embedRerun(url) {
   _rerunUrl = url;
   const sc = $("screen"); $("screenHint").style.display = "none";
-  const old = sc.querySelector("iframe"); if (old) old.remove();
+  try { _viewer && _viewer.stop && _viewer.stop(); } catch (_) {}
+  sc.querySelectorAll("iframe,canvas").forEach(e => e.remove());
+  _viewer = null; fetchTrajFrames();     // 并行拉逐帧关节角(联动用)
+  try {
+    const mod = await import(RERUN_VIEWER_ESM);
+    const v = new mod.WebViewer();
+    // http://<WSL-IP> 非安全上下文,WebGPU 被禁 → 显式用 WebGL,免得报错/黑屏。
+    await v.start(_grpcFromUrl(url), sc, { width: "100%", height: "100%", render_backend: "webgl" });
+    v.on("timeline_change", ev => { _activeTl = (typeof ev === "string") ? ev : (ev && ev.timeline) || ""; });
+    v.on("time_update", ev => syncJointsToTime((typeof ev === "number") ? ev : (ev && ev.time)));
+    if (v.canvas) v.canvas.classList.add("loaded");
+    _viewer = v; $("vtools").classList.add("visible");
+  } catch (e) {
+    console.warn("Rerun JS 组件加载失败,回退 iframe(读数不联动):", e);
+    embedRerunIframe(url);
+  }
+}
+function embedRerunIframe(url) {
+  const sc = $("screen");
+  sc.querySelectorAll("iframe,canvas").forEach(e => e.remove());
   const iframe = document.createElement("iframe");
   iframe.src = url; iframe.setAttribute("allowfullscreen", "");
   iframe.onload = () => { iframe.classList.add("loaded"); $("vtools").classList.add("visible"); };
   sc.appendChild(iframe);
+}
+// 拉本次机器人的逐帧关节角,预构造成 updateJoints 能吃的 {names,pos}
+async function fetchTrajFrames() {
+  _traj = null;
+  const robot = currentRobot();
+  try {
+    const r = await fetch("/api/traj/frames?robot=" + robot);
+    if (!r.ok) return;
+    const d = await r.json();
+    const names = [...d.arm_names, ...d.hand_names];
+    const frames = d.arm.map((a, f) => ({ names, pos: [...a, ...d.hand[f]] }));
+    _traj = { fps: d.fps || 30, frames };
+  } catch (e) { console.warn("拉取轨迹帧失败,读数不联动:", e); }
+}
+// Rerun 游标时间 → 帧序号 → 刷新右侧读数。
+// frame 轴:t 就是序号。时间轴:t 可能是秒或纳秒(类型只给 number),
+// 故在 {秒, 纳秒} 里挑落进 [0,N) 的那个,免去单位猜测。
+let _tlLogged = 0;
+function _timeToFrame(t, N, fps) {
+  const cands = (_activeTl === "frame")
+    ? [t]                                   // frame 轴:t 即帧号
+    : [t * fps, (t / 1e9) * fps];           // 时间轴:秒 / 纳秒 两种解释
+  for (const c of cands) if (c >= -0.5 && c < N) return Math.round(c);
+  return -1;                                 // 落不进范围(如墙钟 log_time 轴)→ 不更新
+}
+function syncJointsToTime(t) {
+  if (_traj == null || t == null || !isFinite(t)) return;
+  const N = _traj.frames.length;
+  const idx = _timeToFrame(t, N, _traj.fps);
+  if (_tlLogged < 3) { console.log("[joints-sync] tl=", _activeTl, "t=", t, "->frame", idx, "/", N); _tlLogged++; }
+  if (idx < 0) return;                        // 非帧/时间轴,不硬映射到末帧
+  updateJoints(_traj.frames[idx]);
 }
 
 // ===== 加载完成:中央文案淡出,右侧面板出现 =====
@@ -634,15 +792,6 @@ $("vReconnect").onclick = () => { if (_rerunUrl) embedRerun(_rerunUrl); };
 $("vCopy").onclick = () => {
   if (_rerunUrl) { navigator.clipboard.writeText(_rerunUrl).then(() => {
     $("vCopy").textContent = "✓"; setTimeout(() => $("vCopy").textContent = "⧉", 1200); }); }
-};
-
-// ===== A/B 左栏按钮快捷切换 =====
-$("btnAB").onclick = () => {
-  const btns = [...$("abToggle").querySelectorAll(".ab-btn")];
-  const cur = btns.findIndex(b => b.classList.contains("active"));
-  btns.forEach(b => b.classList.remove("active"));
-  btns[(cur + 1) % btns.length].classList.add("active");
-  S.abMode = btns[(cur + 1) % btns.length].dataset.v;
 };
 
 // ===== 顶栏分段导航:回放 / 实时 真正切换模式 =====
@@ -787,7 +936,7 @@ async function sendCmd(cmd) {
 // ===== 键盘快捷键 =====
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") closeUpload();
-  if (e.key === " " && e.target === document.body) { e.preventDefault(); $("btnAB").click(); }
+  if (e.key === " " && e.target === document.body) { e.preventDefault(); $("btnRgbd").click(); }
   if (e.key === "Enter" && e.ctrlKey) $("cmdGo").click();
 });
 </script>

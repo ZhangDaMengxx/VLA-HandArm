@@ -9,9 +9,41 @@
 import numpy as np
 
 
-def wrist_orientation(mediapipe_wrist_rot, operator2mano):
-    """3x3:与 detect_from_video 的 wrist_rot 一致(MANO/机器人基 → 相机系)。"""
+def mano_wrist_orientation(mediapipe_wrist_rot, operator2mano):
+    """3x3:MANO/retargeting wrist frame -> camera frame.
+
+    This is the historical orientation used together with `joint_pos =
+    keypoints @ mediapipe_wrist_rot @ operator2mano`. It exists to satisfy the
+    dex-retargeting/MANO local coordinate convention for hand keypoints.
+    """
     return mediapipe_wrist_rot @ operator2mano
+
+
+def physical_wrist_orientation(mediapipe_wrist_rot, operator2mano):
+    """3x3:physical wrist frame -> camera frame.
+
+    Physical convention used by the arm:
+      X = palm normal
+      Z = wrist -> middle MCP direction
+      Y = right-handed completion, Y = Z x X
+
+    The sign of the palm normal comes from the existing right/left hand
+    operator convention, but this frame is intentionally separate from the
+    hand-keypoint MANO/local frame used by dex-retargeting.
+    """
+    mano_R = mano_wrist_orientation(mediapipe_wrist_rot, operator2mano)
+    x = mano_R[:, 0].astype(float)
+    z = mano_R[:, 2].astype(float)
+    x /= np.linalg.norm(x) + 1e-12
+    z = z - x * float(np.dot(x, z))
+    z /= np.linalg.norm(z) + 1e-12
+    y = np.cross(z, x)
+    y /= np.linalg.norm(y) + 1e-12
+    return np.stack([x, y, z], axis=1)
+
+
+# Backward-compatible name for older callers.
+wrist_orientation = mano_wrist_orientation
 
 
 def hand_scale_depth(joint_pos, kp2d_px, focal_px, ref=(0, 9)):
@@ -28,7 +60,8 @@ def backproject(u, v, Z, focal_px, cx, cy):
 
 
 def estimate_wrist_pose(joint_pos, kp2d_px, mediapipe_wrist_rot, operator2mano,
-                        img_shape, focal_px=None, depth_lookup=None):
+                        img_shape, focal_px=None, depth_lookup=None,
+                        wrist_frame="physical"):
     """返回 4x4 手腕位姿(相机系)。
     depth_lookup: callable(u,v)->Z(米)。给了就用它(Femto ToF);否则单目尺度启发式。"""
     H, W = img_shape[:2]
@@ -41,7 +74,12 @@ def estimate_wrist_pose(joint_pos, kp2d_px, mediapipe_wrist_rot, operator2mano,
     else:
         Z = hand_scale_depth(joint_pos, kp2d_px, focal_px)  # 单目近似
     pos = backproject(u, v, Z, focal_px, cx, cy)
-    R = wrist_orientation(mediapipe_wrist_rot, operator2mano)
+    if wrist_frame == "physical":
+        R = physical_wrist_orientation(mediapipe_wrist_rot, operator2mano)
+    elif wrist_frame == "mano":
+        R = mano_wrist_orientation(mediapipe_wrist_rot, operator2mano)
+    else:
+        raise ValueError(f"unknown wrist_frame {wrist_frame!r}, expected physical/mano")
     T = np.eye(4)
     T[:3, :3] = R
     T[:3, 3] = pos

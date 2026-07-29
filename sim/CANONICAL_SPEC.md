@@ -91,7 +91,7 @@
 | `observation.hand_keypoints` | float32 | (63,)=21×3 | 米 | T0=相机系 / **T1=世界系** | 3D landmarks,序=`KP_NAMES` | ✅(单目近似米制)/🔜真米制 |
 | `observation.hand_keypoints_2d` | float32 | (42,)=21×2 | 像素 u,v | 图像 | 2D landmarks | ✅ |
 | `observation.hand_visibility` | float32 | (21,) | 0–1 | — | presence/可见度 | ✅ |
-| `observation.wrist_pose` | float32 | (7,) | `t`(m)+quat(xyzw) | T0=相机系 / **T1=世界系** | `pose_to_vec()`,rot=手腕系姿态 | ✅/🔜去 home 锚定 |
+| `observation.wrist_pose` | float32 | (7,) | `t`(m)+quat(xyzw) | T0=相机系 / **T1=世界系** | `pose_to_vec()`,rot=手腕系姿态 | ✅ RGB-D 走世界系;derive `frame_mode=metric` 已去 home 锚定 |
 | `observation.hand_estimator_id` | float32 | (1,) | — | — | `0=mediapipe,1=wilor` | ✅ |
 | `handedness` | str/int | 标量 | — | — | `"right"/"left"` | 🔜(单手也显式存) |
 
@@ -165,4 +165,4 @@ MediaPipe / dex-retargeting 手部 landmark 序。索引 0=手腕,每指 4 点(�
 | **Tier 1**(该定的档) | 原生分辨率 RGB + 度量深度 + 内外参 + 世界系手/手腕 + 每流时间戳 + per-episode 元数据(含 success) + **30–100 条带变化的 episode** + 多措辞语言 | 真正验证"数据可训"+"数据级本体无关" |
 | **Tier 2**(Phase D+) | 物体 6-DoF/分割 + 多视角/多设备 + 子步骤标注 | 物体 grounding、多本体 |
 
-**下一步施工顺序**:① 等 Femto,把母带从"相机系单目 + 256 烘死"救出来(补深度+内外参+世界系,derive 去 home 锚定);② episode 从 1 条堆到几十条带变化的。这两步做完即可交付 Tier 1。物体级 grounding 与第二本体留后。
+**下一步施工顺序**:① ~~补深度+内外参+世界系,derive 去 home 锚定~~ —— kinect RGB-D 已落地:世界系米制 wrist_pose + `frame_mode=metric` 固定 base 绝对映射(550/557),home 锚定已去。**剩一件真数据缺口**:要机器人相对相机的真实 `T_base_camera`(绝对世界位),需机器人与相机共处一场景做外参标定;当前 metric 用 centroid 每段居中作务实替代。② episode 从 1 条堆到几十条带变化的。物体级 grounding 与第二本体留后。
