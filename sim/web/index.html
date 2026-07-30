@@ -202,6 +202,19 @@ body {
 .kv .v { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--text); }
 .stab-note { font-size: 11px; color: var(--text-3); line-height: 1.55; margin-top: 8px;
   padding-top: 10px; border-top: 1px dashed var(--line); }
+
+/* 验收指标行 */
+.mx-sum { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0; }
+.mx-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 9px; cursor: help; }
+.mx-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; align-self: center; }
+.mx-pass { background: var(--success); }
+.mx-fail { background: var(--danger, #f04438); }
+.mx-na   { background: var(--text-3); }
+.mx-label { flex: 1; font-size: 12px; color: var(--text-2); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.mx-val { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
+.mx-th { font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+.mx-empty { font-size: 11px; color: var(--text-3); line-height: 1.55; }
 .stab-note b { color: var(--stab); font-weight: 500; }
 
 /* ===== 底部悬浮命令胶囊(玻璃)===== */
@@ -374,6 +387,13 @@ body {
     <span class="spec-badge">state(13) = 7 臂 + 6 手</span>
   </div>
   <div class="card">
+    <div class="card-head"><span>数据有效性 · 验收</span><span id="mxSummary" class="mx-sum">—</span></div>
+    <div class="jgroup">通用(规范层)</div>
+    <div id="mxCanonical"><div class="mx-empty">未测 · 跑一次管线生成</div></div>
+    <div class="jgroup" style="margin-top:12px" id="mxEmbTitle">本体专属</div>
+    <div id="mxEmbodiment"></div>
+  </div>
+  <div class="card">
     <div class="card-head"><span>state(13) 读数</span></div>
     <div class="jgroup">臂 state[0:7] · rad</div>
     <div id="armJoints"></div>
@@ -514,6 +534,39 @@ function updateJoints(row) {
 }
 renderJoints();
 
+// ===== 验收指标(按本体绑定,读 /api/metrics 缓存)=====
+function mxRow(m) {
+  const cls = m.pass === true ? "mx-pass" : m.pass === false ? "mx-fail" : "mx-na";
+  const val = m.value === null ? "—" : m.value + (m.unit || "");
+  return `<div class="mx-row" title="${(m.note||"").replace(/"/g,"&quot;")}">`
+       + `<span class="mx-dot ${cls}"></span>`
+       + `<span class="mx-label">${m.label}</span>`
+       + `<span class="mx-val">${val}</span>`
+       + `<span class="mx-th">${m.threshold||""}</span></div>`;
+}
+async function loadMetrics(robot) {
+  const canon = $("mxCanonical"), emb = $("mxEmbodiment"), sum = $("mxSummary");
+  try {
+    const r = await fetch("/api/metrics?robot=" + encodeURIComponent(robot));
+    const d = await r.json();
+    if (!d.measured) {
+      canon.innerHTML = `<div class="mx-empty">${d.msg || "未测"}</div>`;
+      emb.innerHTML = ""; sum.textContent = "—"; sum.style.color = "var(--text-3)";
+      return;
+    }
+    const cm = d.metrics.filter(m => m.category === "canonical");
+    const em = d.metrics.filter(m => m.category === "embodiment");
+    canon.innerHTML = cm.map(mxRow).join("");
+    emb.innerHTML = em.map(mxRow).join("");
+    const testable = d.metrics.filter(m => m.pass !== null);
+    const passed = testable.filter(m => m.pass === true).length;
+    sum.textContent = `${passed}/${testable.length} 达标`;
+    sum.style.color = passed === testable.length ? "var(--success)" : "var(--danger,#f04438)";
+  } catch (e) {
+    canon.innerHTML = `<div class="mx-empty">加载失败: ${e}</div>`; emb.innerHTML = "";
+  }
+}
+
 // ===== serve 状态灯 =====
 function setServe(state) {   // "online" | "busy" | "offline"
   const dot = $("serveDot"), cdot = $("centerDot");
@@ -529,6 +582,7 @@ async function pollStatus() {
   } catch (e) { /* 忽略 */ }
 }
 setInterval(pollStatus, 4000); pollStatus();
+loadMetrics(currentRobot());     // 初次加载:显示当前本体的验收缓存(有则显示,无则提示未测)
 
 // ===== 进度浮层 =====
 function toastShow(title) {
@@ -624,12 +678,14 @@ function enterRgbd() {
   $("cmdName").classList.remove("empty");
   $("centerStatus").textContent = "RGB-D 源 · 设好目录点『生成』";
   refreshGo();
+  loadMetrics(currentRobot());    // 数据源切 RGB-D → 换该本体验收数据
 }
 function exitRgbd() {
   S.dataset = "rgb";
   $("rgbdFields").style.display = "none";
   $("btnRgbd").classList.remove("on");
   refreshGo();
+  loadMetrics(currentRobot());    // 数据源切 RGB → 换该本体验收数据
 }
 $("btnRgbd").onclick = () => { S.dataset === "rgbd" ? exitRgbd() : enterRgbd(); };
 
@@ -651,6 +707,8 @@ function setHand(hand) {
     o.classList.toggle("sel", o.dataset.hand === hand));   // 选中高亮
   renderJoints();                 // 手部读数行换成对应本体
   refreshGo();                    // flowRobot 名 + 就绪态刷新
+  $("mxEmbTitle").textContent = hand === "gripper" ? "本体专属 · 夹爪" : "本体专属 · 灵巧手";
+  loadMetrics(currentRobot());    // 切本体 → 显示该本体验收数据
 }
 // 下拉:点按钮展开选项列表,点选项选定,点外部收起。
 const robotMenu = $("robotMenu");
@@ -696,6 +754,7 @@ function runPipeline() {
     else if (ev.type === "done") {
       es.close(); S.running = false; refreshGo();
       setServe("online"); toastEnd("done"); onLoaded();
+      loadMetrics(currentRobot());          // 管线刚写完验收缓存,刷新验收卡
     } else if (ev.type === "error") {
       es.close(); S.running = false; refreshGo();
       setServe("offline"); toastEnd("err", "⚠ " + ev.msg);

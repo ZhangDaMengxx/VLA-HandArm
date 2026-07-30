@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 import types
 from pathlib import Path
@@ -38,7 +39,35 @@ from inspire_hand import InspireHand, InspireHandConfig, HAND_JOINTS
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
 PYAGX_ROOT = SIM.parent / "pyAgxArm-master" / "pyAgxArm-master"   # 本地 SDK 源
-LEROBOT_SITE = Path("/home/zhang123/ros2_ws/enter/envs/lerobot/lib/python3.10/site-packages")
+
+
+def _find_lerobot_site() -> Path | None:
+    """定位 lerobot 环境的 site-packages(给 pyAgxArm 补纯 python 依赖用)。
+
+    conda 环境**不在仓库里**,它装哪儿是机器的属性,所以不能用相对路径写死:
+    本机在 ros2_ws/enter/,别的机器可能是 ~/miniconda3/envs/lerobot。按优先级找:
+      1. $LEROBOT_SITE          显式指定,换机器只改这一个
+      2. $LEROBOT_PY 的同环境    已经配了解释器就顺手推出来,不用再配一遍
+      3. 仓库旁的 enter/        本机布局,作为候选保留
+      4. conda 默认位置
+    必须显式 python3.10(要和 ROS Humble 的 ABI 一致);lib/ 下有 python3.1、
+    python3.1.c~ 这类残留目录,glob 'python3.*' 会撞上错的。
+    """
+    if env := os.environ.get("LEROBOT_SITE"):
+        return Path(env)
+    candidates = []
+    if py := os.environ.get("LEROBOT_PY"):
+        # <env>/bin/python3 → <env>/lib/python3.10/site-packages
+        candidates.append(Path(py).resolve().parent.parent / "lib/python3.10/site-packages")
+    candidates += [
+        SIM.parent.parent / "enter/envs/lerobot/lib/python3.10/site-packages",
+        Path.home() / "miniconda3/envs/lerobot/lib/python3.10/site-packages",
+        Path.home() / "anaconda3/envs/lerobot/lib/python3.10/site-packages",
+    ]
+    return next((c for c in candidates if c.is_dir()), None)
+
+
+LEROBOT_SITE = _find_lerobot_site()
 NERO_ARM_LIMITS = [
     (math.radians(-155.0), math.radians(155.0)),
     (math.radians(-100.0), math.radians(100.0)),
@@ -59,7 +88,13 @@ def _prepare_pyagx_imports() -> None:
     """
     if str(PYAGX_ROOT) not in sys.path:
         sys.path.insert(0, str(PYAGX_ROOT))
-    if LEROBOT_SITE.exists() and str(LEROBOT_SITE) not in sys.path:
+    if LEROBOT_SITE is None:
+        # 没找着不是致命错误(下面有 typing_extensions 的 shim 兜),但要说出来:
+        # 真机缺包时报错会指向 pyAgxArm 内部,不提示的话很难联想到是这里没找到。
+        print("[bridge] warn: 未找到 lerobot site-packages,pyAgxArm 的纯 python 依赖"
+              "可能缺失。可设 LEROBOT_SITE=<env>/lib/python3.10/site-packages 指定。",
+              file=sys.stderr, flush=True)
+    elif str(LEROBOT_SITE) not in sys.path:
         sys.path.append(str(LEROBOT_SITE))
     try:
         import typing_extensions  # noqa: F401

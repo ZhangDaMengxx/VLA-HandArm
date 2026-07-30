@@ -11,7 +11,12 @@
 
 # ---- 生成物 / 训练输出(可重建,不入库)----
 /outputs/
-sim/out/
+# 注意用 sim/out/* 而非 sim/out/:目录级忽略会让下面的 ! 例外失效。
+sim/out/*
+# 例外:技能表 registry.yaml 的 trajectory 技能直接引用这两个 npz(各 ~100K)。
+# 它们虽是生成物,但不入库的话新机器 clone 下来技能就跑不了,所以破例带上。
+!sim/out/robot_traj_nero_inspire_rgbd.npz
+!sim/out/robot_traj_nero_inspire_rgb.npz
 # Rerun 可视化录制(诊断用,可重建,体积大)
 *.rrd
 # build_nero_inspire.py 生成(含绝对路径,换机需重建)
@@ -29,3 +34,10 @@ __pycache__/
 .claude/
 20200709-subject-01/
 kinect2_middle/
+
+# ---- 大文件(超 GitHub 单文件 100M 上限,git 装不下)----
+# 数据集压缩包 12G,解出来就是上面已忽略的 20200709-subject-01/
+20200709-subject-01.tar.gz
+*.tar.gz
+# 117M 全手网格,URDF/代码都没引用(URDF 用的是 1M 的"适配法兰.stl",那个入库)
+assets/nero_description/meshes/nero_RH56DF.stl

@@ -1,0 +1,163 @@
+# 技能清单 —— 唯一真源(single source of truth)。
+#
+# 上层(Web 按钮 / 语音 / 未来 VLA 输出)都只认这里的 id,不各自写死动作。
+# 执行侧统一走 sim/ros_joint_writer.py 的 JointWriter.send(),复用其限位夹取。
+#
+# 字段说明(字段设计后续可调,改这里 + schema.py 的 ALLOWED_* 即可):
+#   id        技能唯一标识,小写下划线。调用信封里传的就是它。
+#   name      中文显示名,给 Web 列表和语音确认话术用。
+#   aliases   语音/文本别名。意图解析先精确匹配,再模糊匹配。
+#   kind      primitive(直接映射 writer JSON)
+#             trajectory(回放 robot_traj_*.npz)
+#             composite(按序串联若干已注册技能)
+#   desc      一句话说明,给人看。
+#   params    可调参数。type/default/range,越界夹取而非报错。
+#   requires  前置条件,执行器检查不通过就拒发:
+#             live_session(bridge 在跑)/ arm_enabled(臂已使能)
+#   safety    voice_enabled  是否允许语音命中
+#             need_confirm   语音触发是否必须二次确认
+#             max_speed      语音路径下的速度上限(压过 params.speed)
+#
+# kind 专属字段:
+#   primitive  → action:  直接给 writer 的 dict
+#   trajectory → source:  相对仓库根的 npz 路径; fps: 默认帧率
+#   composite  → steps:   [{skill: <id>, params: {...}}, ...]
+
+version: 1
+
+skills:
+  # ---------------- 安全 / 状态类 primitive ----------------
+  - id: estop
+    name: 急停
+    aliases: ["急停", "停", "停下", "停止", "紧急停止", "别动"]
+    kind: primitive
+    desc: 立即触发急停,只发急停通道,不附带任何运动目标。
+    action: {estop: true}
+    requires: []
+    safety:
+      voice_enabled: true
+      need_confirm: false      # 全表唯一免确认项:急停宁可误触发,不可延迟
+
+  - id: arm_enable
+    name: 使能机械臂
+    aliases: ["使能", "上使能", "使能机械臂", "上电"]
+    kind: primitive
+    desc: 给 NERO-7 上使能,运动类技能的前置。
+    action: {action: enable}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  - id: arm_disable
+    name: 下使能
+    aliases: ["下使能", "去使能", "断使能"]
+    kind: primitive
+    desc: 撤掉使能,臂进入自由状态。注意可能因重力下垂。
+    action: {action: disable}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  - id: arm_reset
+    name: 复位机械臂
+    aliases: ["复位", "清错", "清故障"]
+    kind: primitive
+    desc: 清除 SDK 侧错误状态。不产生运动。
+    action: {action: reset}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  - id: set_speed_slow
+    name: 切慢速
+    aliases: ["慢速", "切慢速", "慢一点", "降速"]
+    kind: primitive
+    desc: 把 SDK 速度百分比压到 20%,联调期默认档。
+    action: {action: set_speed, value: 20}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  # ---------------- 关节空间 primitive(会真实运动) ----------------
+  - id: go_home
+    name: 回零位
+    aliases: ["回零", "回零位", "复位到零", "回初始位置", "回家"]
+    kind: primitive
+    desc: 7 轴全部回 0 rad。慢速大幅运动,真机执行前务必确认周围无障碍。
+    action: {arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], duration: 5.0}
+    params:
+      duration: {type: float, default: 5.0, range: [2.0, 15.0]}
+    requires: [live_session, arm_enabled]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  - id: hand_open
+    name: 张开手
+    aliases: ["张手", "张开", "张开手", "松手", "放开"]
+    kind: primitive
+    desc: 灵巧手 6 驱动关节全回 0,完全张开。
+    action:
+      hand: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      duration: 1.5
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  - id: hand_close
+    name: 握拳
+    aliases: ["握拳", "握紧", "抓紧", "合手", "闭合"]
+    kind: primitive
+    # 顺序 = writer 的 HAND_NAMES:thumb_yaw, thumb_pitch, index, middle, ring, pinky
+    # 取值保守留余量(限位 1.308/0.6/1.47×4),不顶到上限。
+    desc: 灵巧手闭合到保守握持位,不顶限位。
+    action:
+      hand: [1.0, 0.5, 1.2, 1.2, 1.2, 1.2]
+      duration: 1.5
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  # ---------------- 轨迹回放(EGO 重定向产物) ----------------
+  # 只登记 inspire 本体:gripper 的 npz 是 hand=(N,1),traj_player 需要 6 个驱动名,
+  # 现在喂不进去。等夹爪本体的 writer 通道补齐再登记。
+  - id: replay_rgbd_demo
+    name: 回放 RGB-D 示教
+    aliases: ["回放深度示教", "播放深度轨迹", "跑一遍深度示教"]
+    kind: trajectory
+    desc: 回放 kinect RGB-D 管线产出的 557 帧重定向轨迹(约 18.6 秒 @30fps)。
+    source: sim/out/robot_traj_nero_inspire_rgbd.npz
+    fps: 30.0
+    params:
+      speed: {type: float, default: 1.0, range: [0.25, 4.0]}
+      # 接近段:先用这个时长走到轨迹首帧再开始回放。首帧是任意位姿,
+      # 直接按 1/fps 下发等于要求臂在 33ms 内弹过去 —— 真机上是剧烈甩动。
+      approach: {type: float, default: 3.0, range: [0.0, 10.0]}
+    requires: [live_session, arm_enabled]
+    safety:
+      voice_enabled: true
+      need_confirm: true
+      max_speed: 1.0           # 语音路径最快只给 1.0 倍
+
+  - id: replay_rgb_demo
+    name: 回放 RGB 示教
+    aliases: ["回放普通示教", "播放视频轨迹", "跑一遍视频示教"]
+    kind: trajectory
+    desc: 回放普通 RGB 视频管线产出的 710 帧重定向轨迹(约 23.7 秒 @30fps)。
+    source: sim/out/robot_traj_nero_inspire_rgb.npz
+    fps: 30.0
+    params:
+      speed: {type: float, default: 1.0, range: [0.25, 4.0]}
+      approach: {type: float, default: 3.0, range: [0.0, 10.0]}
+    requires: [live_session, arm_enabled]
+    safety:
+      voice_enabled: true
+      need_confirm: true
+      max_speed: 1.0
+
+  # ---------------- 组合技能 ----------------
+  - id: prepare_arm
+    name: 准备就绪
+    aliases: ["准备", "准备就绪", "初始化", "准备一下"]
+    kind: composite
+    desc: 复位 → 使能 → 切慢速 → 张开手 → 回零位。联调前的标准开机序列。
+    steps:
+      - {skill: arm_reset}
+      - {skill: arm_enable}
+      - {skill: set_speed_slow}
+      - {skill: hand_open}
+      - {skill: go_home, params: {duration: 6.0}}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}

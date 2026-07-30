@@ -18,6 +18,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -30,6 +31,11 @@ import threading
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+# 技能清单:纯 Python + PyYAML,本环境可直接 import(不牵连 rclpy/rerun)。
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from skills.schema import RegistryError, get_registry   # noqa: E402
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
@@ -49,10 +55,16 @@ ROS_PYTHON = os.environ.get(
 
 
 def _ros_cmd(script_argv: list[str]) -> list[str]:
-    """把 ROS2 python 脚本包进 bash -lc 'source ...; exec python3 ...',保证 rclpy 可见。"""
+    """把 ROS2 python 脚本包进 bash -lc 'source ...; exec python3 ...',保证 rclpy 可见。
+
+    每个参数都过 shlex.quote:参数里可能带空格/引号(如技能调用信封的 JSON,内含
+    语音原话),不引用会被 bash 拆成多个参数,且构成注入面。
+    """
     ros_log_dir = Path(os.environ.get("ROS_LOG_DIR", "/home/zhang123/ros2_ws/.ros_log"))
     ros_log_dir.mkdir(parents=True, exist_ok=True)
-    inner = f"export ROS_LOG_DIR={ros_log_dir} && {ROS_SETUP} && exec {ROS_PYTHON} " + " ".join(script_argv)
+    argv = " ".join(shlex.quote(a) for a in script_argv)
+    inner = (f"export ROS_LOG_DIR={shlex.quote(str(ros_log_dir))} && {ROS_SETUP} "
+             f"&& exec {ROS_PYTHON} {argv}")
     return ["bash", "-lc", inner]
 
 _URL_RE = re.compile(r"(https?://\S+\?url=\S+)")   # replay 打印的完整查看器地址
@@ -75,6 +87,11 @@ RGBD_CAMERA = os.environ.get("RGBD_CAMERA", "kinect2_middle")
 def _traj_pkl(robot: str) -> Path:
     """derive_embodiment --emit-traj 产出的 pkl(按规格名);replay/play 都据此定位。"""
     return REPO / f"sim/out/robot_traj_{robot}.pkl"
+
+
+def _metrics_json(robot: str) -> Path:
+    """measure_acceptance --json 产出的验收指标缓存(按规格名);右侧验收卡据此显示。"""
+    return REPO / f"sim/out/metrics_{robot}.json"
 
 
 # /api/replay/play 用的 npz,随最近一次成功管线的机器人规格更新。
@@ -229,9 +246,13 @@ def run_pipeline(input_path: str | None, skip_regen: bool, dataset: str, emit,
             emit({"type": "error", "msg": "① 规范层生成失败 · 看日志"})
             return
         if not _run_step([LEROBOT_PY, "sim/derive_embodiment.py", "--robot", robot, "--emit-traj"],
-                         log, f"② 本体层 · {ds['label']} 逐帧逆解 IK", 45, 80, emit):
+                         log, f"② 本体层 · {ds['label']} 逐帧逆解 IK", 45, 78, emit):
             emit({"type": "error", "msg": "② 本体层生成失败 · 看日志"})
             return
+        # ②' 验收指标:按本体测数据有效性,缓存 JSON 供右侧验收卡显示(失败不阻断管线)
+        _run_step([LEROBOT_PY, "sim/measure_acceptance.py",
+                   "--robot", robot, "--json", str(_metrics_json(robot))],
+                  log, f"②' 验收 · {ds['label']} 数据有效性指标", 78, 82, emit)
     TRAJ_NPZ = _traj_pkl(robot).with_suffix(".npz")   # 供 /api/replay/play 定位
     emit({"type": "progress", "pct": 84, "msg": "③ 启动 Rerun 服务"})
     url = _start_replay(str(input_path) if input_path else None, log,
@@ -262,6 +283,9 @@ class LiveSession:
         self.rerun_url: str | None = None
         self._threads: list[threading.Thread] = []
         self._running = False
+        # 使能状态:bridge 不发布它,ROS 侧查不到。这里按「本会话发过什么指令」跟踪,
+        # 作为技能 requires:arm_enabled 的依据。会话重启即回到 False。
+        self.arm_enabled = False
 
     # ---- 生命周期 ----
     def start(self) -> None:
@@ -301,6 +325,7 @@ class LiveSession:
                     p.kill()
         self.reader = self.live = self.writer = None
         self.rerun_url = None
+        self.arm_enabled = False          # 会话结束,使能状态的记录不再可信
         _free_ports()
 
     # ---- 后台线程 ----
@@ -366,9 +391,18 @@ class LiveSession:
         try:
             self.writer.stdin.write(json.dumps(cmd) + "\n")
             self.writer.stdin.flush()
+            self.note_command(cmd)
             return {"ok": True, "sent": cmd}
         except Exception as e:                            # noqa: BLE001
             return {"ok": False, "msg": str(e)}
+
+    def note_command(self, cmd: dict) -> None:
+        """按下发的指令更新使能状态跟踪。技能执行器那边也会回调这个。"""
+        act = cmd.get("action")
+        if act == "enable":
+            self.arm_enabled = True
+        elif act in ("disable",) or cmd.get("estop"):
+            self.arm_enabled = False      # 急停/下使能后必须重新使能才算就绪
 
 
 _live: LiveSession | None = None
@@ -485,6 +519,22 @@ async def traj_frames(robot: str = "") -> JSONResponse:
     })
 
 
+@app.get("/api/metrics")
+async def metrics(robot: str = "") -> JSONResponse:
+    """读缓存的验收指标 JSON(按本体);无缓存返回 measured=false。右侧验收卡据此渲染。"""
+    if not robot:
+        return JSONResponse({"measured": False, "msg": "未指定本体"})
+    p = _metrics_json(robot)
+    if not p.exists():
+        return JSONResponse({"measured": False, "robot": robot, "msg": "未测 · 跑一次管线生成"})
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:                                # noqa: BLE001
+        return JSONResponse({"measured": False, "robot": robot, "msg": f"缓存损坏: {e}"})
+    data["measured"] = True
+    return JSONResponse(data)
+
+
 @app.get("/api/replay/play")
 async def replay_play(speed: float = 1.0, fps: float = 30.0) -> StreamingResponse:
     """SSE:spawn traj_player 逐帧下发 npz 轨迹给 writer→bridge,进度推浏览器。
@@ -539,6 +589,128 @@ async def command(payload: dict) -> JSONResponse:
     """控制存根:{arm:[7], hand:[6], duration} 或 {estop:true}。经 writer 发 JointTrajectory。"""
     live = _get_live()
     return JSONResponse(live.command(payload))
+
+
+# ---- 技能清单端点(只读;执行在后续 runner 接入)----
+@app.get("/api/skills")
+async def skills(reload: bool = False) -> JSONResponse:
+    """技能清单。reload=true 时重读 registry.yaml —— 调字段设计时不必重启 Web。
+
+    返回的是 SkillSpec.to_public():**不含** action 原始关节值,前端拿不到可直发的
+    数值,只能按 id 走 /api/skills/invoke,保证限位夹取无法被绕过。
+    """
+    try:
+        reg = get_registry(reload=reload)
+    except RegistryError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    live_on = _live is not None and _live.reader is not None
+    return JSONResponse({
+        "version": reg.version,
+        "count": len(reg),
+        "skills": reg.to_public(),
+        "warnings": reg.warnings,
+        "live_session": live_on,        # 前端据此灰掉 requires:[live_session] 的技能
+        "arm_enabled": bool(_live.arm_enabled) if _live else False,
+    })
+
+
+_skill_proc: subprocess.Popen | None = None       # 技能执行:单实例
+
+
+def _stop_skill() -> None:
+    global _skill_proc
+    if _skill_proc and _skill_proc.poll() is None:
+        _skill_proc.terminate()
+        try:
+            _skill_proc.wait(timeout=4)
+        except Exception:                                 # noqa: BLE001
+            _skill_proc.kill()
+    _skill_proc = None
+
+
+atexit.register(_stop_skill)
+
+
+@app.post("/api/skills/invoke")
+async def skills_invoke(payload: dict) -> StreamingResponse:
+    """SSE:执行一个技能。信封 {skill_id, params, source, confirmed, transcript}。
+
+    执行落在 skills/runner.py 子进程(ROS2 侧),事件原样透传给浏览器。
+    安全闸在 runner 里强制,本端点不放行任何东西 —— 只补两件它查不到的事:
+      · assume_enabled:按本会话是否发过 arm_enable 填,不由前端随意声明
+      · source:语音走 /api/voice/*,直接 POST 本端点的一律记为 web
+    """
+    async def stream():
+        global _skill_proc
+        _stop_skill()                                     # 单实例:先停旧的
+        live = _get_live()
+        env = {
+            "skill_id": payload.get("skill_id"),
+            "params": payload.get("params") or {},
+            "source": payload.get("source") or "web",
+            "request_id": payload.get("request_id"),
+            "confirmed": bool(payload.get("confirmed")),
+            "transcript": payload.get("transcript"),
+            "confidence": payload.get("confidence"),
+            # 使能表态只认服务端跟踪的状态,前端说了不算
+            "assume_enabled": bool(live.arm_enabled),
+        }
+        _skill_proc = subprocess.Popen(
+            _ros_cmd(["sim/skills/runner.py", "--once", json.dumps(env)]),
+            cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def pump() -> None:
+            assert _skill_proc and _skill_proc.stdout
+            for ln in _skill_proc.stdout:
+                loop.call_soon_threadsafe(q.put_nowait, ln.strip())
+            loop.call_soon_threadsafe(q.put_nowait, None)
+
+        loop.run_in_executor(_executor, pump)
+        while True:
+            ln = await q.get()
+            if ln is None:
+                break
+            if not ln:
+                continue
+            # 技能执行成功后同步使能状态(enable/disable/estop 类技能会改它)
+            try:
+                ev = json.loads(ln)
+                if ev.get("type") == "done":
+                    _sync_enable_from_skill(live, ev.get("skill_id"))
+            except json.JSONDecodeError:
+                pass
+            yield f"data: {ln}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+def _sync_enable_from_skill(live: LiveSession, skill_id: str | None) -> None:
+    """技能执行完后更新使能跟踪。效果从清单的 action 推导,不硬编码 id ——
+    清单里改了动作,这里自动跟上。"""
+    if not skill_id:
+        return
+    try:
+        reg = get_registry()
+    except RegistryError:
+        return
+    spec = reg.get(skill_id)
+    if spec is None:
+        return
+    eff = spec.enable_effect(reg)
+    if eff is not None:
+        live.arm_enabled = eff
+
+
+@app.post("/api/skills/stop")
+async def skills_stop() -> JSONResponse:
+    """停掉正在执行的技能。注意:这只杀执行进程,不等于急停 —— 真要停机器人发 estop。"""
+    _stop_skill()
+    return JSONResponse({"ok": True})
 
 
 @app.websocket("/ws/telemetry")
