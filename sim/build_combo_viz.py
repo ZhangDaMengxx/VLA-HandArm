@@ -48,30 +48,39 @@ SRC_URDF = ASSEMBLY_URDF
 OUT = VIZ / "combo"
 OUT_URDF = OUT / "nero_inspire_right_viz.urdf"
 
-# 已经转好的 glb 直接拿,别重复转:臂的 8 个在 build_arm_viz.py 的产物里,
-# 手的 9 个本来就是 glb。键是**源文件名**(URDF 里 filename 的最后一段)。
+# 已经转好的 glb 直接拿,别重复转:臂的 8 个在 build_arm_viz.py 的产物里。
+# 手的 glb:先找 viz/hand(如果已转过),找不到就从 legacy 的 visual 目录拿,
+# 都没有再去 hand/meshes 转 STL。键是**源文件名**(URDF 里 filename 的最后一段)。
 _ARM_GLB = VIZ / "arm/meshes"
-_HAND_GLB = HAND_ROOT / "meshes/visual"
+_HAND_GLB_VIZ = VIZ / "hand/meshes"
+_HAND_GLB_LEGACY = HAND_ROOT.parent / "hand_legacy/inspire_hand_legacy/meshes/visual"
+_HAND_STL = HAND_ROOT / "meshes"
 
 
 def _resolve(name: str) -> tuple[Path, bool]:
     """按 mesh 文件名找源文件。返回 (路径, 是否需要 STL→glb 转换)。
 
-    顺序有讲究:先找现成的 glb,找不到才回退去转 STL。反过来的话 Link1..7 会被
-    白转一遍 —— 结果一样,但多花时间且产物与 arm_viz 那份可能字节级不同,
-    对不上就没法用"两边一致"来验证。
+    顺序有讲究:先找现成的 glb,找不到才回退去转 STL。
+    查找顺序:
+    1. VIZ/arm/meshes/*.glb (臂的glb)
+    2. VIZ/hand/meshes/*.glb (手的glb,如果之前转过)
+    3. hand_legacy/*/meshes/visual/*.glb (旧手的glb,兼容)
+    4. ARM_ROOT/meshes/*.STL (臂的STL,需要转换)
+    5. HAND_ROOT/meshes/*.STL (新手的STL,需要转换)
     """
     stem = Path(name).stem
-    for d in (_ARM_GLB, _HAND_GLB):
+    # 先找现成glb
+    for d in (_ARM_GLB, _HAND_GLB_VIZ, _HAND_GLB_LEGACY):
         p = d / f"{stem}.glb"
         if p.is_file():
             return p, False
-    # 没有现成 glb:去 nero_description/meshes 找 STL 自己转(Link8、适配法兰)
-    for cand in (f"{stem}.STL", f"{stem}.stl", name):
-        p = ARM_ROOT / "meshes" / cand
-        if p.is_file():
-            return p, True
-    raise FileNotFoundError(f"找不到 mesh 源:{name}")
+    # 没有现成 glb:去源目录找 STL 自己转
+    for base_dir in (ARM_ROOT, HAND_ROOT):
+        for cand in (f"{stem}.STL", f"{stem}.stl", name):
+            p = base_dir / "meshes" / cand
+            if p.is_file():
+                return p, True
+    raise FileNotFoundError(f"找不到 mesh 源:{name} (stem={stem})")
 
 
 def main() -> int:

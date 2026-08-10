@@ -15,12 +15,12 @@
     "joint7"
   ],
   "joint_order_hand": [
-    "thumb_proximal_yaw_joint",
-    "thumb_proximal_pitch_joint",
-    "index_proximal_joint",
-    "middle_proximal_joint",
-    "ring_proximal_joint",
-    "pinky_proximal_joint"
+    "right_thumb_1_joint",
+    "right_thumb_2_joint",
+    "right_index_1_joint",
+    "right_middle_1_joint",
+    "right_ring_1_joint",
+    "right_little_1_joint"
   ],
   "created_at": "2026-08-07T15:07:35",
   "note": "",

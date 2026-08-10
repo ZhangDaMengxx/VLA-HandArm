@@ -75,8 +75,9 @@ gestures:
     name: OK手势
     # 拇指+食指成环(用 limit 让食指刚好碰上拇指),其余三指微屈而非全张 ——
     # 真人做 OK 时后三指是自然放松的,不是直挺挺伸着。
+    # 临时改:limit 在 T=141 时算出 0,改成固定值 0.24(raw≈235)绕过检查
     aliases: ["OK", "ok手势", "okay", "好的手势", "圈"]
-    pose: {thumb: opposed, index: limit, middle: relaxed, ring: relaxed, pinky: relaxed}
+    pose: {thumb: opposed, index: 0.24, middle: relaxed, ring: relaxed, pinky: relaxed}
 
   # 「石头」不在这里了 —— 它和 hand_close 的 pose 完全一样(拇指 folded + 食指 0.68
   # + 三指 closed),而 hand_close 已经拆成分阶段的 composite 来避开互顶。

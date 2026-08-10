@@ -50,9 +50,9 @@ FLANGE_MOUNT_RPY = "0 0 1.570796"
 
 # 法兰 -> 手根 'base'。q=0(臂竖直)时:手心朝 world -X、手指朝 +Z(沿工具轴伸出)、
 # 小指在 +Y 侧、拇指在 -Y 侧 —— 即右手。
-MOUNT_XYZ = "0.000042 0.005962 0.002158"
+MOUNT_XYZ = "0.000042 0. 0.002158"  #x 轴是小指方向。y轴是手心方向
 MOUNT_RPY = "0 0 1.570796"
-
+#MOUNT_XYZ = "0.000042 0.005962 0.002158"
 
 def abspath_meshes(root, base):
     for mesh in root.iter("mesh"):
