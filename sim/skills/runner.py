@@ -49,19 +49,67 @@ from schema import RegistryError, get_registry  # noqa: E402
 # 调用日志:每次调用一行 JSON。语音原话 + skill_id 的配对是 VLA 标注的原料。
 LOG_PATH = SIM_DIR / "out" / "skill_invocations.jsonl"
 
+# 解析日志:每次意图解析一行 JSON,**成功和失败都记**。
+#
+# 为什么成功也记:只记失败的话,能知道"漏了 50 条",但不知道是 50/60 还是 50/5000。
+# 漏词率算不出来,而那正是判断"要不要上更强的匹配"的唯一依据。分母必须有。
+#
+# 为什么这是最有价值的一份数据:no_match/ambiguous 的原话是**真人真会说、而清单
+# 没覆盖**的说法。模板扩写造不出这种东西 —— 它只会把已有别名排列组合,教出来的
+# 模型擅长的是我们自己的说话习惯。
+#
+# ⚠ 里面是原始语音/文本内容,只留在本地 sim/out/,别往外传。
+PARSE_LOG_PATH = SIM_DIR / "out" / "voice_parses.jsonl"
+
 
 def _emit(ev: dict) -> None:
     print(json.dumps(ev, ensure_ascii=False), flush=True)
 
 
-def _log_invocation(rec: dict) -> None:
-    """落盘调用记录。写失败不影响执行 —— 日志不能成为控制链路的故障点。"""
+def _append_jsonl(path: Path, rec: dict) -> None:
+    """追加一行 JSON。写失败**静默吞掉** —— 日志不能成为控制链路的故障点。"""
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:                                    # noqa: BLE001
         pass
+
+
+def _log_invocation(rec: dict) -> None:
+    _append_jsonl(LOG_PATH, rec)
+
+
+def log_parse(it, *, scope: str = "all", source: str = "unknown",
+              extra: dict | None = None) -> None:
+    """落盘一次意图解析。it 是 intent.Intent。
+
+    **只在真人入口调用(app_web 的 /api/voice/parse)**,不要放进 intent.parse():
+    那个函数被测试和 `intent.py --all` 调用,一次跑几千条,会把日志灌满合成数据,
+    漏词率就算不出真值了。
+
+    候选分数要留:它区分"完全不认识"和"差一点点就中了"。后者只要给清单补一条
+    别名就解决,不需要动模型 —— 这是最省的那条路,得能从数据里看出来。
+    """
+    cands = [{"skill_id": c.skill_id, "score": round(c.score, 4),
+              "matched": c.matched}
+             for c in (getattr(it, "candidates", None) or [])[:5]]
+    rec = {
+        "ts": time.time(),
+        "text": getattr(it, "text", ""),
+        "reason": getattr(it, "reason", None),
+        "ok": bool(getattr(it, "ok", False)),
+        "skill_id": getattr(it, "skill_id", None),
+        "confidence": round(float(getattr(it, "confidence", 0.0) or 0.0), 4),
+        "kind": getattr(it, "kind", None),
+        "scope": scope,
+        "source": source,
+        "candidates": cands,
+        "notes": list(getattr(it, "notes", None) or []),
+    }
+    if extra:
+        rec.update(extra)
+    _append_jsonl(PARSE_LOG_PATH, rec)
 
 
 class Gate:

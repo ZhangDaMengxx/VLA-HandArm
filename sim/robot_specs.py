@@ -12,9 +12,8 @@ from typing import List
 
 import numpy as np
 
+from paths import REPO, RETARGET_CONFIG, RETARGET_URDF_DIR, ASSEMBLY_URDF, NERO_URDF, GRIPPER_URDF
 from schema import ARM_JOINTS, HAND_ACTUATED
-
-REPO = Path(__file__).resolve().parents[1]
 
 
 @dataclass
@@ -37,7 +36,7 @@ class RobotSpec:
     # 的 limit[0,0.1];单指行程 = 该值的一半(URDF 里两个 prismatic 各 [0,0.05])。
     gripper_open_width_m: float = 0.1
     # 可视化 URDF(replay_rerun 按本体加载;IK 仍用 arm_urdf/nero_description)。默认 inspire 装配。
-    viz_urdf: Path = REPO / "sim/assets/nero_inspire_right.urdf"
+    viz_urdf: Path = ASSEMBLY_URDF
     ee_frame_correction_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
     # human physical wrist body frame -> robot ee body frame.
     # Columns encode where human X/Y/Z axes land in robot ee coordinates.
@@ -61,9 +60,34 @@ class RobotSpec:
     arm_position_gain: float = 1.0
     arm_position_limit_m: float = 0.05   # 相对 home 的最大末端位移半径,避免视觉跳点甩飞 IK
     # --- 稳定化 / 平滑(见 wrist_stabilize.py + build_robot_traj)---
-    gate_deg: float = 25.0  # 每帧旋转超过 8 度会被限幅，快转很容易被截掉
-    oop_alpha: float = 1.0  #出平面旋转只保留 40%，手心/手背翻转可能被压小
-    savgol_win: int = 9   #11 帧平滑，动作会变慢、峰值会被抹掉
+    # ⚠ 勘误(2026-08-03):下面三行的注释原来和值**全不一致** —— 注释写 8°/40%/11 帧,
+    # 而值是 25/1.0/9。注释没跟着调参更新,读代码的人会得到完全错误的印象。
+    # 尤其 oop_alpha:注释说"只保留 40%",实际 1.0,而 attenuate_out_of_plane 第一行是
+    #     if alpha is None or alpha >= 1.0: return Rs
+    # 也就是**整个出平面衰减是空转的**,一点作用都没有。
+    # 这次只把注释改成实话,不动值 —— 改值是调参,要先有依据(见下面各行的说明)。
+    gate_deg: float = 25.0
+    """帧间旋转增量限幅(度)。超过就沿测地线截到这个值。<=0 关闭。
+
+    实测(RGB 素材,710 帧)帧间增量 p95 只有 4.75°、max 14.23° —— **全在 25 以下,
+    所以这个门限几乎不触发**,等于没设。原值是 8°,被放宽到 25 大概是因为快转被截。
+    真要让它起作用得回到 10° 上下,但那会截掉真实快转,得先分清哪些是跳变哪些是真动作。
+    """
+    oop_alpha: float = 1.0
+    """出平面(绕相机 X/Y)朝向衰减系数。1.0 = **完全不衰减,即功能关闭**。
+
+    ⚠ 这个 1.0 意味着 attenuate_out_of_plane 直接 return,没有任何效果。
+    为什么现在不改回 0.4:
+      · 实测 RGB 素材上出平面占姿态误差能量 **98.7%**(相对首帧漂移 p95 39°),
+        面内只有 5°。所以衰减方向是对的,工具也对
+      · 但出平面里**混着真信号** —— 手心朝下、手背翻上来都是绕 X/Y 的真动作。
+        一刀切按幅度衰减会把它们一起压小(原注释里的抱怨就是这个)
+      · 而且我们最终用 **RGB-D**,深度进来后出平面歧义本身就小:实测 RGB-D 素材
+        姿态抖动只有 4.1~4.8°,是 RGB 的 1/4~1/5。可能压根不需要衰减
+    要改的话正确做法是**按时间尺度分**(慢漂移=噪声偏置,压;快变=真动作,留),
+    不是按幅度一刀切。前提是"慢漂移都是噪声",这一条**还没验证**。
+    """
+    savgol_win: int = 9
     savgol_poly: int = 3
     """
         - savgol_poly=2：用二次曲线，适合保留加速/减速动作，比线性平滑自然。
@@ -96,10 +120,10 @@ class RobotSpec:
 # ---------- 普通 RGB:legacy 相对,原始 home,不含任何 anchored 改动 ----------
 NERO_INSPIRE_RGB = RobotSpec(
     name="nero_inspire_rgb",
-    retarget_cfg=REPO / "configs/inspire_hand_right_local.yml",
-    urdf_dir=REPO / "assets",
+    retarget_cfg=RETARGET_CONFIG,
+    urdf_dir=RETARGET_URDF_DIR,
     hand_actuated=HAND_ACTUATED,
-    arm_urdf=REPO / "assets/nero_description/urdf/nero_description.urdf",
+    arm_urdf=NERO_URDF,
     ee_frame="link7",
     # 手腕轴朝 +Y 横向;绕 X +90° 映射到 +Z,手心更接近朝向相机。
     ee_frame_correction_rpy=(np.pi / 2.0, -np.pi / 2.0, 0.0),
@@ -136,10 +160,10 @@ _RGBD_NATURAL_HOME = np.array([1.2635, 0.9302, 2.6464, 1.7779, 1.0898, 0.6034, -
 # q_home 退回自然静止姿、只当 IK 参考(种子按数据 bootstrap),不再进目标公式、不再一身二职。
 NERO_INSPIRE_RGBD = RobotSpec(
     name="nero_inspire_rgbd",
-    retarget_cfg=REPO / "configs/inspire_hand_right_local.yml",
-    urdf_dir=REPO / "assets",
+    retarget_cfg=RETARGET_CONFIG,
+    urdf_dir=RETARGET_URDF_DIR,
     hand_actuated=HAND_ACTUATED,
-    arm_urdf=REPO / "assets/nero_description/urdf/nero_description.urdf",
+    arm_urdf=NERO_URDF,
     ee_frame="link7",
     R_hand_ee=_RGBD_R_HAND_EE,
     frame_mode="metric",
@@ -159,10 +183,10 @@ NERO_INSPIRE_RGBD = RobotSpec(
 # 保留作对照/回退。缺点:home 一身二职(既是种子又是映射锚),跨数据集需重摆,故非主路径。
 NERO_INSPIRE_RGBD_ANCHORED = RobotSpec(
     name="nero_inspire_rgbd_anchored",
-    retarget_cfg=REPO / "configs/inspire_hand_right_local.yml",
-    urdf_dir=REPO / "assets",
+    retarget_cfg=RETARGET_CONFIG,
+    urdf_dir=RETARGET_URDF_DIR,
     hand_actuated=HAND_ACTUATED,
-    arm_urdf=REPO / "assets/nero_description/urdf/nero_description.urdf",
+    arm_urdf=NERO_URDF,
     ee_frame="link7",
     R_hand_ee=_RGBD_R_HAND_EE,
     frame_mode="anchored",
@@ -178,17 +202,17 @@ NERO_INSPIRE_RGBD_ANCHORED = RobotSpec(
 # state=8=[7 臂 + 1 夹爪开合];夹爪开合由拇指-食指捏合距离线性映射(见 derive_embodiment)。
 # 装配偏移/行程为网格估计值(非标定),够可视化 + 占位,精确尺寸需夹爪 CAD。
 # ============================================================================
-_GRIPPER_VIZ = REPO / "sim/assets/nero_gripper_right.urdf"
+GRIPPER_URDF = REPO / "sim/assets/nero_gripper_right.urdf"
 
 NERO_GRIPPER_RGB = RobotSpec(
     name="nero_gripper_rgb",
-    retarget_cfg=REPO / "configs/inspire_hand_right_local.yml",  # 仍借它读 21 关键点,只用捏合距离
-    urdf_dir=REPO / "assets",
+    retarget_cfg=RETARGET_CONFIG,  # 仍借它读 21 关键点,只用捏合距离
+    urdf_dir=RETARGET_URDF_DIR,
     hand_actuated=["gripper_joint"],
     hand_mode="gripper",
     gripper_open_width_m=0.1,       # 开口 0→0.10m(SDK move_gripper_m 直接吃这个值)
-    viz_urdf=_GRIPPER_VIZ,
-    arm_urdf=REPO / "assets/nero_description/urdf/nero_description.urdf",
+    viz_urdf=GRIPPER_URDF,
+    arm_urdf=NERO_URDF,
     ee_frame="link7",
     ee_frame_correction_rpy=(np.pi / 2.0, -np.pi / 2.0, 0.0),
     wrist_motion_basis_R=np.array([[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]),
@@ -201,13 +225,13 @@ NERO_GRIPPER_RGB = RobotSpec(
 
 NERO_GRIPPER_RGBD = RobotSpec(
     name="nero_gripper_rgbd",
-    retarget_cfg=REPO / "configs/inspire_hand_right_local.yml",
-    urdf_dir=REPO / "assets",
+    retarget_cfg=RETARGET_CONFIG,
+    urdf_dir=RETARGET_URDF_DIR,
     hand_actuated=["gripper_joint"],
     hand_mode="gripper",
     gripper_open_width_m=0.1,       # 开口 0→0.10m(SDK move_gripper_m 直接吃这个值)
-    viz_urdf=_GRIPPER_VIZ,
-    arm_urdf=REPO / "assets/nero_description/urdf/nero_description.urdf",
+    viz_urdf=GRIPPER_URDF,
+    arm_urdf=NERO_URDF,
     ee_frame="link7",
     R_hand_ee=_RGBD_R_HAND_EE,
     frame_mode="metric",

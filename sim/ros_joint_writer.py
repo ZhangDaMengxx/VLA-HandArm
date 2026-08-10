@@ -29,9 +29,9 @@ from std_msgs.msg import Bool, String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 ARM_NAMES = [f"joint{i}" for i in range(1, 8)]
-HAND_NAMES = ["thumb_proximal_yaw_joint", "thumb_proximal_pitch_joint",
-              "index_proximal_joint", "middle_proximal_joint",
-              "ring_proximal_joint", "pinky_proximal_joint"]
+HAND_NAMES = ["right_thumb_1_joint", "right_thumb_2_joint",
+              "right_index_1_joint", "right_middle_1_joint",
+              "right_ring_1_joint", "right_little_1_joint"]
 
 NERO_ARM_LIMITS = {
     "joint1": (-2.705260340591211, 2.705260340591211),   # -155..155 deg
@@ -46,12 +46,12 @@ NERO_ARM_LIMITS = {
 # 关节限位(rad)——NERO 来自本地 SDK 文档,手用当前 URDF 驱动关节上限。
 JOINT_LIMITS = {
     **NERO_ARM_LIMITS,
-    "thumb_proximal_yaw_joint": (0.0, 1.308),
-    "thumb_proximal_pitch_joint": (0.0, 0.6),
-    "index_proximal_joint": (0.0, 1.47),
-    "middle_proximal_joint": (0.0, 1.47),
-    "ring_proximal_joint": (0.0, 1.47),
-    "pinky_proximal_joint": (0.0, 1.47),
+    "right_thumb_1_joint": (0.0, 1.308),
+    "right_thumb_2_joint": (0.0, 0.6),
+    "right_index_1_joint": (0.0, 1.47),
+    "right_middle_1_joint": (0.0, 1.47),
+    "right_ring_1_joint": (0.0, 1.47),
+    "right_little_1_joint": (0.0, 1.47),
 }
 
 
@@ -68,6 +68,33 @@ def _clamp(names, vals):
 
 def _dur(t: float) -> Duration:
     return Duration(sec=int(t), nanosec=int((t - int(t)) * 1e9))
+
+
+# 力控/速度的取值范围。**只做形状和粗范围校验,不做逐通道夹取** ——
+# 逐通道上限那张表(FORCE_MAX)在 inspire_hand.py 里,是唯一真源;在这里抄一遍
+# 必然和它漂移(拇指到底是 1000 还是 1500 就是这么被两处说法搞混过一次)。
+FORCE_SPEED_RANGE = (0, 1000)
+
+
+def _check_force_like(key: str, val) -> str | None:
+    """校验 hand_force / hand_speed 的形状。返回错误串,None 表示通过。
+
+    允许标量(全通道同值)或 6 个值(逐通道,项目顺序)。
+    列表长度不对**必须报错而不是补齐**:补齐会让"我以为设了 6 指、其实只设了 3 指"
+    悄悄发生,剩下几指沿用上次的阈值,现象是物体被捏歪而不是报错。
+    """
+    lo, hi = FORCE_SPEED_RANGE
+    vals = val if isinstance(val, (list, tuple)) else [val]
+    if isinstance(val, (list, tuple)) and len(val) != len(HAND_NAMES):
+        return f"{key} 给列表时需要 {len(HAND_NAMES)} 个值(项目顺序),给了 {len(val)}"
+    for v in vals:
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            return f"{key} 含非数字项: {v!r}"
+        if not (lo <= iv <= hi):
+            return f"{key} 的 {iv} 超出 {lo}-{hi}"
+    return None
 
 
 class JointWriter(Node):
@@ -105,6 +132,24 @@ class JointWriter(Node):
             return {"ok": True, "action": cmd["action"]}
         dur = float(cmd.get("duration", 0.5))
         res = {"ok": True, "clamped": False}
+        # hand_force / hand_speed:**这条路送不到**。JointTrajectory 里没有力控字段,
+        # 仿真也没有对应的控制器接口。所以只校验形状,然后**显式报 unsupported**。
+        #
+        # 为什么不静默忽略:一个「轻捏」技能在真手路径上会设 force=250,在这条路上
+        # 力控就还是上一次留下的值 —— 两条路行为不同,而调用方看不出来。宁可让它
+        # 在回显里看到"这个字段没生效",也不要让它以为设上了。
+        unsup = []
+        for key in ("hand_force", "hand_speed"):
+            if cmd.get(key) is None:
+                continue
+            err = _check_force_like(key, cmd[key])
+            if err:
+                return {"ok": False, "error": err}
+            unsup.append(key)
+        if unsup:
+            res["unsupported"] = unsup
+            res["note"] = ("力控/速度只在 console 直连路(hand_console)有效;"
+                           "ROS 这条路没有对应通道,本次未下发")
         if "arm" in cmd and cmd["arm"] is not None:
             vals, clipped = _clamp(ARM_NAMES, cmd["arm"])
             self._emit(self.arm_pub, ARM_NAMES, vals, dur)
@@ -134,25 +179,25 @@ def main() -> None:
             print(json.dumps(node.send(json.loads(args.once))), flush=True)
             rclpy.spin_once(node, timeout_sec=0.5)      # 给消息发出去的时间
         else:
-            # 流式:逐行读 stdin
-            import select
+            # 流式:逐行读 stdin。
+            # ⚠ 用 StdinLines 而不是 select + sys.stdin.readline:后者 select 看 fd、
+            #   readline 看用户态缓冲,一次写进多行时会有行卡在缓冲里,要等下一条
+            #   命令到了才被处理 = 慢一个命令。见 stdin_lines.py 的模块说明。
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from stdin_lines import StdinLines
             print(json.dumps({"type": "ready"}), flush=True)
+            reader = StdinLines()
             while rclpy.ok():
                 rclpy.spin_once(node, timeout_sec=0.05)
-                r, _, _ = select.select([sys.stdin], [], [], 0.05)
-                if not r:
-                    continue
-                line = sys.stdin.readline()
-                if not line:
+                for line in reader.poll(0.05):
+                    try:
+                        cmd = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    print(json.dumps(node.send(cmd), ensure_ascii=False), flush=True)
+                if reader.eof:
                     break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    cmd = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                print(json.dumps(node.send(cmd), ensure_ascii=False), flush=True)
     except KeyboardInterrupt:
         pass
     finally:

@@ -1,0 +1,379 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="urdf_right_2025_4_18">
+  <link name="R_base_link">
+    <inertial>
+      <origin xyz="0.00252515168164585 -0.001960054926157 0.0660467739648412" rpy="0 0 0" />
+      <mass value="0.38756" />
+      <inertia ixx="0.00059831308" ixy="5.60829e-06" ixz="2.8701399999999997e-06" iyy="0.00050077156" iyz="3.4830999999999997e-06" izz="0.00018467082" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/R_base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/R_base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="right_thumb_1">
+    <inertial>
+      <origin xyz="0.000853491366153925 0.00482216769884483 -0.00481999614705116" rpy="0 0 0" />
+      <mass value="0.00483" />
+      <inertia ixx="1.9502e-07" ixy="-3.536e-08" ixz="-3.1e-09" iyy="1.4336e-07" iyz="-7.9e-09" izz="1.6891e-07" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_1_joint" type="revolute">
+    <origin xyz="0.0169600000000007 0.020450000002209 0.0663500000000002" rpy="0 0 0" />
+    <parent link="R_base_link" />
+    <child link="right_thumb_1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.246165" effort="50" velocity="1" />
+  </joint>
+  <link name="right_thumb_2">
+    <inertial>
+      <origin xyz="0.0194641293930403 0.0162980383727088 -0.00803857337744943" rpy="0 0 0" />
+      <mass value="0.05759" />
+      <inertia ixx="1.0666209999999999e-05" ixy="-4.413609999999999e-06" ixz="-5.150000000000001e-09" iyy="8.92353e-06" iyz="2.59e-09" izz="1.700133e-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_2_joint" type="revolute">
+    <origin xyz="0.0107353075101483 0.00900017625730479 -0.00649999999999998" rpy="1.57079632679489 0 1.30550628049177" />
+    <parent link="right_thumb_1" />
+    <child link="right_thumb_2" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.48" effort="50" velocity="1" />
+  </joint>
+  <link name="right_thumb_3">
+    <inertial>
+      <origin xyz="0.00946651884646355 0.00207630823866701 -0.00720000588824668" rpy="0 0 0" />
+      <mass value="0.00985" />
+      <inertia ixx="1.21069e-06" ixy="-1.0767e-07" ixz="-1.0000000000000001e-11" iyy="6.011799999999999e-07" iyz="-3e-11" izz="1.28966e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_3.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_3_joint" type="revolute">
+    <origin xyz="0.0376167925538582 0.0414855421501229 -0.000800000000000356" rpy="0 0 0" />
+    <parent link="right_thumb_2" />
+    <child link="right_thumb_3" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.3578" effort="50" velocity="1" />
+      <mimic joint="right_thumb_2_joint" multiplier="1.1425" offset="0" />
+  </joint>
+  <link name="right_thumb_4">
+    <inertial>
+      <origin xyz="0.00604904909827651 0.00861522746372045 -0.00600329390500667" rpy="0 0 0" />
+      <mass value="0.00552" />
+      <inertia ixx="3.1668e-07" ixy="-4.536e-08" ixz="1.0000000000000001e-11" iyy="1.2999000000000001e-07" iyz="4e-10" izz="3.3747e-07" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_4.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_thumb_4.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_thumb_4_joint" type="revolute">
+    <origin xyz="0.0149571022375899 0.0170124132550165 -0.00120000000000001" rpy="0 0 0" />
+    <parent link="right_thumb_3" />
+    <child link="right_thumb_4" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="0.2775" effort="50" velocity="1" />
+      <mimic joint="right_thumb_3_joint" multiplier="0.7508" offset="0" />
+  </joint>
+  <link name="right_index_1">
+    <inertial>
+      <origin xyz="0.000852715296526529 0.0119735955318245 -0.00599986563267159" rpy="0 0 0" />
+      <mass value="0.01229" />
+      <inertia ixx="1.93998e-06" ixy="-1.5035e-07" ixz="-4.1e-10" iyy="5.6245e-07" iyz="-3.49e-09" izz="2.05872e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_index_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_index_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_1_joint" type="revolute">
+    <origin xyz="-0.000285333323388565 0.0202750317161709 0.136945958498439" rpy="1.53588974175501 0 0" />
+    <parent link="R_base_link" />
+    <child link="right_index_1" />
+    <axis xyz="0 -0.0697564737441209 -0.997564050259825" />
+    <limit lower="0" upper="1.333" effort="50" velocity="1" />
+  </joint>
+  <link name="right_index_2">
+    <inertial>
+      <origin xyz="0.00408342999190195 0.0192600939391442 -0.00500000380847467" rpy="0 0 0" />
+      <mass value="0.00633" />
+      <inertia ixx="9.4327e-07" ixy="-3.8912e-07" ixz="-2.0000000000000002e-11" iyy="2.897e-07" iyz="-5e-11" izz="1.14024e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_index_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_index_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_index_2_joint" type="revolute">
+    <origin xyz="0.0080992697963248 0.0310949249595195 -0.001" rpy="0 0 0" />
+    <parent link="right_index_1" />
+    <child link="right_index_2" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.527" effort="50" velocity="1" />
+      <mimic joint="right_index_1_joint" multiplier="1.1169" offset="0" />
+  </joint>
+  <link name="right_middle_1">
+    <inertial>
+      <origin xyz="0.000852855866232599 0.011973606798452 -0.00399984588006246" rpy="0 0 0" />
+      <mass value="0.01229" />
+      <inertia ixx="1.94e-06" ixy="-1.5036e-07" ixz="-9.899999999999999e-10" iyy="5.6248e-07" iyz="-5.01e-09" izz="2.05872e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_middle_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_middle_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_1_joint" type="revolute">
+    <origin xyz="-0.000285333314556269 0.00295000000023597 0.137100000000016" rpy="1.5707963267792 0 0" />
+    <parent link="R_base_link" />
+    <child link="right_middle_1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.333" effort="50" velocity="1" />
+  </joint>
+  <link name="right_middle_2">
+    <inertial>
+      <origin xyz="0.0047113458880482 0.0203465768773643 -0.00500003269708214" rpy="0 0 0" />
+      <mass value="0.00681" />
+      <inertia ixx="1.18348e-06" ixy="-5.0397e-07" ixz="-0.0" iyy="3.558e-07" iyz="-0.0" izz="1.43878e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_middle_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_middle_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_middle_2_joint" type="revolute">
+    <origin xyz="0.00809959893697584 0.0310948392266618 0.00100000000000044" rpy="0 0 0" />
+    <parent link="right_middle_1" />
+    <child link="right_middle_2" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.527" effort="50" velocity="1" />
+      <mimic joint="right_middle_1_joint" multiplier="1.1169" offset="0" />
+  </joint>
+  <link name="right_ring_1">
+    <inertial>
+      <origin xyz="0.00085245845917839 0.0119734648811593 -0.00599989251266642" rpy="0 0 0" />
+      <mass value="0.01229" />
+      <inertia ixx="1.93998e-06" ixy="-1.5033000000000002e-07" ixz="-5.1e-10" iyy="5.6244e-07" iyz="-3.52e-09" izz="2.05872e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_ring_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_ring_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_1_joint" type="revolute">
+    <origin xyz="-0.000285333323395365 -0.0182707111726564 0.136282456905841" rpy="1.62315620435472 0 0" />
+    <parent link="R_base_link" />
+    <child link="right_ring_1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.333" effort="50" velocity="1" />
+  </joint>
+  <link name="right_ring_2">
+    <inertial>
+      <origin xyz="0.00408287363348225 0.0192599767415159 -0.00499998343104271" rpy="0 0 0" />
+      <mass value="0.00633" />
+      <inertia ixx="9.4329e-07" ixy="-3.8762e-07" ixz="-3.394e-08" iyy="2.9614999999999996e-07" iyz="-7.389e-08" izz="1.13377e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_ring_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_ring_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_ring_2_joint" type="revolute">
+    <origin xyz="0.00809885846186154 0.0310950320965672 -0.001" rpy="0 0 0" />
+    <parent link="right_ring_1" />
+    <child link="right_ring_2" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.527" effort="50" velocity="1" />
+      <mimic joint="right_ring_1_joint" multiplier="1.1169" offset="0" />
+  </joint>
+  <link name="right_little_1">
+    <inertial>
+      <origin xyz="0.000851610973032574 0.0119735303202265 -0.00599989467442243" rpy="0 0 0" />
+      <mass value="0.012289999999999999" />
+      <inertia ixx="1.94e-06" ixy="-1.5023e-07" ixz="-3e-10" iyy="5.624199999999999e-07" iyz="-3.18e-09" izz="2.05872e-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_little_1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_little_1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_little_1_joint" type="revolute">
+    <origin xyz="-0.000285333323391146 -0.0374222941312603 0.134460099927073" rpy="1.67551608191454 0 0" />
+    <parent link="R_base_link" />
+    <child link="right_little_1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.333" effort="50" velocity="1" />
+  </joint>
+  <link name="right_little_2">
+    <inertial>
+      <origin xyz="0.00273929963119374 0.0161600317264199 -0.00499667765900381" rpy="0 0 0" />
+      <mass value="0.00525" />
+      <inertia ixx="5.5787e-07" ixy="-2.175e-07" ixz="-0.0" iyy="1.8624e-07" iyz="-0.0" izz="6.690599999999999e-07" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_little_2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../meshes/right_little_2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="right_little_2_joint" type="revolute">
+    <origin xyz="0.0080966 0.031096 -0.001" rpy="0 0 0" />
+    <parent link="right_little_1" />
+    <child link="right_little_2" />
+    <axis xyz="0 0 -1" />
+    <limit lower="0" upper="1.527" effort="50" velocity="1" />
+      <mimic joint="right_little_1_joint" multiplier="1.1169" offset="0" />
+  </joint>
+</robot>

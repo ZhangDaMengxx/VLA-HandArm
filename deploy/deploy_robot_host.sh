@@ -41,6 +41,22 @@ err()  { echo "${C_ERR}  x${C_END} $*" >&2; }
 step() { echo; echo "═══ $*"; }
 run()  { echo "${C_DIM}    \$ $*${C_END}"; "$@"; }
 
+# 系统 python3 的绝对路径。不能靠 PATH 里的 `python3`:
+# 若 .bashrc 自动激活了 conda base,PATH 里的 python3 是 conda 的(可能是 3.12/3.14),
+# 而 rclpy 的 .so 只认系统 cp310 —— 那时 import rclpy 会失败,且报错指向别处。
+SYS_PY=/usr/bin/python3
+
+# 在「剥掉 conda 的干净环境」里跑一条 bash 命令。
+# 为什么必需:ROS 的构建(colcon/CMake/ament)和运行都必须用系统 python3。
+# 本项目开发机的 .bashrc 会自动激活 conda base,`bash -lc` 会继承它,
+# 于是 colcon 找不到 ament_package、rclpy import 失败 —— 见仓库根的 ros_env.sh 同一坑。
+ros_bash() {
+  env -u PYTHONPATH -u CONDA_PREFIX -u CONDA_DEFAULT_ENV \
+      -u CONDA_PYTHON_EXE -u CONDA_SHLVL -u CONDA_EXE -u _CE_CONDA -u _CE_M \
+      PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vE '/(miniconda3|anaconda3|miniforge3|condabin|enter)(/|$)' | paste -sd:)" \
+      bash -c "$1"
+}
+
 FAILED=0
 
 # 找 conda:非交互 shell 里 conda 常不在 PATH(它靠 .bashrc 的 init 块注入),
@@ -74,7 +90,7 @@ do_check() {
   fi
 
   # rclpy 必须在系统 python3 里(bridge/writer/reader/runner 都靠它)
-  if bash -lc "source /opt/ros/$ROS_DISTRO_WANT/setup.bash 2>/dev/null && python3 -c 'import rclpy'" 2>/dev/null; then
+  if ros_bash "source /opt/ros/$ROS_DISTRO_WANT/setup.bash 2>/dev/null && $SYS_PY -c 'import rclpy'" 2>/dev/null; then
     ok "系统 python3 能 import rclpy"
   else
     err "系统 python3 import rclpy 失败"; FAILED=1
@@ -95,9 +111,16 @@ do_check() {
   else warn "conda 未装(或不在常见位置)— --env 会提示你装 Miniconda"; fi
 
   # --- 系统 py3 的第三方包(runner/backend 要 numpy+yaml,手要 pyserial)---
-  for m in numpy yaml serial; do
-    if python3 -c "import $m" 2>/dev/null; then ok "系统 python3: $m"
-    else warn "系统 python3 缺 $m → sudo apt install python3-${m/yaml/yaml}"; fi
+  # 用 $SYS_PY 而非 PATH 里的 python3:装在系统 python 里的包,conda python 看不见。
+  local apt_pkg
+  for m in numpy yaml serial pytest; do
+    case $m in
+      yaml)   apt_pkg=python3-yaml;;
+      serial) apt_pkg=python3-serial;;
+      *)      apt_pkg=python3-$m;;
+    esac
+    if "$SYS_PY" -c "import $m" 2>/dev/null; then ok "系统 python3: $m"
+    else warn "系统 python3 缺 $m → sudo apt install $apt_pkg"; fi
   done
 
   do_check_hw_readiness
@@ -208,7 +231,7 @@ do_env() {
   ok "conda 依赖装完"
 
   # 验证 conda python + ROS 能一起用:这是整个架构的关键假设
-  if bash -lc "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && '$cbase/envs/$CONDA_ENV_NAME/bin/python3' -c 'import rclpy'" 2>/dev/null; then
+  if ros_bash "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && '$cbase/envs/$CONDA_ENV_NAME/bin/python3' -c 'import rclpy'" 2>/dev/null; then
     ok "conda python + source humble → rclpy 可见(ABI 对齐)"
   else
     err "conda python 看不到 rclpy — 检查 conda python 是否为 $PY_WANT"
@@ -220,19 +243,23 @@ do_env() {
 }
 
 # ---- 第三个环境:app_web 自己跑在这里 ----
-# 为什么不塞进 conda:app_web 只 import fastapi/uvicorn/yaml,不碰 lerobot/rerun/pinocchio
-# (那些是 subprocess 调的)。单独一个瘦 venv,前端崩了不牵连算法环境。
+# 为什么不塞进 conda:app_web 只 import fastapi/uvicorn/yaml/numpy,不碰 lerobot/rerun/
+# pinocchio/mediapipe(那些重的全是 subprocess 调 $LEROBOT_PY 跑的)。单独一个瘦 venv,
+# 前端崩了不牵连算法环境;反过来算法环境降级(如 mediapipe 钉版本)也不影响网页起不起来。
 do_env_venv() {
   if [[ -x "$GRADIO_VENV/bin/python" ]]; then
     ok "web venv 已存在: $GRADIO_VENV"
   else
-    run python3 -m venv "$GRADIO_VENV"
+    # 用系统 python3(3.10):conda base 可能是 3.13/3.14,fastapi/uvicorn 的轮子未必齐
+    run "$SYS_PY" -m venv "$GRADIO_VENV"
     ok "web venv 建好: $GRADIO_VENV"
   fi
   run "$GRADIO_VENV/bin/python" -m pip install -q --upgrade pip
-  run "$GRADIO_VENV/bin/python" -m pip install -q fastapi uvicorn pyyaml python-multipart
+  run "$GRADIO_VENV/bin/python" -m pip install -q fastapi uvicorn pyyaml python-multipart numpy
   # python-multipart 是 FastAPI 收 UploadFile 表单要的,不装的话上传接口 500
-  ok "web 依赖装完(fastapi/uvicorn/pyyaml/python-multipart)"
+  # numpy 是 /api/traj/frames 要的:它在进程内 np.load 读 robot_traj_*.npz(app_web.py:507),
+  # 不是 subprocess,所以瘦 venv 里也得有,否则该接口 500 ModuleNotFoundError。
+  ok "web 依赖装完(fastapi/uvicorn/pyyaml/python-multipart/numpy)"
 }
 
 # ---- 重建装配 URDF ----
@@ -241,7 +268,7 @@ do_env_venv() {
 # 好消息:这脚本只用 stdlib(xml.etree + pathlib),系统 python3 就能跑。
 do_env_urdf() {
   echo "  重建装配 URDF(mesh 用绝对路径,换机必须重建)"
-  if run python3 "$REPO/sim/build_nero_inspire.py" >/dev/null 2>&1; then
+  if run "$SYS_PY" "$REPO/sim/build_nero_inspire.py" >/dev/null 2>&1; then
     ok "URDF 重建完成: sim/assets/nero_inspire_right.urdf"
   else
     warn "URDF 重建失败 —— 单独跑看报错: python3 sim/build_nero_inspire.py"
@@ -266,15 +293,19 @@ do_ros() {
   if command -v rosdep >/dev/null 2>&1; then
     [[ -d /etc/ros/rosdep/sources.list.d ]] || run sudo rosdep init || true
     run rosdep update --rosdistro="$ROS_DISTRO_WANT" || warn "rosdep update 失败(网络?),继续"
-    echo "  装 src/ 声明的依赖(controller_manager / joint_trajectory_controller 等)"
-    run bash -lc "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && rosdep install --from-paths '$WS/src' --ignore-src -y -r" \
+    echo "  装依赖(controller_manager / joint_trajectory_controller 等)"
+    # 只解析 nero_inspire_ros2:so101_* 会拉整套 moveit_*,与本部署无关
+    run ros_bash "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && rosdep install --from-paths '$WS/src/nero_inspire_ros2' --ignore-src -y -r" \
       || warn "rosdep install 有未解析项,继续 build 看是否够用"
   fi
 
   # install/ 不能从开发机拷:里面是编译产物 + 绝对路径,必须本机重编
+  # 只编本项目需要的包:src/ 下还有 so101_*(另一台机器人的 MoveIt/Gazebo 配置),
+  # 它们要 moveit_* 一整套依赖,和本部署无关,全量 build 会因缺依赖失败。
   echo "  colcon build(install/ 是编译产物,不能拷,必须本机编)"
-  run bash -lc "cd '$WS' && source /opt/ros/$ROS_DISTRO_WANT/setup.bash && colcon build --symlink-install"
-  ok "colcon build 完成"
+  run ros_bash "cd '$WS' && source /opt/ros/$ROS_DISTRO_WANT/setup.bash && \
+    colcon build --symlink-install --base-paths src/nero_inspire_ros2"
+  ok "colcon build 完成(仅 nero_inspire_ros2;so101_* 与本部署无关,已跳过)"
 }
 
 # ═══════════════════════════════════════════ 硬件配置(**需 sudo,会改系统**)
@@ -397,6 +428,17 @@ do_envfile() {
   cat > "$f" <<EOF
 # robot_host_env.sh — 由 deploy_robot_host.sh 生成。跑任何东西前先 source 它。
 # 这些变量让代码不依赖写死的用户名/路径(见 nero_arm_bridge.py 的 _find_lerobot_site)。
+
+# 先剥掉 conda:bridge/writer/reader/runner 都直接 import rclpy,必须跑在**系统 python3**
+# (它们只是借 conda 的 site-packages 补 lerobot,见 _find_lerobot_site)。
+# 若 .bashrc 自动激活了 conda base,PATH 里的 python3 是 conda 的 → import rclpy 直接失败。
+while [ -n "\$CONDA_PREFIX" ]; do conda deactivate 2>/dev/null || break; done
+export PATH="\$(printf '%s' "\$PATH" | tr ':' '\n' | grep -vE '/(miniconda3|anaconda3|miniforge3|condabin|enter)(/|\$)' | paste -sd:)"
+unset PYTHONPATH CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PYTHON_EXE CONDA_SHLVL
+
+# WSL2 无 GPU:RViz / Gazebo 必须走软件渲染(llvmpipe),否则 GUI 开得起来但场景不渲染
+export LIBGL_ALWAYS_SOFTWARE=1
+
 source /opt/ros/$ROS_DISTRO_WANT/setup.bash
 source $WS/install/setup.bash
 
@@ -427,14 +469,28 @@ do_verify() {
   [[ -f "$envf" ]] || { warn "还没生成 $envf,先跑 --env"; do_envfile; }
 
   echo "  1) 技能表 + 安全闸单测(纯 python,不需 ROS/硬件)"
-  if run bash -lc "cd '$REPO' && python3 -m pytest sim/skills/test_schema.py sim/skills/test_runner_gates.py -q" 2>&1 | tail -3; then
+  # 直接用 python3 跑,不要套 pytest:这两个文件是自检脚本,断言写在模块顶层,
+  # 没有 test_* 函数。pytest 收集不到用例会返回 exit 5,被这里读成「单测失败」,
+  # 而实际上 22 项全过 —— 假警报。脚本自己在失败时 raise SystemExit(1),退出码可信。
+  # 注意别写成 `run ... | tail -3 || fail=1`:管道的退出码是 tail 的(几乎总是 0),
+  # 真正的失败会被吞掉。先把输出收进变量,再判 $? ,才拿得到 python 的退出码。
+  local gate_fail=0 gate_out
+  for t in sim/skills/test_schema.py sim/skills/test_runner_gates.py; do
+    if gate_out="$(ros_bash "cd '$REPO' && $SYS_PY '$t'" 2>&1)"; then
+      echo "$gate_out" | tail -2
+    else
+      gate_fail=1
+      echo "$gate_out" | tail -15
+    fi
+  done
+  if [[ $gate_fail -eq 0 ]]; then
     ok "技能表与安全闸单测通过"
   else
     warn "单测有失败 —— 上真机前必须先弄清楚(安全闸是最后一道防线)"
   fi
 
   echo "  2) runner 干跑(展开技能但不发 ROS)"
-  run bash -lc "source '$envf' && python3 '$REPO/sim/skills/runner.py' --dry-run --once '{\"skill_id\":\"go_home\",\"confirmed\":true,\"assume_enabled\":true}'" 2>&1 | tail -4 \
+  run ros_bash "source '$envf' && $SYS_PY '$REPO/sim/skills/runner.py' --dry-run --once '{\"skill_id\":\"go_home\",\"confirmed\":true,\"assume_enabled\":true}'" 2>&1 | tail -4 \
     && ok "干跑通过" || warn "干跑失败,看上面报错"
 
   do_verify_bridge
@@ -444,7 +500,7 @@ do_verify_bridge() {
   local envf="$WS/robot_host_env.sh"
   echo "  3) bridge mock 模式(臂发正弦、手回读占位,不碰 CAN/串口)"
   local log; log="$(mktemp)"
-  bash -lc "source '$envf' && timeout 6 python3 '$REPO/sim/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && timeout 6 $SYS_PY '$REPO/sim/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
   if grep -q '桥接启动' "$log"; then
     ok "bridge mock 启动成功"
     echo "      $(grep -m1 '桥接启动' "$log" | sed 's/^.*\]: //')"
@@ -453,7 +509,7 @@ do_verify_bridge() {
   fi
 
   echo "  4) mock 下 /joint_states 有没有真在发(13 个关节)"
-  bash -lc "source '$envf' && (timeout 8 python3 '$REPO/sim/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && (timeout 8 $SYS_PY '$REPO/sim/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
   if grep -q 'name:' "$log"; then
     ok "/joint_states 正常发布($(grep -c '^- ' "$log" || echo '?') 个关节名)"
   else

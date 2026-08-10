@@ -41,3 +41,9 @@ kinect2_middle/
 *.tar.gz
 # 117M 全手网格,URDF/代码都没引用(URDF 用的是 1M 的"适配法兰.stl",那个入库)
 assets/nero_description/meshes/nero_RH56DF.stl
+
+# ---- 大文件 (>100M, GitHub拒绝) ----
+# 117M 完整手部mesh，URDF已用适配法兰版(1M)
+assets/arm/meshes/nero_RH56DF.stl
+# 构建缓存，可重建
+sim/build_urdf/_cache/

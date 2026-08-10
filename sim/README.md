@@ -53,7 +53,9 @@ python sim/replay_rerun.py --robot nero_inspire_rgbd --serve           # Rerun �
 
 ## 各组件
 
-**装配** `build_nero_inspire.py`:合成 NERO 臂 + inspire 手的装配 URDF,MuJoCo 验证加载(nq=19)。`MOUNT_XYZ/MOUNT_RPY` 是手相对法兰(link7)的安装变换,真机到手后按实装改。
+**装配** `build_nero_inspire.py`:合成 NERO 臂 + RH56DF 适配法兰 + inspire 右手的装配 URDF,MuJoCo 验证加载(nq=19)。链路 `link7 → link8 → rh56df_adapter_flange → base → hand_base_link`。两段挂接变换(`FLANGE_MOUNT_*`、`MOUNT_*`)是从装配体 `nero_RH56DF.stl` 反解的,不是目视标定,三个件对装配体中位残差 0.27–0.63mm;推导脚本与结论见 `build_urdf/`。脚本还负责把臂的视觉网格由 `.dae` 换成同名 `.STL`(缺 pycollada 的查看器会整条臂不显示),并在源头补臂关节限位 effort=100/velocity=5(臂 URDF 原文是 0/0,ros2_control 推不动)。
+
+**手 URDF 生成** `build_inspire_from_vendor.py`(2026-08-07):从厂家新 URDF(`assets/urdf_right/urdf_right_2025_4_18`)生成项目格式,输出覆盖 `assets/inspire_hand/inspire_hand_right.urdf`。做的事:①link/joint 名改回项目规范(`right_little_*` → `pinky_*` 等);②补 5 个 `*_tip` links(dex-retargeting 需要,用"最远 2% 顶点质心"推导);③STL→GLB(浏览器需要);④展平链式 mimic(dex-retargeting 不支持链式);⑤放宽 mimic 子关节 limit 到"驱动走满时的值"(厂家原文件 thumb 链不自洽,不改浏览器会在中途饱和);⑥驱动关节 limit 覆盖成与 `inspire_hand.py` HAND_LIMITS 一致(避免预览与硬件不一致)。新 URDF 修正了拇指旋转关节相对 base 的装配位置(老 dex-urdf 在 base→hand_base_link 插了人为的 -90°X,180°Z 中间层,新的没这层,所以 `base_joint` 现在是单位变换)。指尖位置相对老版移了 19-27mm(新 mesh 几何和坐标系都变了),retargeting 的 `scaling_factor` 可能要重调。旧版备份在同目录 `.bak_dexurdf`。厂家新限位值(`thumb_pitch` 0.48、四指 1.333)记录在脚本注释里但**未采用**(收紧会丢真手 17%/4.5% 行程),等实测后再决定;只同步了 `thumb_yaw` 1.246165(零行程损失)。⚠ `build_urdf/` 的标定脚本(`finger_check.py` 等)按老 hand_base_link 坐标系写的,现在那个系变了,要重跑标定得先调它们。
 
 **运动学** `nero_kin.py`:NERO 正逆运动学,纯 pinocchio 从 URDF 读。`fk(q)`→4x4 位姿,`ik(T,q_init)`→关节角(阻尼最小二乘)。home 姿态(法兰朝上)存在 `robot_specs.py` 的 `q_home`。`test_nero_kin.py` 是它的单测。
 
@@ -100,6 +102,392 @@ Human 2D 面板也会在手腕点叠加 wrist 坐标轴:
 **校验** `verify_dataset.py`:回读校验 LeRobotDataset(探正确的属性名)。
 **学习脚本**(与管线无关,自用):`print_jacobian.py`(把某姿势的雅可比打屏看懂 J)、`solve_qp_step.py`(用雅可比把「末端想这么动」解成关节速度)。
 **路径** `paths.py`:集中路径工具(各入口目前用 `__file__` 自动定位,此模块备用)。
+
+## 语音控制(技能层 `skills/`)
+
+一句话 → 技能调用:
+
+```
+文本框 或 🎤 说话(浏览器 Web Speech API)
+   │  intent.py            模糊匹配 + 修饰词剥离 → skill_id + params
+   ▼
+POST /api/voice/parse      只解析,**不执行、不碰硬件**;每次解析都落盘
+   │  页面弹确认卡,人点「执行」   ← 误识别最坏就是弹错一张框
+   ▼
+POST /api/voice/invoke     SSE;console_exec.py → arm_console / hand_console
+```
+
+**ASR 走浏览器端**(2026-08-06)。麦克风在**客户端**那台机器上,服务端(WSL)拿不到;
+而且这台机器没 GPU,服务端跑 Whisper 是 CPU 解码、延迟到秒级。
+
+两个硬约束:
+
+- **需要安全上下文**。只有 `https://` 或 `localhost` 能拿麦克风权限。用 WSL IP
+  (`172.25.x.x:7860`)打开会被浏览器直接拒,**这不是代码能绕的** —— 改用
+  `localhost:7860`(WSL2 有 localhost 转发)或上 HTTPS。代码里检测到会说清怎么办。
+- Chrome 的中文识别把音频发到 Google,**要外网**。
+
+安全性质不变:ASR **只填文本框 + 触发解析,绝不执行**,和打字走完全同一条路。
+所以"识别只解析、不执行"对语音自动成立 —— 听错最坏是弹错确认框。
+
+**极性词纠错**:Web Speech API 没有热词偏置接口,只能事后纠(`ASR_FIX` 表)。
+`夏使能`/`吓使能`/`下时能` → `下使能` 这类同音近音误写。**只纠能确定的**,
+不做语义猜测 —— 纠错本身出错就是引入新的反向风险。原话和纠正后都落盘
+(`text_raw` / `text`),能事后查纠错有没有纠反。
+
+**为什么走 console 不走 ROS**:技能执行有两个后端 —— `runner.py`(ROS bridge)和
+`console_exec.py`(两个 console)。臂走 can0、手走 RS485,console **独占**它们;ROS
+bridge 会抢同一条通道,后果不是报错而是**互相覆盖**(见 `COMBO_DEBUG.md`)。真机验过
+的是 console 那条,所以语音走它。确认闸(`runner.Gate`)与调用日志两条路**共用一份
+实现**,不长出两套解释。
+
+四道闸全在服务端强制,前端绕不过去:
+
+1. **语音白名单** —— 清单里 `voice_enabled: false` 的技能语音命不中。
+   `/api/voice/invoke` 把 source **硬写成** `voice`,前端说了不算。
+2. **二次确认** —— 26 条技能 21 条 `need_confirm: true`,信封缺 `confirmed` 就拒。
+   确认走**页面按钮**而不是再说一句「确认」:确认也过识别的话,误识别风险叠两层。
+   免确认的 5 条,每条都有理由:
+
+   | 技能 | 为什么免确认 |
+   |---|---|
+   | `estop` | 方向是 fail-safe,误停不误动 |
+   | `hand_release` | **手没有急停通道**,急停只停臂、手保持当前位置。所以这是手唯一的"放开"入口。夹着东西等人点确认,等的就是持续夹着的时间;误触发=东西掉了(可恢复),延迟=夹坏(不可恢复) |
+   | `hand_grip_soft/normal/firm` | **不产生运动**,只改下次抓握的力度档。要确认反而会让人放弃用语音调力度 |
+3. **语音限速** —— `max_speed` 压过用户给的任何值(轨迹回放语音路径最快 1.0 倍)。
+4. **通道/使能预检** —— console 没接入、臂未使能、急停生效中都当场拒。预检按清单的
+   `requires` 判**而不是硬编码 id**,所以 `arm_reset` / `prepare_arm`(它们正是解除
+   未使能与急停的手段)不会把自己拦下来。
+
+**意图解析** `intent.py`(纯 Python,可脱机单测):三步 —— 整句精确命中别名表 → 剥掉
+修饰词/数值后再精确 → 字 bigram 模糊匹配。不用编辑距离,因为中文命令只有 2-6 字,
+一个字的增删就把距离比例拉到 0.2-0.3,阈值没法定。**重名不猜**:前两名分差在 margin
+内就返回候选让人点(与 `gesture_pack.find_by_name` 同一原则),例如只说「手」会同时
+命中张开/握拳,判 ambiguous 而不是随机选一个。修饰词只落到技能**自己声明过**的参数
+上:「回零位慢一点」→ `duration` 7.5s;「握拳快一点」→ 没有可调参数,只提示不硬塞。
+夹取与语音限速仍归 `schema.resolve_params`,本层不越界。
+
+**落后检测** `console_exec.py`:`duration` 在 console 协议里**没有对应字段**(臂按
+`speed_percent` 走,手近乎瞬时),所以它只是**本地节拍**,不是下给硬件的时长。于是每步
+发完等够 hold 后量一次 `|遥测 − 目标|`,超 0.05 rad(≈2.9°)就报 `lag` 事件,并在
+`done` 里带 `worst_lag_rad` / `lag_exceeded`。理由见 `COMBO_DEBUG.md`:共享时间轴只
+保证命令一起发出,不保证硬件一起到位,静默吸收落后就是**假同步**。mock 联调实测
+`go_home` 3 秒档收尾还差 0.11 rad,检测确实会报。
+
+⚠ **手没有急停通道**(`hand_console.py` 里 estop 出现 0 次)。最接近的 `action_stop`
+会把手**移动**到张开位 —— 那是运动不是停止,不能当急停用。所以 estop 只做两件事:停下
+发循环 + 给臂发 estop,手保持当前位置,并在事件里明说,不假装手也停了。
+`POST /api/voice/estop` 是**绕过执行队列直发臂**的:排在 SSE 后面等的话,长轨迹里要等
+到下一步边界才生效 —— 那正是急停不能接受的延迟。
+
+端点:`/api/voice/phrases`(能说什么)、`parse`(只解析)、`invoke`(执行)、
+`stop`(停下发,**≠急停**)、`estop`(直发臂)。
+
+### 两个语音面板 · 作用域
+
+页面上有**两处**语音栏,共用同一份前端 JS(靠 `vc` / `hvc` 元素前缀区分)和同一套
+后端闸,只有**作用域**不同:
+
+| 位置 | `scope` | 能说什么 |
+|---|---|---|
+| 实时 Live · 语音 | `all` | 清单里全部技能(臂 + 手)**+ 手势包 + 臂手联合录制包** |
+| 灵巧手调试 · 语音 | `hand` | 只有 `devices == {hand}` 的技能 + 手势包 |
+
+手页刻意不列臂的技能:那页只有 RS485 一条通道,说了也只会被拒。也没有急停按钮 ——
+手没有急停通道,放一个只会给人错觉。
+
+⚠ **联合录制包(`combo_pack`)只进 `all`,不进 `hand`**。它会动臂,而 `hand` 作用域的
+整个前提就是"手页说的话不该动臂"。开关是 `_list_pack_targets(include_combo=)`,
+默认**不放** —— 默认值站在更安全的那一边,要放得显式要求。
+
+> **2026-08-07 修**:combo 包原来**两个作用域都没进** —— `_list_pack_targets` 只扫
+> `gesture_pack`,于是录好的「挥手」说了永远 `no_match`。同一天还修了它进池之后暴露的
+> 一串 kind 判定漏改,见下面「三种 kind」。
+
+**手势表 ≠ 技能包**,两者都能被语音命中但机制不同:`gestures.yaml` 在**加载期合成进
+清单**(所以 `composite` 能引用它、`scope=hand` 自动包含它);技能包是磁盘上的独立文件,
+作为**另一个目标池**参与同一次打分。想让一个手势能被组合引用,写手势表;想随时增删
+不重启,用技能包。
+
+**两种包,别混**。都作为磁盘文件参与同一次打分,但动的设备、沙箱根、播放器都不同:
+
+| `kind` | 目录 | 动什么 | 播放器 | 进度看哪 |
+|---|---|---|---|---|
+| `gesture_pack` | `data/gestures/` | 只有手 | `hand_console.ActionPlayer` | `/ws/hand` 推,手页「技能包」栏 |
+| `combo_pack` | `data/combos/` | **臂 + 手** | `arm_console` 里的 CPV 播放器 | 轮询 `/api/combo/play/status`,合体页回放栏 |
+
+只放 `mode == "keyframe"` 的 combo 包进池。`stream` 包页面上放不了(要 CPV 逐关节
+伺服),进了池就是"说得出来但一执行就报错" —— 那比 `no_match` 更让人困惑。
+
+> **2026-08-06 修**:`all` 作用域的包列表原来写死成空 `[]`,于是合体页说包名
+> **永远 no_match**。那不是安全考虑,是当初 Live 页只管臂时留下的;合体页现在有手的
+> 通道,包是手势、它管得着。改在 `_scope_targets()`。
+
+**技能包同池打分**。包是磁盘上随时增删的文件,不进 `registry.yaml`(清单是静态真源,
+它的别名撞车校验建立在"内容固定"上)。所以包作为独立目标池参与**同一次打分** ——
+同池是关键:包名和技能名撞车时才判得出 ambiguous。实测录一个叫「握拳」的包,说
+「握拳」会返回两个候选(技能 `hand_close` + 那个包)让人点,而不是某一池悄悄赢。
+两个同名包(不同目录)时,候选带的是**路径**而不是名字,否则按名字再查一次仍然
+ambiguous,用户永远点不出结果。
+
+**包的执行不走 SSE**,返回普通 JSON:回放在 console 进程内异步播,这一层拿不到逐帧
+进度(进度看上面那张表各自的栏目)。硬编成 SSE 只会造出一个「立刻 start 紧接 done」的
+假进度流。但它**仍然过确认闸、仍然落调用日志**
+—— 不让前端直接打 `/api/hand/gesture/play` 或 `/api/combo/play` 就是为了这两件事:
+`(原话, 包路径)` 的配对和技能那边一样是 VLA 标注原料,不能因为"这是包不是技能"就漏掉。
+路径沙箱校验复用各自的 `load_pack`(内含 `resolve_pack_path`),不另写一份 —— 实测
+`../../etc/passwd` 被拒。
+
+⚠ **`kind` 由后端自己从池里反查,不信前端传的那个**。两个沙箱根可以各有一个同名文件,
+信前端就会去错的根 load。前端传的 `kind` 只用来决定走不走包这条路,具体哪种由 `path`
+在池里的归属定。
+
+### 三种 kind:判「是不是包」只走 `PACK_KINDS`
+
+`kind` 有**三个**值:`skill` / `gesture_pack` / `combo_pack`。判据集中在两处常量
+(`skills/intent.py`),**别在业务代码里写 `== "gesture_pack"`**:
+
+```python
+PACK_KINDS   = ("gesture_pack", "combo_pack")
+PACK_DEVICES = {"gesture_pack": ["hand"], "combo_pack": ["arm", "hand"]}
+```
+
+两份**刻意放一起**,还有 `assert` 咬着覆盖关系:加第四种包时只改 `PACK_KINDS` 能跑通
+(判「是不是包」不报错),但设备表查不到 —— 而 `devices` 是确认框上「会动臂」那句提示的
+**唯一来源**,报错方向的风险提示比不报更糟(人白清一次场,久了就不信这个提示了)。
+
+前端拿不到 Python 常量,只能抄一份(`VC_PACK_KINDS` / `VC_PACK_DEVICES` +
+`vcIsPack()` / `vcIsCombo()`)。`test_voice_combo_kind.py` 里有一条测试**对着两边比**,
+抄漏了会红;另两条扫源码,在代码行里写裸字符串也会红。
+
+**2026-08-07 实测踩过**:combo 包刚进池,7 处判据只认 `gesture_pack`,于是它全落到
+"技能"那一边。症状五花八门,根因是同一个:
+
+| 位置 | 表现 |
+|---|---|
+| `voice_parse` | **HTTP 500 + 纯文本** `Internal Server Error` |
+| `voice_invoke` | 报「查不到这条技能」—— 理由和真实原因完全不搭 |
+| `voice_phrases` | 「能说什么」把挥手标成**只动手** |
+| `vcRun` | 拿 SSE reader 读 JSON 响应,进度栏一行不出 |
+| `vcShowCands` | 歧义里点中 combo 包 → 送去手的那条路 |
+
+那个 500 值得记一下**怎么误导人的**:combo 包的 `skill_id` 是 `None`(包不在清单里),
+落到 else 就是 `console_targets(reg.get(None), reg)`,而 `targets()` 第一行就是
+`spec.kind` → `AttributeError`。FastAPI 回的是纯文本,前端 `r.json()` 拿它去 parse,
+报 **`SyntaxError: Unexpected token 'I'`** —— 症状指着前端的 JSON 解析器,defect 在服务端。
+`out/voice_parses.jsonl` 是关键证据:`log_parse` 在崩之前就跑完了,所以**日志里记着一条
+解析成功**,而客户端拿到 500。
+
+### 力度修饰:正交维度,不是序列里的一步
+
+「轻一点捏」「用力握拳」这类**修饰 + 动作**的说法,靠 `intent._extract` 剥修饰词、
+`_apply_mods` 落到技能声明过的参数上 —— 和「慢一点」同一套机制。
+
+**为什么不做成 `hand_close_soft` 这种组合技能**:力度是"怎么做"、不是"做什么",
+它对任何手部动作都适用。做成修饰词则 3 档 × N 个动作只要 N 条清单条目;
+做成组合技能就是 3N 条,组合爆炸。而且 `console_exec.translate()` 已保证力控排在
+角度**之前**发,时序天然正确 —— 力控是状态,先发角度会让这次运动用上一条的阈值。
+
+档位值是**实测常数**(见 `HAND_DEBUG.md` 力控语义那节),两处必须一致:
+`intent.GRIP_LEVELS` 和清单里 `hand_grip_*` 三条。数值分叉就会出现「轻一点」和
+「轻一点捏」力度不同这种说不清的行为。
+
+⚠ 同一批词**既是修饰词又是别名**,这是有意的:
+
+- 只说「轻一点」→ 第 1 步整句精确匹配 → `hand_grip_soft`(只调力度、不动作)
+- 说「轻一点捏」→ 整句匹不上 → 剥掉修饰 →「捏」→ `hand_pinch` + soft 力度
+
+第 1 步只匹配**整句**,所以两条路不打架。少了任一边都缺一种说法:不在别名表里
+→ 单说「用力」变 no_match;不在 `SOFT_WORDS/FIRM_WORDS` → 「轻一点捏」只调力度不捏。
+
+已知缺口:单字「轻」不在词表里(加进去会和「轻轻」重叠),所以「又轻又用力地捏」
+只认出 firm 而不是判成冲突。同时说轻和重时**两个都丢**并提示 —— 猜错的后果是
+握持力反向。
+
+### 漏词落盘:唯一的真实语言样本来源
+
+`/api/voice/parse` 每次解析都写一行到 `out/voice_parses.jsonl`,**成功和失败都记**。
+
+**为什么成功也记**:只记失败的话能知道"漏了 50 条",但不知道是 50/60 还是
+50/5000 —— 漏词率算不出来,而那正是判断"要不要上更强匹配"的唯一依据。
+
+**为什么记在 endpoint 而不是 `intent.parse()` 里**:那个函数被测试和
+`intent.py --all` 调用(一次跑几千条),记在里面会把日志灌满合成数据。
+
+读的工具:
+
+```bash
+python3 sim/analyze_voice_misses.py            # 漏词率 + 该补什么
+python3 sim/analyze_voice_misses.py --all-sources   # 含自检流量
+```
+
+它把漏词分**两类**,因为处理方式完全不同:
+
+- **差一点就中**(最高分接近阈值)→ 补一条别名就解决,**不用动模型**
+- **完全不认识**(最高分很低)→ 才需要更强的语义匹配
+
+如果九成漏词是前者,正确答案是补清单。这个区分是整个工具的重点。
+
+按 `source` 分开算漏词率(`text` 打字 / `asr` 语音):打字的漏是"清单没覆盖",
+语音的漏可能是"听错了",两者修法完全不同。自检流量要显式传 `source=selftest`,
+分析时默认排除 —— 它和真人打字的记录**长得一模一样**,混进去漏词率就是假的。
+
+⚠ 里面是原始语音/文本内容,只留在本地 `sim/out/`。
+
+### 手势规格层(`skills/hand_pose.py`)
+
+**为什么要它**:清单原来直接写 `hand: [1.112, 0.600, 1.07, 0.0, 0.0, 0.0]`。
+这串数字看不出是什么手势、改一个不知道会不会撞、每个新手势要上真手量一遍。
+
+现在写成五指语义:
+
+```yaml
+pose:
+  thumb: opposed              # 对掌位(2 个关节一起设)
+  index: limit                # 闭到"刚够碰上拇指"(自动推导,不用量)
+  # middle/ring/pinky 省略 = 张开
+```
+
+- **归一量 `n ∈ [0,1]`**:0=张开,1=这台机器实际能到的最闭(拇指弯曲 URDF 限 0.6 < 实际 0.698,所以 n=1 → raw 141 不是 0)。
+- **四指**:直接给 n,或状态名 `open/relaxed/half/curled/closed`。
+- **拇指**:两个关节成对给,状态名 `open/up/opposed/folded/side`,或 `[yaw_n, pitch_n]`。
+- **`limit` 是推导状态**:查可行域表算出"食指在当前拇指位置下能到的最闭位 + 10 counts 余量"。
+  写 `index: limit` 的手势(捏/OK/比 1)不用上手量,改拇指姿态食指自动跟。
+
+**可行域强校验**:不可行 = **加载失败**,不是警告。互顶姿态会堵转过温(Bit1 不可清),
+宁可加载时炸。两条实测通过的清单已改用 pose(捏用 `limit`,握拳保留手写余量 `0.68`)。
+
+加载期 schema 展开 pose → action.hand,下游(backend/exec/runner/前端)零改动。
+
+### 手势表(`skills/gestures.yaml`)
+
+纯造型手势不写在 `registry.yaml` 里。原因:手势之间**只有 pose 不一样**,
+其余十几行样板(aliases/params/requires/safety/action)全同。写进清单等于把样板
+抄 N 遍,加第 6 个手势要复制粘贴 15 行。
+
+手势表里一个手势 = 两行:
+
+```yaml
+gestures:
+  two:
+    name: 比个2
+    aliases: ["比个2", "比个二", "比2", "剪刀", "耶"]
+    pose: {thumb: folded, index: open, middle: open, ring: closed, pinky: closed}
+```
+
+加载期合成成 `primitive` 技能(id = `hand_<key>`,如 `hand_two`),然后进同一份清单。
+所以合成条目:
+
+- 语音能直接命中(和手写技能同池打分)
+- `composite` 的 `steps` 能引用
+- 走**同一条**校验路径 —— pose 展开、可行域、别名撞车都查,不是特殊通道
+
+样板由 `defaults` 统一给,单个手势写同名键即可覆盖。现有 9 个:
+1/2/3/4/5、点赞、OK、石头、指。石头剪刀布复用其中三条,不重复定义 pose。
+
+> 手势的 `hand_force` 默认 250,低于抓握的 300。手势不需要握力,阈值低意味着
+> 碰到障碍更早停 —— 造型宁可停在半路,不要顶着东西继续弯。
+
+### overlay:让臂和手同时动
+
+`composite` 默认 `mode: sequence`(逐条按序发)。写 `mode: overlay` 则把子技能
+**合成一条指令**同时发:
+
+```yaml
+- id: home_with_one
+  kind: composite
+  mode: overlay
+  steps:
+    - {skill: go_home}      # 臂回零 5.0s
+    - {skill: hand_one}     # 手比 1  1.5s
+```
+
+**为什么是真并发**:臂和手是两个 console 进程,`translate()` 产出的两条分别写
+各自的 stdin。臂的 `move_j` 是阻塞调用,但它阻塞的是**臂那个进程**,手照样动。
+所以总时长取 `max(5.0, 1.5) = 5.0` 而不是相加。合成后下发顺序仍是
+`arm angles → hand speed → hand force → hand angles`,力控排在角度前。
+
+**约束在构造期报错**,不等真机:
+
+| 约束 | 为什么 |
+|---|---|
+| 只收 `primitive` 子技能 | 轨迹几百帧、嵌套组合步数不定,"恰好一步"验不了 |
+| 每个通道单来源 | 两条都给 `hand` 取谁都是猜 |
+| 不许带 `estop`/`action`/`value` | 模式切换不是姿态。急停尤其要单独立刻发 |
+| `duration` 取 max | 并行跑,要等慢的那个走完 |
+
+> 反例记下来防止再试:`hand_grip_soft` + `hand_one` 做「轻轻比个1」**会被拦** ——
+> 两条都声明了 `hand_speed`/`hand_force`。那个需求归修饰词机制(`intent.SOFT_WORDS`),
+> 不归 overlay:力度是正交维度,不是序列里的一步。
+
+**核对表**:`/usr/bin/python3 skills/hand_pose.py --verify` 检查本模块抄的
+RAW_MAP / HAND_LIMITS 跟 inspire_hand 是否一致。换 URDF 改了那边就跑一次。
+
+### 网页下发会不会"丢包"
+
+**下发方向不会丢,反馈方向会。**
+
+下发链路:浏览器 `fetch` → TCP → uvicorn → 专用线程 → `console.stdin.write` + `flush`
+→ console 的 `readline()` 循环 → CAN / RS485。每一环都不静默丢:TCP 丢包自己重传,
+断了就是 `fetch` 抛异常;第二条指令撞上单实例锁拿到的是 **409**(明确拒绝,不是排队
+也不是丢弃);`stdin` 管道满了是**背压**(写阻塞),不是丢帧 —— console 逐行读,
+`move_j` 是阻塞调用,所以指令严格串行;写失败被 `try/except` 接住变成 `warn`/`error`
+事件推回页面。
+
+反馈方向不同:SSE 是**一次性流,没有重放**。切页 / 刷新 / 断网 / 合盖之后,后面的
+`progress`、`lag`、`done` 就永久看不到了。真正危险的不是"少看几条进度",而是
+**丢了反馈不等于臂停下**:worker 线程还活着,还在往 stdin 写帧。所以断流时必须
+`ex.stop()`,只清单实例锁是不够的 —— 清了锁下一次 invoke 立刻能进来,两个 executor
+同时写同一个 stdin,console 收到的是两条轨迹交错拼出来的第三条(COMBO_DEBUG 说的
+同通道双写)。实测:go_home(预计 5.0s)读 1.5s 掐断,调用日志记 `result=stopped`
+而非 `done`,1.8s 后下一条 invoke 正常进入。
+
+还有一类**不叫丢包但看着像**:指令发太快,臂还没走到就被新目标顶掉。这是覆盖不是
+丢失,由落后检测(`|遥测 − 目标| > 0.05 rad`)报出来,不静默吸收。遥测广播
+(`_broadcast`)队列满时**故意丢旧帧**,那是显示路径 —— 实时显示要最新值,不要积压。
+
+### 从另一台电脑访问(局域网)
+
+WSL2 是 NAT 网络:本机 `eth0` 是 `172.25.188.158/20`,网关 `172.25.176.1`。这个网段
+局域网里别的机器路由不到。`uvicorn` 绑的是 `0.0.0.0:7860`,但那个 `0.0.0.0` 只在 WSL
+内部有效 —— Windows 只做了 `localhost` 转发,**没有**把 7860 摊到局域网网卡上。
+实测从 WSL 探网关侧:`2223` 开(SSH 有 portproxy,所以你能 ssh 进来),`7860` 不通。
+
+推荐走 **SSH 隧道**,不用改 Windows 任何东西(而且本机 WSL interop 关着,改也得手动):
+
+```bash
+# 在另一台电脑上执行(2223 就是你现在 ssh 用的端口)
+ssh -N -L 7860:localhost:7860 -p 2223 zhang123@<这台机器的局域网IP>
+# 然后在那台电脑的浏览器打开 http://localhost:7860
+```
+
+这条路顺带解决 ASR 的卡点:客户端看到的是 `localhost`,**算安全上下文**,
+`getUserMedia` / Web Speech API 不再被拒。而且臂的控制面板不会裸摊在局域网上 ——
+这个 web 端**没有任何认证**,谁能连上谁就能使能机械臂。
+
+```bash
+python3 sim/skills/intent.py --all                 # 178 项别名回归
+python3 sim/skills/intent.py "回零位慢一点"
+python3 sim/skills/intent.py --packs "OK"          # 把磁盘上的技能包也放进池子
+python3 sim/skills/console_exec.py --skill prepare_arm --confirmed   # 假 console 干跑
+python3 sim/skills/test_intent.py                  # 63 项(含技能包同池)
+python3 sim/skills/test_console_exec.py            # 61 项
+python3 sim/skills/test_hand_pose.py               # 75 项(姿态/可行域/手势表/overlay)
+python3 sim/skills/hand_pose.py --verify           # 核对抄来的驱动表有没有漂
+python3 sim/test_voice_combo_kind.py               # 9 项:三种 kind 的分流 + 前后端常量对齐
+```
+
+⚠ `test_voice_combo_kind.py` **不碰硬件**,真机接着的时候也能跑:parse/phrases 只读清单
+和磁盘;invoke 那条**故意不传 `confirmed`**,在确认闸就返回,一帧都不下发。用「被闸拒」
+证明「路由对了」,比真执行一次安全得多。它用 `TestClient` 起 app 但**不拉 console**
+(`_console_ready()` 直接读 `_arm`/`_hand` 全局,都是 `None` 就报未接入),所以不抢
+`can0` / `ttyUSB0`。
+
+**ASR 还没接,且有个前置卡点**:WSL 里没有 ALSA / PulseAudio(`/proc/asound/cards`
+不存在),服务端录不了音,只能浏览器采集。但 `app_web` 启动横幅让你用 WSL IP 打开,
+那是**非安全上下文**,`getUserMedia` 与 Web Speech API 都会被浏览器拒。要接麦克风得先
+从 Windows 开 `http://localhost:7860`(WSL2 有 localhost 转发,localhost 算安全上下文)
+—— **这条尚未实测**。接上之后只需把识别文本填进同一个输入框,解析与执行两层都不用改。
 
 ## 生成物(不进仓库,可重建)
 

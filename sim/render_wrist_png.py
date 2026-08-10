@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-REPO = Path(__file__).resolve().parents[1]
+from paths import REPO, ASSEMBLY_URDF, GRIPPER_URDF
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pinocchio as pin
 from replay_rerun import RobotModel, load_meshes
@@ -17,7 +17,7 @@ OUT = REPO / "sim/out"
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    m = RobotModel(REPO / "sim/assets/nero_inspire_right.urdf")
+    m = RobotModel(ASSEMBLY_URDF)
     meshes = load_meshes(m)
     q = np.zeros(m.model.nq)
     pin.forwardKinematics(m.model, m.data, q)

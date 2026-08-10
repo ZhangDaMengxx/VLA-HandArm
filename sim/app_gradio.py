@@ -32,8 +32,13 @@ import gradio as gr
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
-LEROBOT_PY = os.environ.get("LEROBOT_PY",
-                            "/home/zhang123/ros2_ws/enter/envs/lerobot/bin/python3")
+
+
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lerobot_env import lerobot_python                  # noqa: E402
+
+LEROBOT_PY = lerobot_python()      # 见 sim/lerobot_env.py,环境位置探测的唯一真源
 GRADIO_PORT = int(os.environ.get("GRADIO_PORT", "7860"))
 
 _URL_RE = re.compile(r"(https?://\S+\?url=\S+)")   # replay 打印的完整查看器地址

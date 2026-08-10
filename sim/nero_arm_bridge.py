@@ -19,12 +19,9 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
-import types
 from pathlib import Path
-from typing import Final, Literal
 
 import rclpy
 from rclpy.node import Node
@@ -36,173 +33,9 @@ from trajectory_msgs.msg import JointTrajectory
 SIM = Path(__file__).resolve().parent
 sys.path.insert(0, str(SIM))
 from inspire_hand import InspireHand, InspireHandConfig, HAND_JOINTS
-
-ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
-PYAGX_ROOT = SIM.parent / "pyAgxArm-master" / "pyAgxArm-master"   # 本地 SDK 源
-
-
-def _find_lerobot_site() -> Path | None:
-    """定位 lerobot 环境的 site-packages(给 pyAgxArm 补纯 python 依赖用)。
-
-    conda 环境**不在仓库里**,它装哪儿是机器的属性,所以不能用相对路径写死:
-    本机在 ros2_ws/enter/,别的机器可能是 ~/miniconda3/envs/lerobot。按优先级找:
-      1. $LEROBOT_SITE          显式指定,换机器只改这一个
-      2. $LEROBOT_PY 的同环境    已经配了解释器就顺手推出来,不用再配一遍
-      3. 仓库旁的 enter/        本机布局,作为候选保留
-      4. conda 默认位置
-    必须显式 python3.10(要和 ROS Humble 的 ABI 一致);lib/ 下有 python3.1、
-    python3.1.c~ 这类残留目录,glob 'python3.*' 会撞上错的。
-    """
-    if env := os.environ.get("LEROBOT_SITE"):
-        return Path(env)
-    candidates = []
-    if py := os.environ.get("LEROBOT_PY"):
-        # <env>/bin/python3 → <env>/lib/python3.10/site-packages
-        candidates.append(Path(py).resolve().parent.parent / "lib/python3.10/site-packages")
-    candidates += [
-        SIM.parent.parent / "enter/envs/lerobot/lib/python3.10/site-packages",
-        Path.home() / "miniconda3/envs/lerobot/lib/python3.10/site-packages",
-        Path.home() / "anaconda3/envs/lerobot/lib/python3.10/site-packages",
-    ]
-    return next((c for c in candidates if c.is_dir()), None)
-
-
-LEROBOT_SITE = _find_lerobot_site()
-NERO_ARM_LIMITS = [
-    (math.radians(-155.0), math.radians(155.0)),
-    (math.radians(-100.0), math.radians(100.0)),
-    (math.radians(-158.0), math.radians(158.0)),
-    (math.radians(-58.0), math.radians(123.0)),
-    (math.radians(-158.0), math.radians(158.0)),
-    (math.radians(-42.0), math.radians(55.0)),
-    (math.radians(-90.0), math.radians(90.0)),
-]
-
-
-def _prepare_pyagx_imports() -> None:
-    """Make local pyAgxArm importable from ROS system Python.
-
-    ROS Humble requires /usr/bin/python3 here, while the SDK dependencies may
-    live in the lerobot Python 3.10 env. Add that pure-Python site-packages path
-    as a fallback and provide the tiny typing_extensions surface pyAgxArm uses.
-    """
-    if str(PYAGX_ROOT) not in sys.path:
-        sys.path.insert(0, str(PYAGX_ROOT))
-    if LEROBOT_SITE is None:
-        # 没找着不是致命错误(下面有 typing_extensions 的 shim 兜),但要说出来:
-        # 真机缺包时报错会指向 pyAgxArm 内部,不提示的话很难联想到是这里没找到。
-        print("[bridge] warn: 未找到 lerobot site-packages,pyAgxArm 的纯 python 依赖"
-              "可能缺失。可设 LEROBOT_SITE=<env>/lib/python3.10/site-packages 指定。",
-              file=sys.stderr, flush=True)
-    elif str(LEROBOT_SITE) not in sys.path:
-        sys.path.append(str(LEROBOT_SITE))
-    try:
-        import typing_extensions  # noqa: F401
-    except ImportError:
-        shim = types.ModuleType("typing_extensions")
-        shim.Literal = Literal
-        shim.Final = Final
-        sys.modules["typing_extensions"] = shim
-
-
-def _clamp(v, lo, hi):
-    return max(lo, min(hi, v))
-
-
-class NeroArm:
-    """NERO 臂封装:mock=正弦摆动;真机=pyAgxArm CAN。接口对齐 InspireHand。"""
-
-    def __init__(self, mock: bool = True, channel: str = "can0", firmware: str = "default") -> None:
-        self.mock = mock
-        self.channel = channel
-        self.firmware = firmware
-        self.robot = None
-        self._t = 0.0
-        # mock 起始"就绪位"(非零)—— 这样点『归零』能看到臂真的回到 0
-        self._target = [0.3, -0.5, 0.2, -0.8, 0.1, 0.4, 0.0]
-        self._frozen = False          # mock 急停:冻结摆动,停在当前位
-        self._frozen_pose = None
-        self._speed = 100
-
-    def connect(self) -> bool:
-        if self.mock:
-            return True
-        # 真机:导入本地 pyAgxArm(纯 python),建 CAN 连接
-        _prepare_pyagx_imports()
-        from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, NeroFW
-        fw_map = {
-            "default": NeroFW.DEFAULT,
-            "v111": NeroFW.V111,
-            "v112": NeroFW.V112,
-            "v120": NeroFW.V120,
-        }
-        cfg = create_agx_arm_config(robot=ArmModel.NERO,
-                                    firmeware_version=fw_map[self.firmware],
-                                    interface="socketcan", channel=self.channel,
-                                    bitrate=1000000)
-        self.robot = AgxArmFactory.create_arm(cfg)
-        self.robot.connect()
-        return True
-
-    def read_angles(self) -> list[float]:
-        """返回 7 关节角(rad)。mock:在当前目标附近轻微摆动 —— 空闲时像活着,
-        收到 move_j 后摆动中心跟到新目标,让控制在 3D/数值里看得见。"""
-        if self.mock:
-            if self._frozen:
-                return list(self._frozen_pose)     # 急停:定住不动
-            self._t += 1.0 / 30.0
-            t = self._t
-            freqs = [0.30, 0.40, 0.35, 0.50, 0.45, 0.60, 0.55]
-            return [self._target[i] + 0.12 * math.sin(freqs[i] * t + i)
-                    for i in range(7)]
-        ret = self.robot.get_joint_angles()
-        if ret is None or ret.msg is None:
-            return self._target                       # 读失败:回退上次目标,不抛
-        return list(ret.msg)
-
-    def enable(self) -> bool:
-        if self.mock:
-            return True
-        return bool(self.robot.enable())
-
-    def disable(self) -> bool:
-        if self.mock:
-            return True
-        return bool(self.robot.disable())
-
-    def reset(self) -> None:
-        self._frozen = False          # 复位解除急停冻结
-        if not self.mock and self.robot is not None:
-            self.robot.reset()
-
-    def set_speed_percent(self, pct: float) -> None:
-        pct = int(_clamp(pct, 1, 100))
-        self._speed = pct
-        if not self.mock and self.robot is not None:
-            self.robot.set_speed_percent(pct)
-
-    def move_j(self, rad7: list[float]) -> None:
-        if self.mock and self._frozen:
-            return              # 急停中:忽略运动指令,等 reset() 解冻(和真机一致)
-        rad7 = [_clamp(v, *NERO_ARM_LIMITS[i]) for i, v in enumerate(rad7)]
-        self._target = rad7
-        if not self.mock:
-            self.robot.move_j(rad7)
-
-    def estop(self) -> None:
-        if self.mock:
-            # 定格当前摆动位置,停住 —— 给可见反馈(真机是 SDK 硬急停)
-            self._frozen_pose = self.read_angles()
-            self._frozen = True
-        elif self.robot is not None:
-            self.robot.electronic_emergency_stop()
-
-    def disconnect(self) -> None:
-        if not self.mock and self.robot is not None:
-            try:
-                self.robot.disconnect()
-            except Exception:
-                pass
+# NeroArm 抽到 nero_arm.py 了 —— arm_console.py 要在无 ROS 环境用它,
+# 而本文件模块级 import rclpy。两处共用一份,别再各写一个。
+from nero_arm import NeroArm, NERO_ARM_LIMITS, ARM_JOINTS          # noqa: F401
 
 
 class NeroBridge(Node):

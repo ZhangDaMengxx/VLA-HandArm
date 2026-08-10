@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 import rerun as rr
 
-REPO = Path(__file__).resolve().parents[1]
+from paths import REPO, ASSEMBLY_URDF, GRIPPER_URDF
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from replay_rerun import RobotModel, load_meshes, log_axes
 
-URDF = REPO / "sim/assets/nero_inspire_right.urdf"
+URDF = ASSEMBLY_URDF
 
 
 def main():

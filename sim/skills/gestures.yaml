@@ -1,0 +1,95 @@
+# 手势表 —— 纯造型手势的唯一真源。
+#
+# 为什么单独一张表、不写进 registry.yaml:
+#   registry 里一条手势要十几行样板(aliases/params/requires/safety/action),
+#   而这些手势之间**只有 pose 不一样**,其余全同。写进 registry 等于把同一份
+#   样板抄 N 遍,加第 6 个手势要复制粘贴 15 行。
+#   这里一个手势 = 两行:名字 + 五指状态。样板由 schema 加载期统一套上。
+#
+# 加载期会把每一行**合成一条 primitive 技能**(id = hand_<key>),所以:
+#   · 语音能直接命中(和 registry 里的技能同池打分)
+#   · composite 的 steps 能引用它
+#   · 可行域校验照样跑 —— 不可行就加载失败
+#
+# pose 语义见 skills/hand_pose.py:
+#   四指 index/middle/ring/pinky: open/relaxed/half/curled/closed 或 0-1 的数
+#   拇指 thumb: open/up/opposed/folded/side 或 [yaw_n, pitch_n]
+#   limit: 只对 index 有意义 —— "闭到刚够碰上拇指",由可行域表推导
+#
+# ⚠ 这些都是**造型**手势,不抓东西。force 统一给 250(低于抓握的 300):
+#   手势不需要握力,阈值低意味着碰到障碍更早停 —— 造型宁可停在半路,不要顶着东西弯。
+
+version: 1
+
+# 所有合成技能共用的样板。想给某个手势单独改,在它自己的条目里写同名键覆盖。
+defaults:
+  duration: 1.5
+  hand_speed: 500
+  hand_force: 300
+  requires: [live_session]
+  voice_enabled: true
+  # 会产生运动就要确认 —— 和 hand_open/hand_close/hand_pinch 一致。
+  # 免确认的只有急停、松手(安全动作)和三条力度档(不产生运动)。
+  need_confirm: true
+
+gestures:
+  # ---- 数字 ----
+  # 「一」和「1」都留:ASR 转中文数字还是阿拉伯数字不确定,两种都可能出现。
+  one:
+    name: 比个1
+    aliases: ["比个1", "比个一", "比1", "比一", "数字1", "数字一", "竖食指"]
+    pose: {thumb: folded, index: open, middle: closed, ring: closed, pinky: closed}
+
+  two:
+    name: 比个2
+    # 「剪刀」放这里而不是单独一条 —— 石头剪刀布的剪刀就是这个姿态,
+    # 同一个手势不该有两份 pose 定义。猜拳要用就引用 hand_two。
+    aliases: ["比个2", "比个二", "比2", "比二", "数字2", "数字二", "剪刀", "耶"]
+    pose: {thumb: folded, index: open, middle: open, ring: closed, pinky: closed}
+
+  three:
+    name: 比个3
+    aliases: ["比个3", "比个三", "比3", "比三", "数字3", "数字三"]
+    pose: {thumb: folded, index: open, middle: open, ring: open, pinky: closed}
+
+  four:
+    name: 比个4
+    aliases: ["比个4", "比个四", "比4", "比四", "数字4", "数字四"]
+    pose: {thumb: folded, index: open, middle: open, ring: open, pinky: open}
+
+  five:
+    name: 比个5
+    # 「布」在这里:石头剪刀布的布 = 五指全张。
+    # 和 hand_open 的区别:hand_open 是"张开手"(功能动作,要确认),
+    # 这条是"比个5"(造型)。两条 pose 一样但语义场景不同,别合。
+    aliases: ["比个5", "比个五", "比5", "比五", "数字5", "数字五", "布", "手掌"]
+    pose: {thumb: open, index: open, middle: open, ring: open, pinky: open}
+
+  # ---- 常用手势 ----
+  thumbs_up:
+    name: 点赞
+    aliases: ["点赞", "赞", "竖大拇指", "大拇指", "好评", "棒"]
+    pose: {thumb: up, index: closed, middle: closed, ring: closed, pinky: closed}
+
+  ok:
+    name: OK手势
+    # 拇指+食指成环(用 limit 让食指刚好碰上拇指),其余三指微屈而非全张 ——
+    # 真人做 OK 时后三指是自然放松的,不是直挺挺伸着。
+    aliases: ["OK", "ok手势", "okay", "好的手势", "圈"]
+    pose: {thumb: opposed, index: limit, middle: relaxed, ring: relaxed, pinky: relaxed}
+
+  # 「石头」不在这里了 —— 它和 hand_close 的 pose 完全一样(拇指 folded + 食指 0.68
+  # + 三指 closed),而 hand_close 已经拆成分阶段的 composite 来避开互顶。
+  # 一个姿态不留两份定义,所以「石头」「拳头」「攥拳」三个别名并进了 registry.yaml
+  # 的 hand_close。石头剪刀布的另两个仍在这里(hand_two = 剪刀、hand_five = 布)。
+  #
+  # ⚠ 这也意味着**要分阶段的手势不能写在这个文件里** —— gestures.yaml 加载期只
+  #   合成 primitive(一个手势 = 一个 pose)。需要"先动拇指再动某几指"的,写进
+  #   registry.yaml 做 composite,引用 _hand_* 那些原子阶段。
+
+  point:
+    name: 指
+    # 和「比个1」pose 相同但语义不同:这是指向动作,将来会和臂的朝向组合。
+    # 现在先登记,组合算子做好后它是 overlay 的左手边。
+    aliases: ["指", "指一下", "指向", "指那边"]
+    pose: {thumb: folded, index: open, middle: closed, ring: closed, pinky: closed}

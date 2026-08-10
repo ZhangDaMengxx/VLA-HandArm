@@ -32,8 +32,11 @@ import gradio as gr
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
-LEROBOT_PY = os.environ.get("LEROBOT_PY",
-                            "/home/zhang123/ros2_ws/enter/envs/lerobot/bin/python3")
+LEROBOT_PY = os.environ.get(
+    "LEROBOT_PY",
+    # conda 环境位置是机器属性;旧默认 ros2_ws/enter/ 已失效,本机在 ~/miniconda3。
+    # 这是 app_gradio.py 的过期副本,当前入口是 app_web.py。
+    str(Path.home() / "miniconda3/envs/lerobot/bin/python3"))
 GRADIO_PORT = int(os.environ.get("GRADIO_PORT", "7860"))
 
 _URL_RE = re.compile(r"(https?://\S+\?url=\S+)")   # replay 打印的完整查看器地址

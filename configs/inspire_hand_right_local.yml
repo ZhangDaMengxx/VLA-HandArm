@@ -15,9 +15,13 @@
 # The THUMB keeps the "base" origin (human wrist) because its opposition reach
 # across the palm depends on it — a local thumb origin made the thumb worse.
 # Vector order below is [thumb, index, middle, ring, pinky].
+#
+# ⚠ 2026-08-07: URDF replaced with vendor's new 2025-04-18 version (geometry fixes,
+# correct thumb yaw joint mounting). Fingertip positions shifted 19-27mm; the
+# scaling_factor 1.15 was tuned on the old tip locations and may need re-tuning.
 retargeting:
   type: vector
-  urdf_path: inspire_hand/inspire_hand_right.urdf
+  urdf_path: hand/urdf/inspire_hand_right.urdf
 
   # Target refers to the retargeting target, which is the robot hand
   target_joint_names: [ 'pinky_proximal_joint', 'ring_proximal_joint', 'middle_proximal_joint', 'index_proximal_joint',

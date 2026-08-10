@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[1]
+from paths import REPO, ASSEMBLY_URDF, GRIPPER_URDF
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
@@ -54,7 +54,7 @@ BONES = [(0,1),(1,2),(2,3),(3,4),(0,5),(5,6),(6,7),(7,8),(0,9),(9,10),(10,11),(1
 def measure_gripper():
     """夹爪开合误差<1mm:驱动两指 prismatic 到指令行程,量指尖位移 vs 指令。返回指标列表。"""
     import pinocchio as pin
-    m = pin.buildModelFromUrdf(str(REPO / "sim/assets/nero_gripper_right.urdf"))
+    m = pin.buildModelFromUrdf(str(GRIPPER_URDF))
     d = m.createData()
     fingers = [m.names[i] for i in range(len(m.names)) if "gripper_finger" in m.names[i]]
     tip_frames = [f.name for f in m.frames

@@ -14,8 +14,8 @@ import numpy as np
 # ---------- 机器人本体常量(NERO 7-DoF + inspire 6 驱动关节)----------
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
 HAND_ACTUATED = [
-    "index_proximal_joint", "middle_proximal_joint", "ring_proximal_joint",
-    "pinky_proximal_joint", "thumb_proximal_pitch_joint", "thumb_proximal_yaw_joint",
+    "right_index_1_joint", "right_middle_1_joint", "right_ring_1_joint",
+    "right_little_1_joint", "right_thumb_2_joint", "right_thumb_1_joint",
 ]
 STATE_DIM = len(ARM_JOINTS) + len(HAND_ACTUATED)   # 13
 ACTION_DIM = STATE_DIM                              # 绝对关节目标,同维

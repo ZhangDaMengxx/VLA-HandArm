@@ -86,9 +86,11 @@ skills:
     requires: [live_session, arm_enabled]
     safety: {voice_enabled: true, need_confirm: true}
 
+  # 「松手」「放开」移到 hand_release 了 —— 那是安全动作,要免确认;
+  # 这条是正常流程里的"张开手",维持二次确认。别再合回一条。
   - id: hand_open
     name: 张开手
-    aliases: ["张手", "张开", "张开手", "松手", "放开"]
+    aliases: ["张手", "张开", "张开手"]
     kind: primitive
     desc: 灵巧手 6 驱动关节全回 0,完全张开。
     action:
@@ -97,18 +99,200 @@ skills:
     requires: [live_session]
     safety: {voice_enabled: true, need_confirm: true}
 
+  # ---------------- 原子手部阶段(给分阶段手势当积木用) ----------------
+  # 为什么要它们:六个驱动收到同一个 speed 后**同时**出发,但走的距离不同 ——
+  # 全张开握拳时拇指 yaw 要走 802 counts、食指 680、其余三指 1000。同速不同距 =
+  # 到达时刻不同,食指先闭到位、拇指还在路上,于是在中途撞上。实测 hand_rock
+  # 有 jam 记录(out/hand_commands.jsonl,force_act 冲到 600+ 判为互顶堵转)。
+  # 终态是可行的(加载期校验过),**撞在过程里**,所以要拆开走。
+  #
+  # 拆开还有第二个好处:这些阶段是可复用的积木。比个 7、比个 8 之类需要
+  # "先动拇指再动某几指"的手势,直接引用,不用各自重录一遍中间态。
+  #
+  # 命名带 `_` 前缀 + voice_enabled: false:它们是实现细节,不该在语音池里
+  # 和真手势抢匹配分。need_confirm: false 是因为确认闸在外层 composite 上把 ——
+  # 子步骤再要一次确认的话,一个手势要点两下。
+  - id: _hand_thumb_folded
+    name: 拇指折叠·四指全开
+    kind: primitive
+    desc: 拇指折到握拳位,四指保持全开。分阶段握拳的第一步 —— 此时四指还没进来,
+      拇指整条路径都在空域里走。
+    pose: {thumb: folded, index: open, middle: open, ring: open, pinky: open}
+    action:
+      duration: 0.8
+      hand_speed: 500
+      hand_force: 300
+    params:
+      hand_speed: {type: int, default: 500, range: [20, 1000]}
+      hand_force: {type: int, default: 300, range: [50, 1000]}
+    requires: [live_session]
+    safety: {voice_enabled: false, need_confirm: false}
+
+  - id: _hand_fist_curl
+    name: 四指收合·拇指保持折叠
+    kind: primitive
+    desc: 拇指已在折叠位不动,四指收到握拳位。食指取 0.68(raw 320)留 85 counts
+      余量 —— 拇指此时是**静止的障碍**,四指朝它收,不存在两边同时动的相撞。
+    pose: {thumb: folded, index: 0.68, middle: closed, ring: closed, pinky: closed}
+    action:
+      duration: 0.8
+      hand_speed: 500
+      hand_force: 300
+    params:
+      hand_speed: {type: int, default: 500, range: [20, 1000]}
+      hand_force: {type: int, default: 300, range: [50, 1000]}
+    requires: [live_session]
+    safety: {voice_enabled: false, need_confirm: false}
+
   - id: hand_close
     name: 握拳
-    aliases: ["握拳", "握紧", "抓紧", "合手", "闭合"]
-    kind: primitive
-    # 顺序 = writer 的 HAND_NAMES:thumb_yaw, thumb_pitch, index, middle, ring, pinky
-    # 取值保守留余量(限位 1.308/0.6/1.47×4),不顶到上限。
-    desc: 灵巧手闭合到保守握持位,不顶限位。
-    action:
-      hand: [1.0, 0.5, 1.2, 1.2, 1.2, 1.2]
-      duration: 1.5
+    # 「石头」「拳头」「攥拳」从 gestures.yaml 的 rock 并过来 —— 那条和这条 pose
+    # 完全一样(拇指 folded + 食指 0.68 + 三指 closed),一个姿态不留两份定义。
+    aliases: ["握拳", "握紧", "抓紧", "合手", "闭合", "石头", "拳头", "攥拳"]
+    kind: composite
+    mode: sequence
+    # 力度透传给两个阶段 —— 不写这行的话「用力握拳」会**静默失效**:修饰词只落到
+    # 技能自己声明过的参数上(intent._apply_mods),而 composite 子步骤默认不收
+    # 外部参数(backend 里那行注释)。拆成原子技能是内部重构,不该让用户看见退化。
+    params_passthrough: [hand_speed, hand_force]
+    desc: 灵巧手闭合。分两步走(先折拇指、再收四指)避开拇指-食指互顶。
+      受干涉约束食指不能完全闭合。说「用力握拳」可带力度档。
+    steps:
+      - {skill: _hand_thumb_folded}
+      - {skill: _hand_fist_curl}
+    params:
+      hand_speed: {type: int, default: 500, range: [20, 1000]}
+      hand_force: {type: int, default: 300, range: [50, 1000]}
     requires: [live_session]
     safety: {voice_enabled: true, need_confirm: true}
+
+  - id: _hand_close_onestep
+    name: 握拳·单步(旧行为,留作对照)
+    kind: primitive
+    desc: 一条指令直接到握拳终态。**会在过程中互顶**,留着是为了能复现那个故障、
+      对照两种走法的 force_act 曲线。不进语音池。
+    pose: {thumb: folded, index: 0.68, middle: closed, ring: closed, pinky: closed}
+    # 2026-08-08 改用 pose 层。食指取 0.68(对应 raw 320),留 85 counts 余量;
+    # 其余三指取 closed(n=1.0)。为什么食指不用 limit:那个是"刚够碰上"的位置
+    # (干涉点 +10),而握拳实测要宽很多(raw 320 vs 235)。
+    pose:
+      thumb: folded                      # yaw 0.802(raw 198) / pitch 0.833(raw 284)
+      index: 0.68                        # 0.68*1.39626 = 0.949 rad = raw 320
+      middle: closed
+      ring: closed
+      pinky: closed
+    action:
+      duration: 1.5
+      hand_speed: 500
+      hand_force: 300
+    params:
+      hand_speed: {type: int, default: 500, range: [20, 1000]}
+      hand_force: {type: int, default: 300, range: [50, 1000]}
+    requires: [live_session]
+    safety: {voice_enabled: false, need_confirm: true}
+
+  - id: hand_release
+    name: 松手
+    aliases: ["松手", "放开", "松开", "放手", "手松开", "把手松开", "撒手"]
+    kind: primitive
+    # 和 hand_open 的 action 完全一样,分成两条**不是**冗余:
+    # 手没有急停通道(hand_console 里 estop 出现 0 次),急停只停臂、手保持当前位置。
+    # 所以"手夹着东西时怎么放开"只能靠一条普通指令走过来 —— 这条就是它。
+    # 因此它必须 need_confirm: false:全表第二个免确认项。夹着东西等人点确认,
+    # 等的这几秒是物体被持续夹着的时间。误触发的代价是东西掉了(可恢复),
+    # 延迟的代价是夹坏(不可恢复)。
+    #
+    # ⚠ 它只放开**角度**,不重置力控阈值 —— writer 路径目前没有力控通道
+    #   (ros_joint_writer 里 force 出现 0 次)。所以下一次合拢仍用上一次的阈值。
+    #   要一起降力,得先给 writer 加 force 通道。
+    desc: 立即张开手放开抓持。急停不停手,这条是手唯一的"放开"入口,故免确认。
+    action:
+      hand: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      duration: 1.0            # 比 hand_open 的 1.5 快,放开不需要慢
+    requires: [live_session]
+    safety:
+      voice_enabled: true
+      need_confirm: false
+
+  # ---------------- 手的力度档(只设状态,不产生运动) ----------------
+  # 为什么是三条而不是一条带 level 参数的:参数覆盖只对 duration/value 硬编码
+  # (backend._cmd),没有通用的「参数 → action 字段」机制。而档位就三个、值是实测
+  # 常数 —— 写成三条清单条目就等于把查表放进数据,不用新建机制。
+  #
+  # 速度和力控**一起设**,不分开给。实测(2026-08-06 test_force_freeze.py):
+  # 决定最终握持力的主要是**速度**(它决定接触瞬间的动量和弹性变形深度),
+  # 力控设定值影响小得多。分开调只会出现"速度 300 + 力控 50"这种自相矛盾的组合。
+  #
+  # 实测最终稳态力(手指互顶,触发阈值 150):speed 50→272g · 150→717g · 300→941g
+  # ⚠ 那是刚性接触。柔性物同样速度下更轻(海绵在 200/300 下食指稳态 535g)。
+  #
+  # 三条都不产生运动,所以 need_confirm: false —— 只是改下次抓握用的力度,
+  # 让它跟"张开手"一样要确认反而会让人放弃用语音调力度。
+  - id: hand_grip_soft
+    name: 轻柔力度
+    # 「轻轻捏」不在这里 —— 它是「轻轻」(力度修饰) + 「捏」(动作),
+    # 现在由 intent 的修饰词机制拆开处理,命中 hand_pinch 并带上 soft 力度。
+    # 放这里会让整句精确匹配先命中,于是只调力度、不做捏的动作。
+    aliases: ["轻一点", "轻柔", "力度轻", "力小一点", "把力控降低", "小力"]
+    kind: primitive
+    desc: 手改用最轻档(速度50/力控250)。实测刚性接触稳态约 272g。不产生运动。
+    action: {hand_speed: 50, hand_force: 250}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: false}
+
+  - id: hand_grip_normal
+    name: 常规力度
+    aliases: ["常规力度", "正常力度", "力度正常", "中等力度"]
+    kind: primitive
+    desc: 手改用常规档(速度500/力控300)。与 gestures.yaml 默认值对齐(2026-08-10)。不产生运动。
+    action: {hand_speed: 500, hand_force: 300}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: false}
+
+  - id: hand_grip_firm
+    name: 用力档
+    # 这些词同时在 intent.FIRM_WORDS 里,见那边的注释:单说命中这条,
+    # 跟在动作词旁边则作为力度修饰。两边都要有。
+    aliases: ["用力", "用力一点", "夹紧一点", "力度大", "大力", "力大一点"]
+    kind: primitive
+    desc: 手改用用力档(速度300/力控500)。实测刚性接触稳态约 941g。不产生运动。
+    action: {hand_speed: 300, hand_force: 500}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: false}
+
+  # ---------------- 捏(拇指+食指) ----------------
+  - id: hand_pinch
+    name: 捏
+    aliases: ["捏", "捏住", "捏一下", "夹住", "捏起来"]
+    kind: primitive
+    desc: 拇指与食指对捏。说「轻轻捏」「用力捏」可带力度档。
+    # 2026-08-08 改用 pose 层。食指取 limit,在当前拇指姿态(opposed)下推出 raw 235
+    # (比干涉点 225 宽 10),对应 rad 1.068。原来手写的 1.07/raw 234 差 1 计数(噪声内)。
+    #
+    # 为什么 index:limit 可行:这是在说"闭到碰上拇指",force 控停在接触瞬间 —— 这
+    # 正是捏的语义。limit 本身的余量(+10)已防堵转,不需要清单里再加二层余量。
+    pose:
+      thumb: opposed                     # yaw 0.892(raw 108) / pitch 1.0(raw 141)
+      index: limit                       # → 1.068 rad(raw 235)
+      # 中指/无名/小指保持张开 —— 捏是拇指+食指两根的事
+    action:
+      duration: 1.5
+      hand_speed: 150
+      hand_force: 300
+    # 声明这两个参数,「轻/用力」修饰才落得进来(_apply_mods 只认技能自己声明过的)。
+    params:
+      hand_speed: {type: int, default: 150, range: [20, 1000]}
+      hand_force: {type: int, default: 300, range: [50, 1000]}
+    requires: [live_session]
+    safety: {voice_enabled: true, need_confirm: true}
+
+  # ---------------- 手势(纯造型,不抓取) ----------------
+  # 手势**不在这里** —— 它们在 skills/gestures.yaml,加载期合成成 primitive 技能
+  # 并进同一份清单(id = hand_<key>,如 hand_one / hand_two / hand_ok)。
+  #
+  # 为什么搬出去:手势之间只有 pose 不一样,其余十几行样板全同。写在这里等于
+  # 把样板抄 N 遍,加第 6 个手势要复制粘贴 15 行。手势表里一个手势 = 两行。
+  # 合成条目走**同一条**校验路径(含 pose 展开 + 可行域 + 别名撞车),不是特殊通道。
 
   # ---------------- 轨迹回放(EGO 重定向产物) ----------------
   # 只登记 inspire 本体:gripper 的 npz 是 hand=(N,1),traj_player 需要 6 个驱动名,
@@ -148,6 +332,32 @@ skills:
       max_speed: 1.0
 
   # ---------------- 组合技能 ----------------
+  # mode: overlay —— 合成**一条**指令同时发,不是逐条按序。
+  #
+  # 为什么这是真并发:臂和手是两个 console 进程,translate() 产出的两条分别写
+  # 各自的 stdin。臂的 move_j 是阻塞调用,但它阻塞的是**臂那个进程**,手照样动。
+  # 所以这条技能里臂回零和手比 1 同时发生,总时长 = max(5.0, 1.5) 而不是 6.5。
+  #
+  # ⚠ overlay 的约束(违反了加载期就报错,不会等到真机):
+  #   · 只收 primitive 子技能(轨迹/嵌套组合的步数运行期才知道)
+  #   · 每个通道只能一个来源 —— 两条子技能都给 hand 就冲突
+  #   · 不许带 estop/action/value(模式切换,叠不起来;急停尤其要单独立刻发)
+  #
+  # 反例记下来防止再试:hand_grip_soft + hand_one 做「轻轻比个1」**会被拦**,
+  # 因为两条都声明了 hand_speed/hand_force。那个需求归修饰词机制(intent 的
+  # SOFT_WORDS),不归 overlay —— 力度是正交维度,不是序列里的一步。
+  - id: home_with_one
+    name: 回零并比个1
+    aliases: ["回零并比个1", "一边回零一边比1"]
+    kind: composite
+    mode: overlay
+    desc: 臂回零位、手同时比「1」。overlay 示例:两个通道并发,总时长取较长的那个。
+    steps:
+      - {skill: go_home}
+      - {skill: hand_one}
+    requires: [live_session, arm_enabled]
+    safety: {voice_enabled: true, need_confirm: true}
+
   - id: prepare_arm
     name: 准备就绪
     aliases: ["准备", "准备就绪", "初始化", "准备一下"]

@@ -10,10 +10,10 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+from paths import REPO, ASSEMBLY_URDF, GRIPPER_URDF
 SRC = [
-    REPO / "sim/assets/nero_gripper_right.urdf",
-    REPO / "sim/assets/nero_inspire_right.urdf",
+    GRIPPER_URDF,
+    ASSEMBLY_URDF,
 ]
 
 

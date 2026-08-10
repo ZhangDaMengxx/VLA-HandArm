@@ -32,9 +32,9 @@ from schema import RegistryError, SkillRegistry, SkillSpec, get_registry  # noqa
 
 # writer 的 6 个驱动手关节顺序(与 ros_joint_writer.HAND_NAMES 一致)。
 # 这里重复声明是为了让 backend 可以脱离 ROS 环境单测;runner 会断言两者一致。
-HAND_NAMES = ["thumb_proximal_yaw_joint", "thumb_proximal_pitch_joint",
-              "index_proximal_joint", "middle_proximal_joint",
-              "ring_proximal_joint", "pinky_proximal_joint"]
+HAND_NAMES = ["right_thumb_1_joint", "right_thumb_2_joint",
+              "right_index_1_joint", "right_middle_1_joint",
+              "right_ring_1_joint", "right_little_1_joint"]
 ARM_DOF, HAND_DOF = 7, 6
 
 
@@ -95,10 +95,21 @@ class PrimitiveBackend(SkillBackend):
         if "hand" in a and len(a["hand"]) != HAND_DOF:
             raise SkillError(f"[{spec.id}] action.hand 需要 {HAND_DOF} 个值(驱动关节),"
                              f"给了 {len(a['hand'])}")
-        known = {"arm", "hand", "duration", "action", "value", "estop"}
+        # hand_speed / hand_force:手的速度和力控阈值(0-1000,逐通道或标量)。
+        # 它们是**状态**不是动作 —— 设了就一直有效,所以一条技能可以只设它们、
+        # 不带任何角度(抓握前先定力度就是这个用法)。
+        # ⚠ 只在 console 直连路有效;ROS 那条路的 JointTrajectory 没有力控字段,
+        #   ros_joint_writer 会在回显里报 unsupported 而不是静默忽略。
+        known = {"arm", "hand", "duration", "action", "value", "estop",
+                 "hand_speed", "hand_force"}
         unknown = set(a) - known
         if unknown:
             raise SkillError(f"[{spec.id}] action 含 writer 不认识的键 {sorted(unknown)}")
+        for k in ("hand_speed", "hand_force"):
+            v = a.get(k)
+            if isinstance(v, (list, tuple)) and len(v) != HAND_DOF:
+                raise SkillError(f"[{spec.id}] action.{k} 给列表时需要 {HAND_DOF} 个值,"
+                                 f"给了 {len(v)}")
 
     def _cmd(self, params: dict) -> dict:
         cmd = dict(self.spec.action or {})
@@ -109,6 +120,13 @@ class PrimitiveBackend(SkillBackend):
         # params.value 覆盖 set_speed 的档位
         if "value" in params and params["value"] is not None and "action" in cmd:
             cmd["value"] = params["value"]
+        # params.hand_speed / hand_force 覆盖力度(语音"轻一点捏"→ 降速降力控)。
+        # **无条件覆盖,不要求 action 里原本有这个键** —— 一条只发角度的技能
+        # (如 hand_close)加上力度参数后,力控字段是新增的而不是被改的。
+        # translate() 会保证它排在 angles 之前发,时序不用这里管。
+        for k in ("hand_speed", "hand_force"):
+            if params.get(k) is not None:
+                cmd[k] = params[k]
         return cmd
 
     def total(self, params: dict) -> int:
@@ -171,6 +189,18 @@ class TrajectoryBackend(SkillBackend):
         n = min(len(arm), len(hand_all))
         self._arm = arm[:n]
         self._hand = hand_all[:n][:, cols]
+        # 第 0 步:加载期全帧预检 —— 拇指-食指可行域
+        from hand_pose import check_feasible
+        bad_frames = []
+        for i in range(n):
+            why = check_feasible(self._hand[i])
+            if why is not None:
+                bad_frames.append(i)
+        if bad_frames:
+            raise SkillError(
+                f"[{self.spec.id}] 有 {len(bad_frames)}/{n} 帧不可行(拇指-食指碰撞),"
+                f"帧号: {bad_frames[:10]}{'...' if len(bad_frames) > 10 else ''}。"
+                f"需重跑 derive_embodiment 补可行域约束,或换用安全轨迹。")
 
     def _dt(self, params: dict) -> float:
         speed = float(params.get("speed") or 1.0)
@@ -215,30 +245,152 @@ class TrajectoryBackend(SkillBackend):
             )
 
 
+# overlay 里不许出现的键 —— 它们是**模式切换**,不是姿态,叠不起来。
+# estop 尤其不能叠:它必须单独、立刻发,排在一条合成指令里等于延迟急停。
+OVERLAY_FORBIDDEN = ("estop", "action", "value")
+
+# overlay 里每个键只能有**一个**来源。两条子技能都给 hand 的话,取谁的都是猜,
+# 所以在加载期报错让人改 —— 要么拆成 sequence,要么改其中一条。
+OVERLAY_EXCLUSIVE = ("arm", "hand", "hand_speed", "hand_force")
+
+
+def _merge_overlay(cmds: list[dict], sid: str) -> dict:
+    """把若干条 writer 指令合成一条。冲突就抛 SkillError。
+
+    duration 取**最大值**:两个设备并行跑,要等慢的那个走完。
+    """
+    out: dict = {}
+    owner: dict[str, int] = {}          # 键 → 哪个子步骤给的,报错时指名道姓
+    for i, c in enumerate(cmds):
+        for k, v in c.items():
+            if k == "duration":
+                out["duration"] = max(float(out.get("duration", 0.0)), float(v))
+                continue
+            if k in OVERLAY_EXCLUSIVE and k in out:
+                raise SkillError(
+                    f"[{sid}] overlay 冲突:steps[{owner[k]}] 和 steps[{i}] 都给了 "
+                    f"{k!r} —— 一个 overlay 里每个通道只能有一个来源。"
+                    f"改成 mode: sequence,或去掉其中一条的 {k!r}。")
+            out[k] = v
+            owner[k] = i
+    return out
+
+
 class CompositeBackend(SkillBackend):
-    """composite:按序展开子技能。环路已在 schema 加载期排除,这里可放心递归。"""
+    """composite:展开子技能。环路已在 schema 加载期排除,这里可放心递归。
+
+    两种 mode:
+      sequence(默认) 逐条按序发,每条等自己的 duration
+      overlay        合成一条指令同时发 —— 臂和手各写自己 console 的 stdin,
+                     臂的 move_j 阻塞不了手,所以是真并发
+
+    overlay **只收 primitive 子技能**。trajectory 有几百帧、composite 步数不定,
+    "每个子技能恰好产出一步"这个前提在加载期验不了。手势叠在轨迹上(回放臂轨迹
+    时手保持某个姿态)是另一个特性,节拍语义得单独想清楚,不在这里半做。
+    """
 
     def __init__(self, spec: SkillSpec, reg: SkillRegistry) -> None:
         super().__init__(spec, reg)
+        self.mode = getattr(spec, "mode", "sequence")
+        self.passthrough = tuple(getattr(spec, "passthrough", ()))
         self._children: list[tuple[SkillBackend, dict]] = []
+        # 子技能的 spec 和清单里写的 params,steps() 要用它们重算透传后的参数。
+        # 构造期仍然按"清单写死"解一遍(下面的 cp)—— total/duration_hint 和
+        # overlay 的干跑合并都用它,不依赖运行期参数。
+        self._child_specs: list[tuple[SkillSpec, dict]] = []
         for i, st in enumerate(spec.steps):
             ref = st.get("skill")
             child = reg.get(ref)
             if child is None:
                 raise SkillError(f"[{spec.id}] steps[{i}] 引用不存在的技能 {ref!r}")
-            # 子步骤的参数在清单里写死,不接受外部覆盖 —— 组合技能的语义要稳定
+            if self.mode == "overlay":
+                if child.kind != "primitive":
+                    raise SkillError(
+                        f"[{spec.id}] overlay 的 steps[{i}]({ref})是 {child.kind},"
+                        f"只收 primitive —— 轨迹/嵌套组合的步数要到运行期才知道,"
+                        f"没法保证「每个子技能恰好一步」。")
+                bad = [k for k in OVERLAY_FORBIDDEN if k in (child.action or {})]
+                if bad:
+                    raise SkillError(
+                        f"[{spec.id}] overlay 的 steps[{i}]({ref})带 {bad} —— "
+                        f"那是模式切换不是姿态,叠不起来。用 mode: sequence。")
+            # 子步骤的参数在清单里写死,**除了**父技能 params_passthrough 列出的那几个
+            # —— 组合技能的语义要稳定,但"整个动作用多大劲"该跟着外部走。
+            # 没写 params_passthrough 时行为和以前完全一样。
             cp, _ = child.resolve_params(st.get("params"))
             self._children.append((make_backend(child, reg), cp))
+            self._child_specs.append((child, dict(st.get("params") or {})))
+        if self.mode == "overlay":
+            # **构造期就试合一次**,让通道冲突在这里炸。
+            #
+            # 为什么不能只查 spec.action 的键:PrimitiveBackend._cmd 会从 params
+            # 补 hand_speed/hand_force —— 清单 action 里没写、参数里有,照样会冲突。
+            # 只有真展开一遍才看得见最终键集。primitive 恒产出一步,所以这一遍很便宜。
+            self._dry_merge()
+
+    def _dry_merge(self) -> None:
+        """构造期干跑一次合并,只为触发冲突检查。结果丢掉,steps() 会重算。"""
+        cmds = []
+        for i, (b, p) in enumerate(self._children):
+            got = list(b.steps(p))
+            if len(got) != 1:
+                raise SkillError(f"[{self.spec.id}] overlay 的 steps[{i}] 产出 "
+                                 f"{len(got)} 步,要求恰好 1 步")
+            cmds.append(got[0].cmd)
+        _merge_overlay(cmds, self.spec.id)
 
     def total(self, params: dict) -> int:
+        if self.mode == "overlay":
+            return 1                     # 合成一条,就是一步
         return sum(b.total(p) for b, p in self._children)
 
     def duration_hint(self, params: dict) -> float:
+        if self.mode == "overlay":
+            return max((b.duration_hint(p) for b, p in self._children), default=0.0)
         return sum(b.duration_hint(p) for b, p in self._children)
 
+    def _child_params(self, params: dict) -> list[dict]:
+        """每个子步骤这一次要用的参数。没有 passthrough 就是构造期解好的那份。
+
+        透传的值取**父技能已解析过的** params —— 父的 resolve_params 已经套过默认值
+        和范围夹取,所以子步骤拿到的一定是合法值,不用再校验一遍。
+        """
+        if not self.passthrough:
+            return [p for _, p in self._children]
+        extra = {k: params[k] for k in self.passthrough
+                 if params.get(k) is not None}
+        if not extra:
+            return [p for _, p in self._children]
+        out: list[dict] = []
+        for (child, st_params), (_, cp) in zip(self._child_specs, self._children):
+            # 子技能自己声明过这个参数才透传给它。没声明的话 resolve_params 会丢掉,
+            # 而 PrimitiveBackend._cmd 是**无条件**覆盖 hand_speed/hand_force 的,
+            # 所以这里必须按子技能的声明过滤,否则会绕过它的 range 校验。
+            give = {**st_params, **{k: v for k, v in extra.items()
+                                    if k in child.params}}
+            if not give:
+                out.append(cp)
+                continue
+            rp, _ = child.resolve_params(give)
+            out.append(rp)
+        return out
+
     def steps(self, params: dict) -> Iterator[Step]:
-        for b, p in self._children:
-            yield from b.steps(p)
+        cparams = self._child_params(params)
+        if self.mode != "overlay":
+            for (b, _), p in zip(self._children, cparams):
+                yield from b.steps(p)
+            return
+        cmds, hold = [], 0.0
+        for i, ((b, _), p) in enumerate(zip(self._children, cparams)):
+            got = list(b.steps(p))
+            # primitive 恒产出一步,构造期已挡住其它 kind;这条兜底防将来改动
+            if len(got) != 1:
+                raise SkillError(f"[{self.spec.id}] overlay 的 steps[{i}] 产出 "
+                                 f"{len(got)} 步,要求恰好 1 步")
+            cmds.append(got[0].cmd)
+            hold = max(hold, got[0].hold)
+        yield Step(_merge_overlay(cmds, self.spec.id), hold, self.spec.name)
 
 
 _BACKENDS = {

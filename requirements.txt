@@ -4,7 +4,18 @@
 mujoco>=3.8          # 3.8.1  仿真/URDF 加载
 pin>=3.0             # 4.0.0   pinocchio,FK/IK(sim/nero_kin.py)+ MeshCat 可视化
 dex_retargeting      #         手部重定向(RetargetingConfig);SingleHandDetector 已 vendored 进 sim/
-mediapipe>=0.10      # 0.10.14 人手关键点检测
+# 必须钉死 ==0.10.14,不能写 >=。实测三段边界(2026-07 复现):
+#   0.10.30+ / 1.0.0 : 删掉 legacy solutions API(只剩 mediapipe.tasks),
+#                      sim/single_hand_detector.py 的 mediapipe.framework /
+#                      solutions.hands 直接 ModuleNotFoundError,连带打断
+#                      build_canonical* / hand_estimators / estimate_wrist 整条规范层入口。
+#   0.10.21          : 还有 solutions,但元数据硬写 numpy<2,会把 numpy 降到 1.26.4,
+#                      和本文件的 numpy>=2 及 pinocchio/lerobot/torch 栈冲突。
+#   0.10.14          : 唯一同时满足「有 solutions」+「numpy 2.x 可用」的版本。
+# 代价:拉入 jax/jaxlib,并把 protobuf 6.x 降到 4.25.9(其 Requires-Dist 为 protobuf<5)。
+# 已验证该降级不破坏本栈:protobuf 唯一依赖方是 wandb,降级后 wandb 及全栈 import 正常,
+# pip check 无冲突。装法:pip install "mediapipe==0.10.14" "numpy==2.2.6"(同时指定,防回退 numpy)。
+mediapipe==0.10.14   # 人手关键点检测(勿升级,理由见上)
 lerobot>=0.4         # 0.4.4   LeRobotDataset(数据集读写)
 scipy                #         Savitzky-Golay 平滑 + 旋转四元数
 opencv-python        #         读视频

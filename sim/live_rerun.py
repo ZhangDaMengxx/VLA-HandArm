@@ -35,9 +35,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 # 臂/手关节名分组(和 schema 一致):用于把 13 维拆成臂 7 + 手 6 喂给 RobotModel.make_q。
 ARM_NAMES = [f"joint{i}" for i in range(1, 8)]
-HAND_NAMES = ["thumb_proximal_yaw_joint", "thumb_proximal_pitch_joint",
-              "index_proximal_joint", "middle_proximal_joint",
-              "ring_proximal_joint", "pinky_proximal_joint"]
+HAND_NAMES = ["right_thumb_1_joint", "right_thumb_2_joint",
+              "right_index_1_joint", "right_middle_1_joint",
+              "right_ring_1_joint", "right_little_1_joint"]
 
 
 def _split(names, pos):
@@ -51,7 +51,7 @@ def _split(names, pos):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--urdf", default=str(REPO / "sim/assets/nero_inspire_right.urdf"))
+    ap.add_argument("--urdf", default=str(ASSEMBLY_URDF))
     ap.add_argument("--serve", action="store_true")
     ap.add_argument("--web-port", type=int, default=9090)
     ap.add_argument("--grpc-port", type=int, default=9876)

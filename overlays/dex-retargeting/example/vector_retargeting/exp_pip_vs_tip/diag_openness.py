@@ -14,7 +14,7 @@ Then we sweep scaling_factor to see whether the range can be recovered by tuning
 
 Run:
   MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 --cd '<this dir>' -- \
-      /home/zhang123/ros2_ws/enter/envs/lerobot/bin/python diag_openness.py
+      ~/miniconda3/envs/lerobot/bin/python diag_openness.py
 Env: MAX_FRAMES (default all)
 """
 import os
