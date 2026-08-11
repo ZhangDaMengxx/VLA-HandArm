@@ -43,11 +43,12 @@ async def hand_status():
         raise HTTPException(503, "Hand not connected")
 
     try:
+        from inspire_hand import HAND_JOINTS
         angles = hand.read_angles()
         return {
             "connected": True,
             "angles": angles,
-            "joints": dict(zip(hand.HAND_JOINTS, angles))
+            "joints": dict(zip(HAND_JOINTS, angles))
         }
     except Exception as e:
         raise HTTPException(500, f"Read failed: {e}")

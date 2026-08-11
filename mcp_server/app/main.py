@@ -21,17 +21,17 @@ robot = RobotController(config.robot.bridge_url)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时连接硬件，关闭时断开"""
-    print(f"🔗 连接硬件代理: {config.robot.bridge_url}")
-    try:
-        await robot.connect()
-        print("✓ 硬件代理已连接")
-    except Exception as e:
-        print(f"✗ 硬件代理连接失败: {e}")
-        print("  服务将以降级模式运行")
+    import logging
+    logging.basicConfig(level=logging.INFO)
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔗 连接硬件代理: {config.robot.bridge_url}")
+
+    await robot.connect()
 
     yield
 
-    print("🔌 断开硬件代理...")
+    logger.info("🔌 断开硬件代理...")
     await robot.disconnect()
 
 
