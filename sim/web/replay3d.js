@@ -368,10 +368,10 @@ export class ReplayViewer {
 
       // 左侧标签：关节名称
       ctx.fillStyle = colors[j];
-      ctx.font = "11px sans-serif";
+      ctx.font = "10px sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText(labels[j], 6, j * h + 4);
+      ctx.fillText(labels[j], 5, j * h + 3);
     }
 
     // 当前帧竖线

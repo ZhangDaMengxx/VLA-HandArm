@@ -68,7 +68,7 @@ body {
 
 /* replay3d 布局:视频+骨骼+3D 并排,下面时序图,底部控制条 */
 .replay-layout { position: absolute; inset: 0; display: flex; flex-direction: column; }
-.replay-top { flex: 3; display: flex; gap: 4px; }
+.replay-top { flex: 2.2; display: flex; gap: 4px; }
 .replay-video-panel { flex: 1; position: relative; background: #0a0b0d; }
 .replay-video, .replay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .replay-video { visibility: hidden; }  /* video 只用来解码,不直接显示;帧由 canvas 画 */
@@ -78,7 +78,7 @@ body {
 .replay-video-switch label { cursor: pointer; }
 .replay-video-msg { color: #fa0; }
 .replay-3d-panel { flex: 1.4; position: relative; background: #0e0f12; }
-.replay-bottom { flex: 1.2; background: #16181d; position: relative; }
+.replay-bottom { flex: 2; background: #16181d; position: relative; }
 .replay-chart { width: 100%; height: 100%; }
 .replay-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
   z-index: 10; display: flex; gap: 12px; align-items: center; background: rgba(22,24,29,0.92);
@@ -1621,14 +1621,15 @@ body {
 // ===== state(13):按真实 ROS 关节名建行,带各自限位(和 ros_joint_writer 一致)=====
 const ARM = [1,2,3,4,5,6,7].map(i => ({key:`joint${i}`, label:`joint${i}`, lo:-3.14159, hi:3.14159}));
 // 手部读数行按本体切换:inspire=6 驱动关节;gripper=1 个开合行程(m)。
+// ⚠ 2026-08-10:joint key 已更新为新 URDF 关节名,限位同步为厂商新值。
 const HAND_SETS = {
   inspire: [
-    {key:"thumb_proximal_yaw_joint",   label:"thumb_yaw",   lo:0, hi:1.308},
-    {key:"thumb_proximal_pitch_joint", label:"thumb_pitch", lo:0, hi:0.6},
-    {key:"index_proximal_joint",       label:"index",       lo:0, hi:1.47},
-    {key:"middle_proximal_joint",      label:"middle",      lo:0, hi:1.47},
-    {key:"ring_proximal_joint",        label:"ring",        lo:0, hi:1.47},
-    {key:"pinky_proximal_joint",       label:"pinky",       lo:0, hi:1.47},
+    {key:"right_thumb_1_joint",   label:"thumb_yaw",   lo:0, hi:1.246165},
+    {key:"right_thumb_2_joint",   label:"thumb_pitch", lo:0, hi:0.48},
+    {key:"right_index_1_joint",   label:"index",       lo:0, hi:1.333},
+    {key:"right_middle_1_joint",  label:"middle",      lo:0, hi:1.333},
+    {key:"right_ring_1_joint",    label:"ring",        lo:0, hi:1.333},
+    {key:"right_little_1_joint",  label:"pinky",       lo:0, hi:1.333},
   ],
   gripper: [
     {key:"gripper_joint", label:"gripper(m)", lo:0, hi:0.04},
@@ -2619,13 +2620,14 @@ function setHandDirty(on) {
   }
 }
 const HAND_SET_DEFS = [
-  // thumb_yaw: 0 = 完全打开(躺掌面, raw 1000) … 1.308 = 垂直掌面/对掌位(raw 0)
-  {name:"thumb_proximal_yaw_joint",   label:"thumb_yaw",   lo:0, hi:1.308},
-  {name:"thumb_proximal_pitch_joint", label:"thumb_pitch", lo:0, hi:0.6},
-  {name:"index_proximal_joint",       label:"index",       lo:0, hi:1.47},
-  {name:"middle_proximal_joint",      label:"middle",      lo:0, hi:1.47},
-  {name:"ring_proximal_joint",        label:"ring",        lo:0, hi:1.47},
-  {name:"pinky_proximal_joint",       label:"pinky",       lo:0, hi:1.47},
+  // ⚠ 2026-08-10:关节名 + 限位已更新为厂商新 URDF 值。
+  // thumb_yaw: 0 = 完全打开(躺掌面, raw 1000) … 1.246 = 垂直掌面/对掌位(raw 0)
+  {name:"right_thumb_1_joint",   label:"thumb_yaw",   lo:0, hi:1.246165},
+  {name:"right_thumb_2_joint",   label:"thumb_pitch", lo:0, hi:0.48},
+  {name:"right_index_1_joint",   label:"index",       lo:0, hi:1.333},
+  {name:"right_middle_1_joint",  label:"middle",      lo:0, hi:1.333},
+  {name:"right_ring_1_joint",    label:"ring",        lo:0, hi:1.333},
+  {name:"right_little_1_joint",  label:"pinky",       lo:0, hi:1.333},
 ];
 async function initHandSliders() {
   if ($("handSliders").innerHTML) return;           // 已初始化
@@ -4849,8 +4851,9 @@ function rcCaptureFrame() {
     arm_rad: armRad.map(x => +x.toFixed(6)),
     hand_rad: rawProjToRad(rawProj).map(x => +x.toFixed(6)),
     hand_raw: projToVendor(rawProj),
-    speed: parseInt($("cbHandSpeed").value, 10) || 500,
-    force: parseInt($("cbHandForce").value, 10) || 500,
+    arm_speed_percent: parseInt($("cbArmSpeed").value, 10) || 20,  // 臂速度百分比
+    speed: parseInt($("cbHandSpeed").value, 10) || 500,            // 手速度
+    force: parseInt($("cbHandForce").value, 10) || 500,            // 手力控
     hold_ms: _cl(parseInt($("rcHold").value, 10) || 800, 0, 60000),
   };
 }

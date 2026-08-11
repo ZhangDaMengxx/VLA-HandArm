@@ -163,15 +163,16 @@ class ComboFrame:
     hand_raw: list[int]                            # 6 raw,供应商序(ANGLE_SET 真写的)
     t_ns: int                                      # 相对包起点的绝对时刻(纳秒)
     hold_ms: int = 600
-    speed: int = 500
-    force: int = 500
+    arm_speed_percent: int = 20                    # 臂速度百分比(1-100),录制时记录
+    speed: int = 500                                # 手速度(0-1000)
+    force: int = 500                                # 手力控(0-1000)
     label: str = ""
     ee_pose: list[float] | None = None             # [x, y, z, qw, qx, qy, qz],可选
 
     @classmethod
     def build(cls, arm_rad: list[float], hand_rad: list[float] | None = None,
               hand_raw: list[int] | None = None, *, t_ns: int, hold_ms: int = 600,
-              speed: int = 500, force: int = 500, label: str = "",
+              arm_speed_percent: int = 20, speed: int = 500, force: int = 500, label: str = "",
               ee_pose: list[float] | None = None, recompute_ee: bool = True) -> ComboFrame:
         """构造一帧。`hand_rad` / `hand_raw` 任给一个,另一边自动补齐(和 GestureFrame 同逻辑)。
 
@@ -200,6 +201,7 @@ class ComboFrame:
                    hand_rad=[round(x, 6) for x in hand], hand_raw=hand_r,
                    t_ns=max(0, int(t_ns)),
                    hold_ms=int(_clamp(int(hold_ms), HOLD_MS_MIN, HOLD_MS_MAX)),
+                   arm_speed_percent=int(_clamp(int(arm_speed_percent), 1, 100)),
                    speed=int(_clamp(int(speed), 0, 1000)),
                    force=int(_clamp(int(force), 0, 1000)),
                    label=str(label)[:MAX_NAME_LEN], ee_pose=ee)
@@ -207,6 +209,7 @@ class ComboFrame:
     def to_dict(self) -> dict:
         d = {"label": self.label, "arm_rad": self.arm_rad, "hand_rad": self.hand_rad,
              "hand_raw": self.hand_raw, "t_ns": self.t_ns, "hold_ms": self.hold_ms,
+             "arm_speed_percent": self.arm_speed_percent,
              "speed": self.speed, "force": self.force}
         if self.ee_pose is not None:
             d["ee_pose"] = self.ee_pose
