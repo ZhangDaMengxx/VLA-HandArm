@@ -13,14 +13,22 @@ cd /home/zhang123/ros2_ws/lerobotTest
 if pgrep -f "bridge.py" > /dev/null; then
     echo "⚠ bridge.py 已运行"
 else
-    python bridge.py --host 0.0.0.0 --port 9000 > /tmp/bridge.log 2>&1 &
-    sleep 3
-    echo "✓ bridge.py 已启动 (PID: $!)"
+    # 走 start_bridge.sh —— 它锁定带 pyserial 的解释器。裸 `python` 会
+    # 因缺 serial 掉进 mock,测出来的"通过"是假的。
+    bash start_bridge.sh > /tmp/bridge.log 2>&1 &
+    sleep 4
+    echo "✓ bridge 已启动"
 fi
 
-# 验证 bridge
-curl -s http://localhost:9000/health > /dev/null || { echo "✗ bridge 启动失败"; exit 1; }
+# 验证 bridge,并把真假模式打出来
+H=$(curl -s http://localhost:9000/health) || { echo "✗ bridge 启动失败"; exit 1; }
+echo "$H" | grep -q '"status"' || { echo "✗ bridge 无响应: $H"; exit 1; }
 echo "✓ bridge 健康检查通过"
+echo "  模式: $(echo "$H" | /usr/bin/python3 -c \
+  'import json,sys; print(json.load(sys.stdin).get("mode","?"))')"
+if echo "$H" | grep -q '"mock": *true'; then
+    echo "  ⚠ 当前是 MOCK,后面的测试不会有真实运动"
+fi
 
 echo -e "\n=== Step 3: 构建 Docker 镜像 ==="
 cd mcp_server

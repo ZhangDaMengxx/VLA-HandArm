@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """硬件代理 - 在 WSL host 直接运行，暴露简单 HTTP 接口供容器调用
 
-启动: python bridge.py --host 0.0.0.0 --port 9000
+启动(必须用有 pyserial 的解释器):
+    ~/miniconda3/envs/lerobot/bin/python bridge.py --host 0.0.0.0 --port 9000
+mock(无硬件空跑)要**显式**加 --mock。
 
 为什么需要: Docker 容器访问 WSL USB 设备很麻烦，用代理解耦。
+
+⚠ 2026-08-11 教训: 早先版本连不上真手就静默退到 mock,而 /health 照样回
+   "hand": true —— 结果对着 mock 测了一轮"成功",真手根本没动。现在:
+   · 不加 --mock 时连不上 = 启动失败,不再偷偷降级
+   · /health 和 /hand/status 都带 "mock" 字段,状态不会再含糊
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +34,8 @@ app = FastAPI(title="Robot Hardware Bridge")
 # ============================================================================
 hand = None
 arm = None
+# 由 --mock 或环境变量 BRIDGE_MOCK=1 置位。不置位时连不上就启动失败。
+WANT_MOCK = os.environ.get("BRIDGE_MOCK") == "1"
 
 
 class HandAngles(BaseModel):
@@ -53,6 +63,10 @@ async def hand_status():
         angles = hand.read_angles()
         return {
             "connected": True,
+            # mock 下 read_angles 回的是**夹取后的目标值**,不是实测位置。
+            # 注意夹取发生在 mock 判断之前(inspire_hand.py:377 vs 379),
+            # 所以"读回值≠命令值"**不能**用来证明是真手。
+            "mock": bool(hand.cfg.mock),
             "angles": angles,
             "joints": dict(zip(HAND_JOINTS, angles))
         }
@@ -215,10 +229,15 @@ async def arm_set_joints(req: ArmJoints):
 # ============================================================================
 @app.get("/health")
 async def health():
+    """mock 字段必须在最外层 —— 分不清真假是 2026-08-11 那次白测的直接原因。"""
+    is_mock = bool(hand is not None and hand.cfg.mock)
     return {
         "status": "ok",
         "hand": hand is not None,
-        "arm": arm is not None
+        "arm": arm is not None,
+        "mock": is_mock,
+        "mode": "MOCK(无真实运动)" if is_mock else "REAL",
+        "python": sys.executable,
     }
 
 
@@ -231,25 +250,29 @@ async def startup():
 
     from inspire_hand import InspireHand, InspireHandConfig
 
-    # 灵巧手
-    try:
-        # 尝试连接真机，失败时用 mock
-        try:
-            cfg = InspireHandConfig(port="/dev/ttyUSB0", mock=False)
-            hand = InspireHand(cfg)
-            if hand.connect():
-                print("✓ 灵巧手已连接: /dev/ttyUSB0")
-            else:
-                raise RuntimeError("connect() 返回 False")
-        except Exception as e:
-            print(f"⚠ 灵巧手连接失败: {e}")
-            print("  使用 mock 模式")
-            cfg = InspireHandConfig(mock=True)
-            hand = InspireHand(cfg)
+    if WANT_MOCK:
+        hand = InspireHand(InspireHandConfig(mock=True))
+        print("● 灵巧手: MOCK 模式(--mock 显式指定),不会有任何真实运动")
+        return
 
+    # 真机模式:连不上就抛,别静默退到 mock —— 那会让"测试通过"变成假象
+    cfg = InspireHandConfig(port="/dev/ttyUSB0", mock=False)
+    hand = InspireHand(cfg)
+    try:
+        ok = hand.connect()
     except Exception as e:
-        print(f"✗ 灵巧手初始化失败: {e}")
         hand = None
+        raise RuntimeError(
+            f"灵巧手连接失败: {e}\n"
+            f"  用的解释器: {sys.executable}\n"
+            f"  需要 pyserial;已知可用: ~/miniconda3/envs/lerobot/bin/python\n"
+            f"  确实要空跑就显式加 --mock") from e
+    if not ok:
+        hand = None
+        raise RuntimeError(
+            "灵巧手 connect() 返回 False —— 打开了串口但读不到 HAND_ID。\n"
+            "  查 24V 供电 / RS485 A-B 是否接反 / 手 ID=1 / usbipd 是否已转发")
+    print(f"✓ 灵巧手已连接真机: /dev/ttyUSB0 ({sys.executable})")
 
     # 机械臂（TODO）
     # try:
@@ -276,6 +299,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
+    parser.add_argument("--mock", action="store_true",
+                        help="空跑,不连真机。不加这个时连不上会直接启动失败")
     args = parser.parse_args()
+
+    if args.mock:
+        globals()["WANT_MOCK"] = True
 
     uvicorn.run(app, host=args.host, port=args.port)
