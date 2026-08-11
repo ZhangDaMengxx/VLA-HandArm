@@ -1,45 +1,49 @@
 #!/bin/bash
-# 自动设置 Windows 端口转发（7860 端口）
-# 用法: bash broadcast_port.sh
+# 生成 Windows 端口转发命令，让局域网设备能访问 WSL 里的服务。
+#
+# 这是 **WSL2 的网络问题**，和上面跑什么协议无关 —— app_web(7860)、
+# bridge(9000)、MCP(8000) 都一样需要。WSL2 走 NAT，外部访问不到它的 IP。
+#
+# 注意:
+#   · 同一台 Windows 访问不需要代理,直接用 localhost:<port>(WSL2 自动中继)
+#   · 只有**局域网其他设备**才需要下面这些规则
+#   · WSL IP 每次 wsl --shutdown 重启后可能变,变了要重设
+#   · 想彻底免掉代理: C:\Users\<你>\.wslconfig 写 [wsl2] networkingMode=mirrored
+#
+# 用法:
+#   bash broadcast_port.sh              # 默认 7860 8000 9000
+#   bash broadcast_port.sh 8000         # 只要某几个
+set -u
 
-PORT=7860
+PORTS=("$@")
+[ ${#PORTS[@]} -eq 0 ] && PORTS=(7860 8000 9000)
+
 WSL_IP=$(ip addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+[ -z "$WSL_IP" ] && { echo "✗ 拿不到 WSL IP"; exit 1; }
 
-if [ -z "$WSL_IP" ]; then
-    echo "✗ 无法获取 WSL IP"
-    exit 1
-fi
-
-echo "当前 WSL IP: $WSL_IP"
-echo "端口: $PORT"
-echo "局域网访问: http://192.168.1.189:$PORT"
-echo ""
-
-# 生成 PowerShell 命令
-PS_CMD="netsh interface portproxy delete v4tov4 listenport=$PORT listenaddress=0.0.0.0; netsh interface portproxy add v4tov4 listenport=$PORT listenaddress=0.0.0.0 connectport=$PORT connectaddress=$WSL_IP; Write-Host '✓ 端口转发已更新'"
-
-echo "=== 方法 1: 自动执行（推荐）==="
-if command -v powershell.exe &> /dev/null; then
-    echo "正在更新端口转发..."
-
-    # 尝试直接执行（可能需要 UAC）
-    powershell.exe -Command "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList '-Command', \"$PS_CMD\"" 2>&1
-
-    if [ $? -eq 0 ]; then
-        echo "✓ 自动设置完成（如弹出 UAC 请允许）"
-        exit 0
+echo "WSL IP: $WSL_IP"
+echo "端口:   ${PORTS[*]}"
+echo
+echo "本机(WSL)监听情况:"
+for p in "${PORTS[@]}"; do
+    if ss -tlnp 2>/dev/null | grep -q ":$p "; then
+        echo "  ✓ $p 有服务在听"
     else
-        echo "⚠ 自动执行失败，尝试方法 2"
+        echo "  ✗ $p 没服务 —— 转发了也是空的"
     fi
-else
-    echo "✗ PowerShell 不可用（WSL interop 可能关闭）"
-fi
+done
 
-echo ""
-echo "=== 方法 2: 手动执行 ==="
-echo "请在 Windows PowerShell（管理员）中执行："
-echo ""
-echo "netsh interface portproxy delete v4tov4 listenport=$PORT listenaddress=0.0.0.0"
-echo "netsh interface portproxy add v4tov4 listenport=$PORT listenaddress=0.0.0.0 connectport=$PORT connectaddress=$WSL_IP"
-echo ""
-echo "验证: netsh interface portproxy show all"
+echo
+echo "════════ 复制到 Windows PowerShell(管理员)执行 ════════"
+echo
+for p in "${PORTS[@]}"; do
+    echo "netsh interface portproxy delete v4tov4 listenport=$p listenaddress=0.0.0.0 2>\$null"
+    echo "netsh interface portproxy add v4tov4 listenport=$p listenaddress=0.0.0.0 connectport=$p connectaddress=$WSL_IP"
+    echo "New-NetFirewallRule -DisplayName 'WSL $p' -Direction Inbound -LocalPort $p -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null"
+done
+echo 'netsh interface portproxy show all'
+echo 'ipconfig | findstr IPv4    # 局域网设备要用这里显示的 Windows IP'
+echo
+echo "════════════════════════════════════════════════════════"
+echo
+echo "WSL interop 已关(见 memory),所以脚本不能替你执行 —— 只能手动粘。"
