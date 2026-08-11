@@ -191,6 +191,8 @@ class ThumbIndexChecker:
                 mesh = trimesh.load(mesh_path, force="mesh")
                 built.append((col_origin, self._bvh(mesh)))
             self._geom[link] = built
+        # 覆盖 URDF 的 mimic 系数为标定值(2026-08-11)
+        self.model.joints["right_thumb_3_joint"].mimic_k = _MIMIC_K3_CALIBRATED
 
     def _bvh(self, mesh):
         """python-fcl 的 BVHModel 必须走 begin/add/end,带参构造会 segfault。"""
@@ -250,11 +252,16 @@ class ThumbIndexChecker:
 
 
 # ---------------------------------------------------------------------------
-# raw <-> rad:与 hand_pose.rad_to_raw / raw_to_n 同式(六路全部 invert)
+# raw <-> rad:标定值(2026-08-11 从实测碰撞边界反推)
 # ---------------------------------------------------------------------------
-_SPAN = {"right_thumb_1_joint": 1.246165, "right_thumb_2_joint": 0.69813,
+_SPAN = {"right_thumb_1_joint": 1.246165,
+         "right_thumb_2_joint": 0.525,  # 从 (300,225)/(450,52)/(600,0) 拟合,见 calibrate_thumb_chain.py
          "right_index_1_joint": 1.39626, "right_middle_1_joint": 1.39626,
          "right_ring_1_joint": 1.39626, "right_little_1_joint": 1.39626}
+
+# thumb_3 mimic 系数也要改:标定值 1.075(URDF 原值 1.1425 会让 T=450 偏紧)
+# 在 ThumbIndexChecker.__init__ 里覆盖
+_MIMIC_K3_CALIBRATED = 1.075
 
 
 def raw_to_rad(name: str, raw: float) -> float:

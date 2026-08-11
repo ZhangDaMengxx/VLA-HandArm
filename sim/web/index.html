@@ -49,9 +49,14 @@ body {
 .screen { position: relative; width: 100%; height: 100%;
   background: var(--screen); border-radius: 16px; box-shadow: var(--shadow-screen);
   overflow: hidden; transition: all .6s cubic-bezier(.16,1,.3,1); }
-.screen iframe, .screen canvas { width: 100%; height: 100%; border: 0; opacity: 0;
-  transition: opacity .6s ease; }
-.screen iframe.loaded, .screen canvas.loaded { opacity: 1; }
+/* 淡入只给 Rerun 和 3D host 的 canvas,replay 内嵌的 canvas 不参与(没加 .loaded 类) */
+#rerunHost > iframe, #rerunHost > canvas,
+#hand3dHost > canvas, #arm3dHost > canvas, #combo3dHost > canvas, #replay3dHost > canvas {
+  width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .6s ease;
+}
+#rerunHost > iframe.loaded, #rerunHost > canvas.loaded,
+#hand3dHost > canvas.loaded, #arm3dHost > canvas.loaded,
+#combo3dHost > canvas.loaded, #replay3dHost > canvas.loaded { opacity: 1; }
 /* #screen 内显式分层:Rerun 画布(直接子元素)=1,three.js 浮层=2,提示层=3,工具条=4。
    Rerun 画布原来是静态流元素,而三个 host 是 position:absolute —— 定位元素无论 DOM
    顺序都画在静态元素之上,于是任一 host 只要 display:block 就把回放盖成一片灰。

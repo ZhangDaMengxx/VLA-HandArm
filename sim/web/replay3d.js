@@ -131,11 +131,9 @@ export class ReplayViewer {
 
   async load(robot) {
     try {
-      console.log("[replay] load start, robot:", robot);
       // 拉骨骼点
       const kpRes = await fetch(`/api/replay/keypoints?robot=${robot}`);
       const kpData = await kpRes.json();
-      console.log("[replay] keypoints data:", kpData);
       if (kpData.error) throw new Error(kpData.error);
       this.fps = kpData.fps || 30;
       this.frames = kpData.frames;
@@ -186,10 +184,6 @@ export class ReplayViewer {
 
       // 初始化 UI
       this.scrubber.max = this.frames.length - 1;
-
-      // 等待布局完成后再渲染，避免 cssH: 0 的问题
-      await new Promise(r => requestAnimationFrame(r));
-      await new Promise(r => requestAnimationFrame(r));
       this.seekToFrame(0);
 
     } catch (e) {
@@ -204,10 +198,9 @@ export class ReplayViewer {
     const url = this.videoSrc === "canonical"
       ? "/api/replay/video/canonical"
       : `/api/replay/video/original?robot=${encodeURIComponent(this.robot || "")}`;
-    console.log("[replay] loading video from:", url);
     const ready = new Promise((res, rej) => {
-      const ok = () => { cleanup(); console.log("[replay] video loaded ok"); res(); };
-      const bad = () => { cleanup(); console.error("[replay] video load failed:", url); rej(new Error("视频加载失败: " + url)); };
+      const ok = () => { cleanup(); res(); };
+      const bad = () => { cleanup(); rej(new Error("视频加载失败: " + url)); };
       const cleanup = () => {
         this.video.removeEventListener("loadedmetadata", ok);
         this.video.removeEventListener("error", bad);
@@ -258,34 +251,9 @@ export class ReplayViewer {
   _render() {
     const c = this.canvas, ctx = this.ctx;
     const panel = c.parentElement;
-    if (!panel) { console.warn("[replay] _render: no parent"); return; }
+    if (!panel) return;
     const cssW = panel.clientWidth, cssH = panel.clientHeight;
-
-    // 调试：检查父容器链的尺寸
-    if (!cssH) {
-      const layout = panel.closest('.replay-layout');
-      const rerunHost = panel.closest('#rerunHost');
-      const screen = panel.closest('.screen');
-      console.warn("[replay] Height chain:", {
-        panel: `${panel.clientWidth}x${panel.clientHeight}`,
-        layout: layout ? `${layout.clientWidth}x${layout.clientHeight}` : 'null',
-        rerunHost: rerunHost ? `${rerunHost.clientWidth}x${rerunHost.clientHeight}` : 'null',
-        screen: screen ? `${screen.clientWidth}x${screen.clientHeight}` : 'null'
-      });
-    }
-
-    if (!cssW || !cssH || !this.srcW || !this.srcH) {
-      console.warn("[replay] _render skip:", {cssW, cssH, srcW: this.srcW, srcH: this.srcH});
-      // 如果是因为布局未完成（有数据但没高度），下一帧重试
-      if (this.srcW && this.srcH && !cssH && !this._retryScheduled) {
-        this._retryScheduled = true;
-        requestAnimationFrame(() => {
-          this._retryScheduled = false;
-          this._render();
-        });
-      }
-      return;
-    }
+    if (!cssW || !cssH || !this.srcW || !this.srcH) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     if (c.width !== Math.round(cssW * dpr) || c.height !== Math.round(cssH * dpr)) {
       c.width = Math.round(cssW * dpr); c.height = Math.round(cssH * dpr);
@@ -358,42 +326,59 @@ export class ReplayViewer {
 
   _drawChart(highlightF) {
     const c = this.chartCanvas, ctx = this.chartCtx;
-    // 只在尺寸真变了才改 width/height:赋值会清空位图,播放时每帧重设等于强制全量重绘。
-    if (c.width !== c.clientWidth || c.height !== c.clientHeight) {
-      c.width = c.clientWidth; c.height = c.clientHeight;
-    }
     const N = this.trajArm.length;
     if (!N) return;
-    ctx.fillStyle = "#1a1c20";
-    ctx.fillRect(0, 0, c.width, c.height);
 
-    // 检测丢失帧画红条 —— 一眼看出哪几段是上一帧填充的,那里的 IK 结果不能当证据。
-    ctx.fillStyle = "rgba(255,60,60,0.18)";
-    const bw = Math.max(1, c.width / N);
-    for (let f = 0; f < N; f++) {
-      if (this._lost && this._lost[f]) ctx.fillRect((f / (N - 1)) * c.width, 0, bw, c.height);
+    // 只在 CSS 尺寸真变了才重设 canvas 物理尺寸，避免每帧都清空重绘
+    const cssW = c.clientWidth, cssH = c.clientHeight;
+    if (!this._lastChartW || this._lastChartW !== cssW || this._lastChartH !== cssH) {
+      c.width = cssW; c.height = cssH;
+      this._lastChartW = cssW; this._lastChartH = cssH;
     }
 
-    // 臂 7 关节各占一条带,按各自实际幅值归一化。
+    // 提亮背景，从近黑 #1a1c20 改成深灰 #2a2d33
+    ctx.fillStyle = "#2a2d33";
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    // 检测丢失帧画红条
+    ctx.fillStyle = "rgba(255,60,60,0.18)";
+    const bw = Math.max(1, cssW / N);
+    for (let f = 0; f < N; f++) {
+      if (this._lost && this._lost[f]) ctx.fillRect((f / (N - 1)) * cssW, 0, bw, cssH);
+    }
+
+    // 臂 7 关节各占一条带，按各自实际幅值归一化
     const colors = ["#f44", "#f80", "#fa0", "#8f4", "#4af", "#a4f", "#f4a"];
-    const h = c.height / 7;
+    const labels = ["关节1", "关节2", "关节3", "关节4", "关节5", "关节6", "关节7"];
+    const h = cssH / 7;
+
     for (let j = 0; j < 7; j++) {
       const [lo, hi] = this._armRange[j];
       const span = Math.max(hi - lo, 1e-6);
+
+      // 画曲线
       ctx.strokeStyle = colors[j]; ctx.lineWidth = 1.4;
       ctx.beginPath();
       for (let f = 0; f < N; f++) {
-        const x = (f / (N - 1)) * c.width;
+        const x = (f / (N - 1)) * cssW;
         const y = (j + 0.9) * h - ((this.trajArm[f][j] - lo) / span) * h * 0.8;
         f === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.stroke();
+
+      // 左侧标签：关节名称
+      ctx.fillStyle = colors[j];
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText(labels[j], 6, j * h + 4);
     }
 
+    // 当前帧竖线
     if (highlightF >= 0 && highlightF < N) {
-      const x = (highlightF / (N - 1)) * c.width;
+      const x = (highlightF / (N - 1)) * cssW;
       ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, c.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cssH); ctx.stroke();
     }
   }
 
