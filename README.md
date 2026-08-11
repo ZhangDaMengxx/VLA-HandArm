@@ -8,22 +8,42 @@
 
 ### 用户侧（本地运行 Bridge）
 
-**⚠️ 完整 clone 会下载 2.8GB，推荐使用精简方式**
-
-#### 方式 1：精简 clone（推荐，<50MB）
+只想跑硬件、不做开发的话，用独立的轻量仓库，**不要 clone 这个仓库**（这里带着
+仿真资产和第三方库，2.8GB）：
 
 ```bash
-# Git 2.25+ 支持
-git clone --filter=blob:none --no-checkout https://github.com/ZhangDaMengxx/VLA-HandArm.git
-cd VLA-HandArm
-git sparse-checkout init --cone
-git sparse-checkout set bridge.py sim mcp_server/DEPLOY.md
-
-# 检出需要的文件
-git checkout
+git clone https://github.com/ZhangDaMengxx/robot-bridge.git
+cd robot-bridge
+pip install -r requirements.txt
+python bridge.py --mock --host 127.0.0.1 --port 9000
 ```
 
-#### 方式 2：完整 clone（开发用，2.8GB）
+`robot-bridge` 只有运行时需要的东西（驱动 + 技能表 + 可行域校验），约 150KB。
+它是从本仓库拆出去的，驱动和标定数据同源。
+
+#### 只想从本仓库取运行时文件
+
+不想另开仓库的话，用 sparse-checkout 精确检出这几个文件（约 150KB，别写
+`sim` 整个目录 —— 那是 422MB）：
+
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/ZhangDaMengxx/VLA-HandArm.git
+cd VLA-HandArm
+git sparse-checkout init --no-cone
+git sparse-checkout set \
+  /bridge.py \
+  /sim/inspire_hand.py \
+  /sim/skills/schema.py \
+  /sim/skills/hand_pose.py \
+  /sim/skills/registry.yaml \
+  /sim/skills/gestures.yaml \
+  /mcp_server/DEPLOY.md
+git checkout main
+```
+
+要接真机械臂再补 `/sim/nero_arm.py`。
+
+#### 完整 clone（开发用，2.8GB）
 
 ```bash
 git clone https://github.com/ZhangDaMengxx/VLA-HandArm.git
@@ -32,11 +52,13 @@ git clone https://github.com/ZhangDaMengxx/VLA-HandArm.git
 #### 启动 Bridge
 
 ```bash
-# 安装依赖
-pip install fastapi uvicorn pyserial
+pip install fastapi uvicorn pyserial pyyaml
 
-# 启动 bridge（mock 模式测试）
+# mock 模式（不连硬件，用来先跑通链路）
 python bridge.py --mock --host 127.0.0.1 --port 9000
+
+# 真机：不加 --mock，连不上会直接启动失败，不会静默退到 mock
+python bridge.py --host 127.0.0.1 --port 9000
 ```
 
 **详细说明**：[mcp_server/DEPLOY.md](mcp_server/DEPLOY.md)
