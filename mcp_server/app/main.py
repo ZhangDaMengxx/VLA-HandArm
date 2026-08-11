@@ -14,7 +14,7 @@ from .mcp import jsonrpc_mcp  # 真实 MCP 协议 - JSON-RPC 2.0
 # ============================================================================
 # 全局控制器
 # ============================================================================
-robot = RobotController(config.robot.bridge_url)
+robot = RobotController(config.robot.bridge_url, config.robot.bridge_token)
 
 
 # ============================================================================

@@ -23,11 +23,37 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "sim"))
 sys.path.insert(0, str(Path(__file__).parent / "sim/skills"))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
+import secrets
 
 app = FastAPI(title="Robot Hardware Bridge")
+
+# ============================================================================
+# 安全认证
+# ============================================================================
+BRIDGE_TOKEN = os.environ.get("BRIDGE_TOKEN", "")  # 从环境变量读取
+
+@app.middleware("http")
+async def check_token(request: Request, call_next):
+    """所有非健康检查的请求都需要 token"""
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    if not BRIDGE_TOKEN:
+        # 没配 token 就警告但放行（开发时方便）
+        return await call_next(request)
+
+    token = request.headers.get("X-Bridge-Token", "")
+    if not secrets.compare_digest(token, BRIDGE_TOKEN):
+        return JSONResponse(
+            {"detail": "Unauthorized - missing or invalid X-Bridge-Token"},
+            status_code=401
+        )
+
+    return await call_next(request)
 
 # ============================================================================
 # 全局控制器（启动时初始化）

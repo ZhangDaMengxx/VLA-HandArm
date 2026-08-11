@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 class RobotConfig(BaseModel):
     bridge_url: str
+    bridge_token: str = ""  # 可选，用于 bridge 认证
 
 
 class ServerConfig(BaseModel):
@@ -84,6 +85,8 @@ def load_config() -> Config:
     # 而且 API Key 不该写进会被提交的 yaml
     if v := os.environ.get("ROBOT_BRIDGE_URL"):
         data.setdefault("robot", {})["bridge_url"] = v
+    if v := os.environ.get("ROBOT_BRIDGE_TOKEN"):
+        data.setdefault("robot", {})["bridge_token"] = v
     if v := os.environ.get("MCP_SECURITY_MODE"):
         data["security"]["mode"] = v
     if (v := _env_list("MCP_API_KEYS")) is not None:

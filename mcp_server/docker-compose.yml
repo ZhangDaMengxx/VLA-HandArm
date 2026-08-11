@@ -7,7 +7,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ROBOT_BRIDGE_URL=http://host.docker.internal:9000
+      # Bridge 连接（必填）
+      - ROBOT_BRIDGE_URL=${ROBOT_BRIDGE_URL:-http://host.docker.internal:9000}
+      - ROBOT_BRIDGE_TOKEN=${ROBOT_BRIDGE_TOKEN:-}
+
+      # 安全配置（云端必须 public）
+      - MCP_SECURITY_MODE=${MCP_SECURITY_MODE:-auto}
+      - MCP_API_KEYS=${MCP_API_KEYS:-}
+
+      # CORS（可选，默认根据 mode 决定）
+      # - MCP_CORS_ORIGINS=https://your-frontend.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

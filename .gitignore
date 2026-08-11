@@ -47,3 +47,16 @@ assets/nero_description/meshes/nero_RH56DF.stl
 assets/arm/meshes/nero_RH56DF.stl
 # 构建缓存，可重建
 sim/build_urdf/_cache/
+
+# MCP Server 部署相关
+mcp_server/.env
+mcp_server/robot-mcp-server.tar
+mcp_server/deploy-package.tar.gz
+mcp_server.7z
+
+# 用户包
+user-package/
+user-install-package.tar.gz
+
+# 临时文件
+FILE_LIST.md

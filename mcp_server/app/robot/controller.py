@@ -7,15 +7,23 @@ logger = logging.getLogger(__name__)
 
 
 class RobotController:
-    def __init__(self, bridge_url: str):
+    def __init__(self, bridge_url: str, bridge_token: str = ""):
         self.bridge_url = bridge_url
+        self.bridge_token = bridge_token
         self.client: Optional[httpx.AsyncClient] = None
         self._connected = False
 
     async def connect(self):
         """启动时连接（失败不致命）"""
         try:
-            self.client = httpx.AsyncClient(base_url=self.bridge_url, timeout=10.0)
+            headers = {}
+            if self.bridge_token:
+                headers["X-Bridge-Token"] = self.bridge_token
+            self.client = httpx.AsyncClient(
+                base_url=self.bridge_url,
+                timeout=10.0,
+                headers=headers
+            )
 
             # 测试连接
             resp = await self.client.get("/health")
