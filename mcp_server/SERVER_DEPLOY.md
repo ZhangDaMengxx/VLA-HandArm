@@ -150,14 +150,19 @@ curl http://your-server-ip:8000/health
 {
   "mcpServers": {
     "robot": {
-      "url": "http://your-server-ip:8000/mcp",
-      "headers": {
-        "X-API-Key": "your-key-1"
-      }
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "http://your-server-ip:8000/mcp",
+        "--header", "X-API-Key:your-key-1"
+      ]
     }
   }
 }
 ```
+
+⚠️ `mcpServers` 走 stdio，**不认 `url` 字段** —— 连 HTTP 端点要靠 `mcp-remote`
+转换，所以运行 Claude Desktop 的机器需要装 Node.js。`--header` 的冒号后不要加空格。
 
 重启 Claude Desktop，工具会自动出现。
 

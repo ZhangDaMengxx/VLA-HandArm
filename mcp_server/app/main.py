@@ -75,6 +75,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 浏览器端 MCP 客户端要读会话头,不暴露的话拿不到
+    expose_headers=["Mcp-Session-Id"],
 )
 
 # 注入 robot 到各个路由模块

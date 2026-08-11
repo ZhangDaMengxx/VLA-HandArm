@@ -128,23 +128,44 @@ https://random-words.trycloudflare.com
 {
   "mcpServers": {
     "robot": {
-      "url": "http://your-cloud-server:8000/mcp",
-      "headers": {
-        "X-API-Key": "your-api-key"
-      }
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "http://your-cloud-server:8000/mcp",
+        "--header", "X-API-Key:your-api-key"
+      ]
     }
   }
 }
 ```
 
-重启 Claude Desktop，工具会自动出现。
+⚠️ **`mcpServers` 里的服务器走 stdio，不认 `url` 字段**。要连 HTTP 端点必须挂
+`mcp-remote` 做 stdio → HTTP 的转换，所以这台机器需要装 Node.js（`npx` 来自它）。
+
+`--header` 的值**不要在冒号后加空格**，`mcp-remote` 会按第一个冒号切分。
+
+改完重启 Claude Desktop，工具会出现在工具列表里。
 
 ### 方式 2: MCP Inspector（测试用）
 
 ```bash
-npm install -g @modelcontextprotocol/inspector
-mcp-inspector http://your-server:8000/mcp
+npx -y @modelcontextprotocol/inspector
 ```
+
+打开它给的本地地址，Transport 选 **Streamable HTTP**，URL 填
+`http://your-server:8000/mcp`，public 模式再加一个 `X-API-Key` 头。
+
+### 方式 3: curl 手验（最快确认服务端是否正常）
+
+```bash
+curl -X POST http://your-server:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+能回 6 个工具就说明服务端和 bridge 都通了。注意 curl 不做握手，它通不代表
+真实客户端一定能连 —— 客户端问题优先用方式 2 排查。
 
 ---
 
