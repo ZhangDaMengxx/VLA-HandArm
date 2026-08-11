@@ -229,6 +229,7 @@ class ComboFrame:
         # (见 ComboPack.from_dict 的 ee_mismatch 计数)。
         return cls.build(arm_rad=arm, hand_rad=hand_rad, hand_raw=hand_raw,
                          t_ns=t_ns, hold_ms=d.get("hold_ms", 600),
+                         arm_speed_percent=d.get("arm_speed_percent", 20),
                          speed=d.get("speed", 500), force=d.get("force", 500),
                          label=d.get("label", ""), recompute_ee=True)
 

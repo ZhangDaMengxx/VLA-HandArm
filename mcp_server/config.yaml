@@ -1,0 +1,7 @@
+robot:
+  bridge_url: "http://host.docker.internal:9000"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  title: "MCP Robot Server"
