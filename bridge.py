@@ -282,7 +282,7 @@ async def startup():
         return
 
     # 真机模式:连不上就抛,别静默退到 mock —— 那会让"测试通过"变成假象
-    cfg = InspireHandConfig(port="/dev/ttyUSB0", mock=False)
+    cfg = InspireHandConfig(mock=False)  # port 从环境变量 INSPIRE_HAND_PORT 读取
     hand = InspireHand(cfg)
     try:
         ok = hand.connect()
@@ -292,13 +292,14 @@ async def startup():
             f"灵巧手连接失败: {e}\n"
             f"  用的解释器: {sys.executable}\n"
             f"  需要 pyserial;已知可用: ~/miniconda3/envs/lerobot/bin/python\n"
-            f"  确实要空跑就显式加 --mock") from e
+            f"  确实要空跑就显式加 --mock\n"
+            f"  串口由环境变量 INSPIRE_HAND_PORT 控制(默认 /dev/ttyUSB0)") from e
     if not ok:
         hand = None
         raise RuntimeError(
             "灵巧手 connect() 返回 False —— 打开了串口但读不到 HAND_ID。\n"
             "  查 24V 供电 / RS485 A-B 是否接反 / 手 ID=1 / usbipd 是否已转发")
-    print(f"✓ 灵巧手已连接真机: /dev/ttyUSB0 ({sys.executable})")
+    print(f"✓ 灵巧手已连接真机: {cfg.port} ({sys.executable})")
 
     # 机械臂（TODO）
     # try:
@@ -327,9 +328,18 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--mock", action="store_true",
                         help="空跑,不连真机。不加这个时连不上会直接启动失败")
+    parser.add_argument("--hand-port", default=None,
+                        help="灵巧手 RS485 串口。Linux 形如 /dev/ttyUSB0,"
+                             "Windows 形如 COM5。不传则用 INSPIRE_HAND_PORT,"
+                             "再不然用平台默认值")
     args = parser.parse_args()
 
     if args.mock:
         globals()["WANT_MOCK"] = True
+
+    # 命令行 > 环境变量。写回环境变量是因为 InspireHandConfig 从那里读,
+    # 这样只有一处真源,不会出现"传了参数但连的是别的口"
+    if args.hand_port:
+        os.environ["INSPIRE_HAND_PORT"] = args.hand_port
 
     uvicorn.run(app, host=args.host, port=args.port)
