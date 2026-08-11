@@ -144,20 +144,23 @@ async def health():
 async def startup():
     global hand, arm
 
-    from inspire_hand import InspireHand
+    from inspire_hand import InspireHand, InspireHandConfig
 
     # 灵巧手
     try:
-        hand = InspireHand()
-
-        # 尝试连接，失败时用 mock
+        # 尝试连接真机，失败时用 mock
         try:
-            hand.connect("/dev/ttyUSB0")
-            print("✓ 灵巧手已连接: /dev/ttyUSB0")
+            cfg = InspireHandConfig(port="/dev/ttyUSB0", mock=False)
+            hand = InspireHand(cfg)
+            if hand.connect():
+                print("✓ 灵巧手已连接: /dev/ttyUSB0")
+            else:
+                raise RuntimeError("connect() 返回 False")
         except Exception as e:
             print(f"⚠ 灵巧手连接失败: {e}")
             print("  使用 mock 模式")
-            hand = InspireHand(mock=True)
+            cfg = InspireHandConfig(mock=True)
+            hand = InspireHand(cfg)
 
     except Exception as e:
         print(f"✗ 灵巧手初始化失败: {e}")
@@ -175,7 +178,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    if hand is not None:
+    if hand is not None and hasattr(hand, 'disconnect'):
         hand.disconnect()
     if arm is not None:
         pass  # arm.disconnect()

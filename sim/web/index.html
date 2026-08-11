@@ -762,6 +762,21 @@ body {
       用手把灵巧手掰到某姿态后录它实际停在哪。
     </div>
     <div id="recFrames" style="font-size:11px;color:var(--text-3);">还没有帧</div>
+
+    <!-- 速度力控滑块:录制时调整方便,和"速度力控"栏的滑块保持同步 -->
+    <div style="display:flex;gap:10px;margin:12px 0;">
+      <label style="flex:1;">
+        <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">速度 0-1000</div>
+        <input type="range" id="recSpeedSlider" min="0" max="1000" value="500" class="slider">
+        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="recSpeedVal">500</div>
+      </label>
+      <label style="flex:1;">
+        <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">力控 0-1000</div>
+        <input type="range" id="recForceSlider" min="0" max="1000" value="500" class="slider">
+        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="recForceVal">500</div>
+      </label>
+    </div>
+
     <div style="display:flex;gap:6px;margin-top:12px;align-items:center;">
       <label style="flex:0 0 auto;font-size:10px;color:var(--text-3);">驻留</label>
       <input type="number" id="recHold" value="600" min="0" max="60000" step="100"
@@ -1204,6 +1219,26 @@ body {
       把臂和手摆到某姿态后录它<b>实际停在哪</b>(臂要先下发走到位)。
     </div>
     <div id="rcFrames" style="font-size:11px;color:var(--text-3);">还没有帧</div>
+
+    <!-- 速度力控滑块:录制栏单独一组,方便调整 -->
+    <div style="margin:12px 0;">
+      <div style="font-size:10px;color:var(--text-3);margin-bottom:6px;">臂速度(%)</div>
+      <input type="range" id="rcArmSpeed" min="1" max="100" value="20" class="slider">
+      <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="rcArmSpeedVal">20%</div>
+    </div>
+    <div style="display:flex;gap:10px;margin:12px 0;">
+      <label style="flex:1;">
+        <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">手速度 0-1000</div>
+        <input type="range" id="rcHandSpeed" min="0" max="1000" value="500" class="slider">
+        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="rcHandSpeedVal">500</div>
+      </label>
+      <label style="flex:1;">
+        <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">手力控 0-1000</div>
+        <input type="range" id="rcHandForce" min="0" max="1000" value="500" class="slider">
+        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="rcHandForceVal">500</div>
+      </label>
+    </div>
+
     <div style="display:flex;gap:6px;margin-top:12px;align-items:center;">
       <label style="flex:0 0 auto;font-size:10px;color:var(--text-3);">驻留</label>
       <input type="number" id="rcHold" value="800" min="0" max="60000" step="100"
@@ -2702,8 +2737,40 @@ $("chkHand3d").onchange   = e => {
   if (_hand3d) ensureHand3d().then(() => { if (_hv) _hv.setDriven(handSliderVals()); });
   else { hideHand3d(); showHint('<span>3D 已关闭 · 右侧读数照常刷新</span>', false); }
 };
-$("speedSlider").oninput = () => { $("speedVal").textContent = $("speedSlider").value; };
-$("forceSlider").oninput = () => { $("forceVal").textContent = $("forceSlider").value; };
+$("speedSlider").oninput = () => {
+  $("speedVal").textContent = $("speedSlider").value;
+  // 同步到录制栏
+  if ($("recSpeedSlider")) {
+    $("recSpeedSlider").value = $("speedSlider").value;
+    $("recSpeedVal").textContent = $("speedSlider").value;
+  }
+};
+$("forceSlider").oninput = () => {
+  $("forceVal").textContent = $("forceSlider").value;
+  // 同步到录制栏
+  if ($("recForceSlider")) {
+    $("recForceSlider").value = $("forceSlider").value;
+    $("recForceVal").textContent = $("forceSlider").value;
+  }
+};
+
+// 录制栏的滑块也同步回"速度力控"栏
+if ($("recSpeedSlider")) {
+  $("recSpeedSlider").oninput = () => {
+    const v = $("recSpeedSlider").value;
+    $("recSpeedVal").textContent = v;
+    $("speedSlider").value = v;
+    $("speedVal").textContent = v;
+  };
+}
+if ($("recForceSlider")) {
+  $("recForceSlider").oninput = () => {
+    const v = $("recForceSlider").value;
+    $("recForceVal").textContent = v;
+    $("forceSlider").value = v;
+    $("forceVal").textContent = v;
+  };
+}
 $("speedSlider").onchange = async () => {
   await fetch("/api/hand/command", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -2980,8 +3047,8 @@ function captureFrame() {
   return {
     label: "", rad: rawProjToRad(rawProj).map(x => +x.toFixed(6)),
     raw_vendor: projToVendor(rawProj),
-    speed: parseInt($("speedSlider").value, 10) || 500,
-    force: parseInt($("forceSlider").value, 10) || 500,
+    speed: parseInt($("recSpeedSlider").value, 10) || 500,
+    force: parseInt($("recForceSlider").value, 10) || 500,
     hold_ms: _cl(parseInt($("recHold").value, 10) || 600, 0, 60000),
   };
 }
@@ -4851,9 +4918,9 @@ function rcCaptureFrame() {
     arm_rad: armRad.map(x => +x.toFixed(6)),
     hand_rad: rawProjToRad(rawProj).map(x => +x.toFixed(6)),
     hand_raw: projToVendor(rawProj),
-    arm_speed_percent: parseInt($("cbArmSpeed").value, 10) || 20,  // 臂速度百分比
-    speed: parseInt($("cbHandSpeed").value, 10) || 500,            // 手速度
-    force: parseInt($("cbHandForce").value, 10) || 500,            // 手力控
+    arm_speed_percent: parseInt($("rcArmSpeed").value, 10) || 20,    // 录制栏滑块
+    speed: parseInt($("rcHandSpeed").value, 10) || 500,              // 录制栏滑块
+    force: parseInt($("rcHandForce").value, 10) || 500,              // 录制栏滑块
     hold_ms: _cl(parseInt($("rcHold").value, 10) || 800, 0, 60000),
   };
 }
@@ -5478,21 +5545,70 @@ $("cbHandClearErr").onclick = () => fetch("/api/hand/command", {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ cmd: "clear_error" }) });
 $("cbArmSpeed").oninput = () => {
-  $("cbArmSpeedVal").textContent = $("cbArmSpeed").value + "%";
+  const v = $("cbArmSpeed").value;
+  $("cbArmSpeedVal").textContent = v + "%";
   $("cbArmSpeed").dataset.syncing = "1";      // 拖动中别被遥测帧刷回去
+  // 同步到录制栏
+  if ($("rcArmSpeed")) {
+    $("rcArmSpeed").value = v;
+    $("rcArmSpeedVal").textContent = v + "%";
+  }
 };
 $("cbArmSpeed").onchange = async () => {
   if (_cbArmOn) await _cbArmCmd({ cmd: "speed", value: +$("cbArmSpeed").value });
   delete $("cbArmSpeed").dataset.syncing;
 };
-$("cbHandSpeed").oninput = () => { $("cbHandSpeedVal").textContent = $("cbHandSpeed").value; };
+$("cbHandSpeed").oninput = () => {
+  const v = $("cbHandSpeed").value;
+  $("cbHandSpeedVal").textContent = v;
+  // 同步到录制栏
+  if ($("rcHandSpeed")) {
+    $("rcHandSpeed").value = v;
+    $("rcHandSpeedVal").textContent = v;
+  }
+};
 $("cbHandSpeed").onchange = () => { if (_cbHandOn) fetch("/api/hand/command", {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ cmd: "speed", value: +$("cbHandSpeed").value }) }); };
-$("cbHandForce").oninput = () => { $("cbHandForceVal").textContent = $("cbHandForce").value; };
+$("cbHandForce").oninput = () => {
+  const v = $("cbHandForce").value;
+  $("cbHandForceVal").textContent = v;
+  // 同步到录制栏
+  if ($("rcHandForce")) {
+    $("rcHandForce").value = v;
+    $("rcHandForceVal").textContent = v;
+  }
+};
 $("cbHandForce").onchange = () => { if (_cbHandOn) fetch("/api/hand/command", {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ cmd: "force", value: +$("cbHandForce").value }) }); };
+
+// 录制栏滑块同步回主滑块
+if ($("rcArmSpeed")) {
+  $("rcArmSpeed").oninput = () => {
+    const v = $("rcArmSpeed").value;
+    $("rcArmSpeedVal").textContent = v + "%";
+    $("cbArmSpeed").value = v;
+    $("cbArmSpeedVal").textContent = v + "%";
+  };
+}
+if ($("rcHandSpeed")) {
+  $("rcHandSpeed").oninput = () => {
+    const v = $("rcHandSpeed").value;
+    $("rcHandSpeedVal").textContent = v;
+    $("cbHandSpeed").value = v;
+    $("cbHandSpeedVal").textContent = v;
+  };
+}
+if ($("rcHandForce")) {
+  $("rcHandForce").oninput = () => {
+    const v = $("rcHandForce").value;
+    $("rcHandForceVal").textContent = v;
+    $("cbHandForce").value = v;
+    $("cbHandForceVal").textContent = v;
+  };
+}
+
 $("cbShow3d").onchange = e => {
   _cbShow3d = e.target.checked;
   if (S.mode !== "live") return;
