@@ -1,7 +1,21 @@
 robot:
-  bridge_url: "http://localhost:9000"  # Docker 用 host.docker.internal, 本地用 localhost
+  # Docker 里用 host.docker.internal，本地跑用 localhost
+  bridge_url: "http://localhost:9000"
 
 server:
   host: "0.0.0.0"
   port: 8000
   title: "MCP Robot Server"
+
+security:
+  # auto: 按本机 IP 猜（私网段=lan，否则=public）
+  # lan:  局域网，不校验 API Key
+  # public: 强制 X-API-Key + CORS 白名单
+  mode: "auto"
+
+  # ⚠ 别把真 key 写在这里 —— 这个文件会进 git。
+  #   用环境变量传: MCP_API_KEYS=key1,key2
+  api_keys: []
+
+  # public 模式下的 CORS 白名单。lan 模式忽略此项（放行 *）
+  cors_origins: []

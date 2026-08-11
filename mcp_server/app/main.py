@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import config
+from .auth import make_auth_middleware
 from .robot.controller import RobotController
 from .api.v1 import hand, arm
 from .mcp import server as mcp_server_rest  # 旧的 REST 端点，保留向后兼容
@@ -26,6 +27,19 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO)
 
     logger = logging.getLogger(__name__)
+
+    if MODE == "public" and not _KEYS:
+        raise RuntimeError(
+            "security.mode=public 但没配 api_keys —— 这会把能驱动真实硬件的\n"
+            "  接口裸暴露在公网。用 MCP_API_KEYS=<key> 传入,或改成 mode=lan。")
+
+    logger.info("安全模式: %s (%s)", MODE,
+                f"需 X-API-Key,已配 {len(_KEYS)} 把" if MODE == "public"
+                else "不校验 API Key")
+    if MODE == "lan":
+        logger.warning("lan 模式:局域网内任何人都能驱动硬件。"
+                       "放到 NAT 外面(纯 Ubuntu/云主机)前务必改成 public。")
+
     logger.info(f"🔗 连接硬件代理: {config.robot.bridge_url}")
 
     await robot.connect()
@@ -45,10 +59,19 @@ app = FastAPI(
     version="1.0.0-mvp"
 )
 
-# CORS（局域网宽松，生产版本需要限制）
+# ---- 安全分级 ----
+# 中间件按**添加的逆序**执行,所以先加 auth、后加 CORS,实际是 CORS 先跑 ——
+# 这样浏览器的预检 OPTIONS 不会被 401 挡掉。
+MODE = config.resolve_mode()
+_KEYS = config.security.api_keys
+
+app.middleware("http")(make_auth_middleware(
+    MODE, _KEYS, config.security.public_paths))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # public 模式不能用 * —— 配了凭据的通配来源等于没设限
+    allow_origins=config.security.cors_origins if MODE == "public" else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
