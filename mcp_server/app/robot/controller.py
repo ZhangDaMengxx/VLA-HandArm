@@ -62,16 +62,35 @@ class RobotController:
         return resp.json()
 
     async def hand_set_angles(self, angles: list[float]):
-        """设置手关节角度"""
+        """设置手关节角度。不可行姿态 bridge 回 409,原因原样透出。
+
+        不转发 allow_infeasible —— 放行开关只给本机标定脚本,不给远端调用方。
+        """
         await self.ensure_connected()
         resp = await self.client.post("/hand/angles", json={"angles": angles})
+        if resp.status_code in (400, 409):
+            raise ValueError(resp.json().get("detail", resp.text))
         resp.raise_for_status()
         return resp.json()
 
     async def hand_gesture(self, name: str):
-        """执行手势"""
+        """执行手势。
+
+        不可行的姿态 bridge 会回 409 —— 把它翻成明确的报错,别让
+        raise_for_status 的通用消息把"为什么不可行"吃掉。
+        """
         await self.ensure_connected()
         resp = await self.client.post(f"/hand/gesture/{name}")
+        if resp.status_code in (400, 404, 409):
+            detail = resp.json().get("detail", resp.text)
+            raise ValueError(detail)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def hand_list_gestures(self):
+        """列出可用手势"""
+        await self.ensure_connected()
+        resp = await self.client.get("/hand/gestures")
         resp.raise_for_status()
         return resp.json()
 

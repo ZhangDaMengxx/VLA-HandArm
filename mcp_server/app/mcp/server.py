@@ -27,7 +27,9 @@ class ToolCall(BaseModel):
 TOOLS = [
     Tool(
         name="hand_set_angles",
-        description="设置灵巧手 6 个关节角度（弧度）",
+        description="设置灵巧手 6 个关节角度（弧度，0=张开）。"
+                    "会做拇指-食指可行域检查，会导致手指互顶的姿态被拒绝并说明原因；"
+                    "优先用 hand_gesture 调预设手势，这个接口用于预设覆盖不到的姿态。",
         inputSchema={
             "type": "object",
             "properties": {
@@ -36,22 +38,32 @@ TOOLS = [
                     "items": {"type": "number"},
                     "minItems": 6,
                     "maxItems": 6,
-                    "description": "6 个关节角度（rad）: [thumb_yaw, thumb_pitch, index, middle, ring, pinky]"
+                    "description": "6 个关节角度（rad，0=张开）: "
+                                   "[thumb_yaw, thumb_pitch, index, middle, ring, pinky]"
                 }
             },
             "required": ["angles"]
         }
     ),
     Tool(
+        name="hand_list_gestures",
+        description="列出可用的灵巧手手势及其含义。调 hand_gesture 前先用这个拿准确的 id，"
+                    "不要凭猜测填 id。",
+        inputSchema={
+            "type": "object",
+            "properties": {}
+        }
+    ),
+    Tool(
         name="hand_gesture",
-        description="执行灵巧手预设手势",
+        description="执行灵巧手预设手势。id 必须来自 hand_list_gestures。"
+                    "会先做拇指-食指可行域检查，姿态会导致手指互顶时拒绝下发并说明原因。",
         inputSchema={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "enum": ["hand_ok", "hand_pinch", "fist", "open"],
-                    "description": "手势名称"
+                    "description": "手势 id，从 hand_list_gestures 获取"
                 }
             },
             "required": ["name"]
@@ -111,6 +123,8 @@ async def call_tool(call: ToolCall):
             result = await robot.hand_set_angles(call.arguments["angles"])
         elif call.name == "hand_gesture":
             result = await robot.hand_gesture(call.arguments["name"])
+        elif call.name == "hand_list_gestures":
+            result = await robot.hand_list_gestures()
         elif call.name == "hand_status":
             result = await robot.hand_status()
         elif call.name == "arm_set_joints":
