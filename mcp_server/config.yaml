@@ -1,5 +1,5 @@
 robot:
-  bridge_url: "http://host.docker.internal:9000"
+  bridge_url: "http://localhost:9000"  # Docker 用 host.docker.internal, 本地用 localhost
 
 server:
   host: "0.0.0.0"
