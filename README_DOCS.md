@@ -14,6 +14,7 @@ NERO-7 + 灵巧手项目的完整文档系统。
 |------|------|-----------|
 | **[HANDBOOK.md](HANDBOOK.md)** | 开发手册 | 每次写代码前 |
 | **[HARDWARE.md](HARDWARE.md)** | 硬件文档 | 调试硬件/查规格 |
+| **[GIT_GUIDE.md](GIT_GUIDE.md)** | Git操作指南 | Git操作/提交代码 |
 | **[CHANGELOG.md](CHANGELOG.md)** | 更新日志 | 了解历史变更 |
 | **[PROJECT_STATUS.md](PROJECT_STATUS.md)** | 项目进度 | 看当前任务状态 |
 
@@ -66,7 +67,30 @@ NERO-7 + 灵巧手项目的完整文档系统。
 
 ---
 
-### 3. CHANGELOG.md - 更新日志
+### 3. GIT_GUIDE.md - Git操作指南
+
+**提交代码、分支管理、解决冲突时看这个。**
+
+包含内容：
+- ✅ 仓库信息（Python/ROS2两个仓库）
+- ✅ SSH密钥配置
+- ✅ 日常Git操作（add/commit/push/pull）
+- ✅ 分支管理
+- ✅ 提交规范
+- ✅ 常见问题（冲突、撤销等）
+- ✅ 最佳实践
+
+**适合人群**：所有开发者
+
+**什么时候看**：
+- 不确定Git命令 → 查日常操作
+- 遇到冲突 → 查处理冲突
+- 写提交信息 → 查提交规范
+- SSH连接失败 → 查SSH配置
+
+---
+
+### 4. CHANGELOG.md - 更新日志
 
 **了解项目演进历史、追溯变更原因。**
 
@@ -85,7 +109,7 @@ NERO-7 + 灵巧手项目的完整文档系统。
 
 ---
 
-### 4. PROJECT_STATUS.md - 项目进度
+### 5. PROJECT_STATUS.md - 项目进度
 
 **查看当前进度、待办任务、已知问题。**
 

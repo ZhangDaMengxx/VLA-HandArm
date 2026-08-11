@@ -1,0 +1,70 @@
+{
+  "schema": "combo_pack/1",
+  "name": "伸手",
+  "mode": "keyframe",
+  "recorded_from": "mock",
+  "arm": "nero",
+  "hand": "inspire_rh56dfx_right",
+  "joint_order_arm": [
+    "joint1",
+    "joint2",
+    "joint3",
+    "joint4",
+    "joint5",
+    "joint6",
+    "joint7"
+  ],
+  "joint_order_hand": [
+    "right_thumb_1_joint",
+    "right_thumb_2_joint",
+    "right_index_1_joint",
+    "right_middle_1_joint",
+    "right_ring_1_joint",
+    "right_little_1_joint"
+  ],
+  "created_at": "2026-08-10T18:30:36",
+  "note": "",
+  "frames": [
+    {
+      "label": "",
+      "arm_rad": [
+        -1.25526,
+        0.459671,
+        1.35738,
+        1.512709,
+        2.72238,
+        -0.143038,
+        0.079204
+      ],
+      "hand_rad": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "hand_raw": [
+        1000,
+        1000,
+        1000,
+        1000,
+        1000,
+        1000
+      ],
+      "t_ns": 0,
+      "hold_ms": 800,
+      "speed": 500,
+      "force": 500,
+      "ee_pose": [
+        -0.31008066397512074,
+        0.12773209497590574,
+        0.4039729878533251,
+        0.004269198856392123,
+        0.02837650358618905,
+        0.7148020271825486,
+        0.6987378692478794
+      ]
+    }
+  ]
+}
