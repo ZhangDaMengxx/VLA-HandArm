@@ -234,10 +234,13 @@ async def hand_gesture(name: str):
 async def arm_status():
     """查询臂状态"""
     if arm is None:
-        return {"connected": False, "message": "Arm not implemented yet"}
+        return {"connected": False, "message": "Arm not connected"}
 
-    # TODO: 实现 arm.read_joints() 等
-    return {"connected": True, "joints": [0.0] * 7}
+    try:
+        joints = arm.read_angles()
+        return {"connected": True, "joints": joints}
+    except Exception as e:
+        raise HTTPException(500, f"Read arm status failed: {e}")
 
 
 @app.post("/arm/joints")
@@ -246,8 +249,16 @@ async def arm_set_joints(req: ArmJoints):
     if arm is None:
         raise HTTPException(503, "Arm not connected")
 
-    # TODO: arm.set_joints(req.joints)
-    return {"ok": True}
+    if len(req.joints) != 7:
+        raise HTTPException(400, "Need 7 joint angles")
+
+    try:
+        ok = arm.move_j(req.joints)
+        if not ok:
+            raise HTTPException(500, "move_j returned False (possibly e-stopped)")
+        return {"ok": True, "joints": req.joints}
+    except Exception as e:
+        raise HTTPException(500, f"Move arm failed: {e}")
 
 
 # ============================================================================
@@ -307,17 +318,19 @@ async def startup():
         import platform
         # Windows 用 agx_cando，Linux 用 socketcan
         arm_interface = "agx_cando" if platform.system() == "Windows" else "socketcan"
-        arm = NeroArm(mock=False, channel="can0", interface=arm_interface)
+        # agx_cando 需要数字索引，socketcan 需要字符串 "can0"
+        arm_channel = 0 if platform.system() == "Windows" else "can0"
+        arm = NeroArm(mock=False, channel=arm_channel, interface=arm_interface)
         ok = arm.connect()
         if not ok:
             arm = None
             raise RuntimeError("机械臂 connect() 返回 False")
-        print(f"✓ 机械臂已连接真机: {arm_interface} / can0 ({sys.executable})")
+        print(f"✓ 机械臂已连接真机: {arm_interface} / channel {arm_channel} ({sys.executable})")
     except Exception as e:
         arm = None
         print(f"⚠ 机械臂连接失败: {e}\n"
               f"  Linux 需要: sudo ip link set can0 up type can bitrate 1000000\n"
-              f"  Windows 需要: pip install python-can-agx-cando")
+              f"  Windows 需要: pip install python-can python-can-agx-cando pyAgxArm")
 
 
 @app.on_event("shutdown")
