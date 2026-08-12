@@ -29,10 +29,15 @@ from typing import Final, Literal
 SIM = Path(__file__).resolve().parent
 if str(SIM) not in sys.path:
     sys.path.insert(0, str(SIM))
-from lerobot_env import lerobot_site                              # noqa: E402
+
+# lerobot_env 是 ROS 环境特定的工具,非 ROS 使用场景(如 MCP)不需要
+try:
+    from lerobot_env import lerobot_site                          # noqa: E402
+    LEROBOT_SITE = lerobot_site()
+except ImportError:
+    LEROBOT_SITE = None
 
 PYAGX_ROOT = SIM.parent / "pyAgxArm-master" / "pyAgxArm-master"   # 本地 SDK 源
-LEROBOT_SITE = lerobot_site()
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
 
