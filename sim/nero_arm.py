@@ -126,9 +126,10 @@ class NeroArm:
     PROBE_PREPUSH_SEC: Final[float] = 0.4
 
     def __init__(self, mock: bool = True, channel: str = "can0",
-                 firmware: str = "default") -> None:
+                 firmware: str = "default", interface: str = "socketcan") -> None:
         self.mock = mock
         self.channel = channel
+        self.interface = interface  # socketcan(Linux) / agx_cando(Windows)
         # "auto" = 用 DEFAULT driver 连一次读 software_version,再按 SDK 自己那套
         # 字符串门限选 driver 重连。这台臂实测是 1.11 → v111,但**不要写死** ——
         # 固件升级后写死的值就是错的,而且错得很安静(某些命令行为变了但不报错)。
@@ -176,7 +177,7 @@ class NeroArm:
             self.firmware_detected = fw
         cfg = create_agx_arm_config(robot=ArmModel.NERO,
                                     firmeware_version=fw_map[fw],
-                                    interface="socketcan", channel=self.channel,
+                                    interface=self.interface, channel=self.channel,
                                     bitrate=1000000)
         self.robot = AgxArmFactory.create_arm(cfg)
         self.robot.connect()
@@ -260,7 +261,7 @@ class NeroArm:
         probe_arm = None
         try:
             cfg = mk_cfg(robot=ArmModel.NERO, firmeware_version=NeroFW.DEFAULT,
-                         interface="socketcan", channel=self.channel, bitrate=1000000)
+                         interface=self.interface, channel=self.channel, bitrate=1000000)
             probe_arm = factory.create_arm(cfg)
             probe_arm.connect()
             deadline = time.monotonic() + self.DETECT_SEC

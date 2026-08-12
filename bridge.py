@@ -301,22 +301,31 @@ async def startup():
             "  查 24V 供电 / RS485 A-B 是否接反 / 手 ID=1 / usbipd 是否已转发")
     print(f"✓ 灵巧手已连接真机: {cfg.port} ({sys.executable})")
 
-    # 机械臂（TODO）
-    # try:
-    #     from agx_arm import AgxArm
-    #     arm = AgxArm()
-    #     arm.connect("can0")
-    # except Exception as e:
-    #     print(f"⚠ 机械臂连接失败: {e}")
-    #     arm = None
+    # 机械臂
+    try:
+        from nero_arm import NeroArm
+        import platform
+        # Windows 用 agx_cando，Linux 用 socketcan
+        arm_interface = "agx_cando" if platform.system() == "Windows" else "socketcan"
+        arm = NeroArm(mock=False, channel="can0", interface=arm_interface)
+        ok = arm.connect()
+        if not ok:
+            arm = None
+            raise RuntimeError("机械臂 connect() 返回 False")
+        print(f"✓ 机械臂已连接真机: {arm_interface} / can0 ({sys.executable})")
+    except Exception as e:
+        arm = None
+        print(f"⚠ 机械臂连接失败: {e}\n"
+              f"  Linux 需要: sudo ip link set can0 up type can bitrate 1000000\n"
+              f"  Windows 需要: pip install python-can-agx-cando")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     if hand is not None and hasattr(hand, 'disconnect'):
         hand.disconnect()
-    if arm is not None:
-        pass  # arm.disconnect()
+    if arm is not None and hasattr(arm, 'disconnect'):
+        arm.disconnect()
 
 
 # ============================================================================
