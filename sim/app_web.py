@@ -794,6 +794,12 @@ async def _no_stale_static(request, call_next):
 
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+# MediaPipe 本地文件
+_VENDOR_DIR = WEB_DIR / "vendor"
+if _VENDOR_DIR.is_dir():
+    app.mount("/vendor", StaticFiles(directory=str(_VENDOR_DIR)), name="vendor")
+
 _HAND_ASSETS = REPO / "assets/viz/hand"
 if _HAND_ASSETS.is_dir():
     app.mount("/hand_assets", StaticFiles(directory=str(_HAND_ASSETS)), name="hand_assets")
@@ -1721,8 +1727,17 @@ async def hand_url() -> JSONResponse:
 async def hand_command(payload: dict) -> JSONResponse:
     """手部控制指令:{cmd:"angles",rad:[6]} | {cmd:"speed",value:500} | {cmd:"home"} 等。
     协议见 hand_console.py 的 handle()。"""
+    import time
+    t0 = time.perf_counter()
+
     hand = _get_hand()
-    return JSONResponse(hand.command(payload))
+    result = hand.command(payload)
+
+    t1 = time.perf_counter()
+    if payload.get("cmd") == "angles":
+        print(f"[perf] 硬件控制 {(t1-t0)*1000:.1f}ms")
+
+    return JSONResponse(result)
 
 
 @app.get("/api/hand/actions")
@@ -2149,50 +2164,166 @@ async def hand_video_frames(limit: int = 400) -> JSONResponse:
 
 @app.post("/api/hand/mimic")
 async def hand_mimic(payload: dict) -> JSONResponse:
-    """根据 MediaPipe/WILOR 视觉数据控制手部
+    """根据 MediaPipe 视觉数据实时计算关节角度（retargeting）
 
     payload: {
-        "format": "mediapipe" | "wilor",
-        "landmarks": [...],  # 21个3D点（MediaPipe）
+        "format": "mediapipe",
+        "landmarks": [...],  # 21个3D点
     }
 
-    阶段1：识别离散手势 → 调用预定义角度
-    未来：连续角度映射
+    返回: {
+        "ok": true,
+        "joint_angles": {...},  # 6个关节的弧度值
+        "gesture": "..."        # 可选：识别的手势名称
+    }
     """
     format_type = str(payload.get("format") or "mediapipe")
     landmarks = payload.get("landmarks") or []
 
-    if format_type not in ("mediapipe", "wilor"):
+    if format_type != "mediapipe":
         return JSONResponse(
-            {"ok": False, "msg": f"未知格式: {format_type}"},
+            {"ok": False, "msg": f"仅支持 MediaPipe 格式，收到: {format_type}"},
             status_code=400
         )
 
-    if format_type == "wilor":
+    if len(landmarks) != 21:
         return JSONResponse(
-            {"ok": False, "msg": "WILOR 格式暂未实现"},
-            status_code=501
-        )
-
-    # MediaPipe 手势识别（简化版）
-    gesture = _recognize_mediapipe_gesture(landmarks)
-    if not gesture:
-        return JSONResponse(
-            {"ok": False, "msg": "未识别到已知手势"},
+            {"ok": False, "msg": f"需要 21 个关键点，收到: {len(landmarks)}"},
             status_code=400
         )
 
-    # 调用现有的手势播放逻辑
-    result = await gesture_play({"name": gesture})
+    try:
+        # 调用 retargeting 计算关节角度
+        joint_angles = await _mediapipe_to_joint_angles(landmarks)
 
-    # 在响应中附加识别到的手势名称
-    if isinstance(result, JSONResponse):
+        # 可选：识别手势名称（用于调试显示）
+        gesture = _recognize_mediapipe_gesture(landmarks) or "未知"
+
+        return JSONResponse({
+            "ok": True,
+            "joint_angles": joint_angles,
+            "gesture": gesture
+        })
+
+    except Exception as e:
+        print(f"[hand_mimic] Retargeting 失败: {e}")
+        return JSONResponse(
+            {"ok": False, "msg": f"Retargeting 失败: {str(e)}"},
+            status_code=500
+        )
+
+
+def _estimate_hand_frame(kp_array: "np.ndarray") -> "np.ndarray":
+    """从 MediaPipe 关键点估计手腕局部坐标系（消除手腕旋转影响）
+
+    参数:
+        kp_array: (21, 3) 已归零到手腕的关键点
+
+    返回:
+        (3, 3) 旋转矩阵，将 MediaPipe 坐标对齐到手腕局部坐标系
+    """
+    import numpy as np
+
+    # 使用手腕(0)、食指根(5)、中指根(9) 三点拟合坐标系
+    points = kp_array[[0, 5, 9], :]
+
+    # x 轴：从小指侧指向拇指侧（手腕 → 小指根的反向）
+    x_vector = points[0] - points[2]
+
+    # 用 SVD 拟合平面法向量
+    centered = points - np.mean(points, axis=0, keepdims=True)
+    u, s, v = np.linalg.svd(centered)
+    normal = v[2, :]
+
+    # Gram-Schmidt 正交化
+    x = x_vector - np.sum(x_vector * normal) * normal
+    x = x / np.linalg.norm(x)
+    z = np.cross(x, normal)
+
+    # 确保 z 轴从小指指向食指
+    if np.sum(z * (points[1] - points[2])) < 0:
+        normal *= -1
+        z *= -1
+
+    # 列向量为坐标轴
+    frame = np.stack([x, normal, z], axis=1)
+    return frame
+
+
+async def _mediapipe_to_joint_angles(landmarks: list[dict]) -> dict:
+    """MediaPipe 21点 → Inspire Hand 6关节角度（通过 dex_retargeting）
+
+    返回: {
+        "right_thumb_1_joint": 0.0,
+        "right_thumb_2_joint": 0.0,
+        "right_index_1_joint": 0.0,
+        "right_middle_1_joint": 0.0,
+        "right_ring_1_joint": 0.0,
+        "right_little_1_joint": 0.0
+    }
+    """
+    import time
+    t0 = time.perf_counter()
+
+    # 懒加载 retargeting（避免启动时加载大库）
+    global _RETARGETING_ADAPTER
+    if "_RETARGETING_ADAPTER" not in globals():
         try:
-            data = json.loads(result.body.decode())
-            data["gesture"] = gesture
-            return JSONResponse(data, status_code=result.status_code)
-        except Exception:
-            pass
+            from dex_retargeting.retargeting_config import RetargetingConfig
+            config_path = REPO / "configs/inspire_hand_right_local.yml"
+            config = RetargetingConfig.load_from_file(str(config_path))
+            _RETARGETING_ADAPTER = config.build()  # 构建 SeqRetargeting 对象
+            print(f"[retargeting] 已加载配置: {config_path}")
+        except Exception as e:
+            print(f"[retargeting] 加载失败: {e}")
+            raise RuntimeError(f"Retargeting 初始化失败: {e}")
+
+    # 转换 MediaPipe landmarks 为 numpy 数组 (21, 3)
+    import numpy as np
+    kp_array = np.array([[pt["x"], pt["y"], pt["z"]] for pt in landmarks], dtype=np.float32)
+
+    # ========== 坐标预处理（与 SingleHandDetector 一致）==========
+    # 1. 归零：所有点相对于手腕（第0点）
+    kp_array = kp_array - kp_array[0:1, :]
+
+    # 2. 估计手腕局部坐标系（消除手腕旋转影响）
+    wrist_rot = _estimate_hand_frame(kp_array)
+
+    # 3. 坐标系变换：MediaPipe → MANO
+    OPERATOR2MANO_RIGHT = np.array([
+        [0, 0, -1],
+        [-1, 0, 0],
+        [0, 1, 0],
+    ], dtype=np.float32)
+    joint_pos = kp_array @ wrist_rot @ OPERATOR2MANO_RIGHT
+    # ===========================================================
+
+    # 根据 retargeting 类型准备输入
+    retargeting_type = _RETARGETING_ADAPTER.optimizer.retargeting_type
+    indices = _RETARGETING_ADAPTER.optimizer.target_link_human_indices
+
+    if retargeting_type == "POSITION":
+        ref_value = joint_pos[indices, :]
+    else:  # VECTOR
+        origin_indices = indices[0, :]
+        task_indices = indices[1, :]
+        ref_value = joint_pos[task_indices, :] - joint_pos[origin_indices, :]
+
+    t1 = time.perf_counter()
+
+    # 调用 retargeting（返回 numpy 数组）
+    qpos = _RETARGETING_ADAPTER.retarget(ref_value)
+
+    t2 = time.perf_counter()
+
+    # 获取关节名称并构建字典
+    joint_names = _RETARGETING_ADAPTER.optimizer.robot.dof_joint_names
+    result = {name: float(qpos[i]) for i, name in enumerate(joint_names)}
+
+    t_total = (t2 - t0) * 1000
+    t_preprocess = (t1 - t0) * 1000
+    t_retarget = (t2 - t1) * 1000
+    print(f"[perf] 总计 {t_total:.1f}ms (预处理 {t_preprocess:.1f}ms + retarget {t_retarget:.1f}ms)")
 
     return result
 
@@ -2441,11 +2572,34 @@ atexit.register(_shutdown_arm)
 
 def main() -> None:
     ip = _primary_ip()
+
+    # 检查是否有 SSL 证书（支持 HTTPS 以启用摄像头访问）
+    ssl_keyfile = REPO / "ssl/key.pem"
+    ssl_certfile = REPO / "ssl/cert.pem"
+    use_ssl = ssl_keyfile.exists() and ssl_certfile.exists()
+
+    protocol = "https" if use_ssl else "http"
     print("=" * 72, flush=True)
-    print(f"  回放工作台启动中。Windows 浏览器打开:  http://{ip}:{WEB_PORT}", flush=True)
-    print("  (若 localhost 打不开就用上面这个 WSL IP 地址)", flush=True)
+    print(f"  回放工作台启动中。浏览器打开:  {protocol}://{ip}:{WEB_PORT}", flush=True)
+    if use_ssl:
+        print(f"  ✅ HTTPS 已启用（支持摄像头访问）", flush=True)
+        print(f"  ⚠️  首次访问需在浏览器中信任自签名证书", flush=True)
+    else:
+        print(f"  ⚠️  HTTP 模式（摄像头仅在 localhost 可用）", flush=True)
+    print("  (若 localhost 打不开就用上面这个 IP 地址)", flush=True)
     print("=" * 72, flush=True)
-    uvicorn.run(app, host="0.0.0.0", port=WEB_PORT, log_level="warning")
+
+    if use_ssl:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=WEB_PORT,
+            log_level="warning",
+            ssl_keyfile=str(ssl_keyfile),
+            ssl_certfile=str(ssl_certfile)
+        )
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=WEB_PORT, log_level="warning")
 
 
 if __name__ == "__main__":

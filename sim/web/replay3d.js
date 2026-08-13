@@ -36,8 +36,6 @@ export class ReplayViewer {
     this.trajHand = [];          // [N][12]
     this.comboViewer = null;     // 复用 ComboViewer (懒加载)
     this.videoSrc = "canonical"; // "canonical" | "original"
-    this.mimicController = null; // 实时摄像头控制器 (懒加载)
-    this.mimicMode = false;      // 回放模式 vs 实时摄像头模式
 
     this._initDOM();
   }
@@ -49,9 +47,7 @@ export class ReplayViewer {
           <div class="replay-video-panel">
             <video class="replay-video" muted playsinline></video>
             <canvas class="replay-canvas"></canvas>
-            <div id="mimicContainer" style="display:none;"></div>
             <div class="replay-video-switch">
-              <button id="toggleMimic" class="mimic-toggle-btn">📷 实时摄像头</button>
               <label><input type="radio" name="videoSrc" value="canonical" checked> 规范层(256×256,对齐)</label>
               <label><input type="radio" name="videoSrc" value="original"> 原始视频</label>
               <span class="replay-video-msg"></span>
@@ -80,8 +76,6 @@ export class ReplayViewer {
     this.scrubber = this.container.querySelector("#replayScrubber");
     this.frameLabel = this.container.querySelector("#replayFrameLabel");
     this.playPauseBtn = this.container.querySelector("#replayPlayPause");
-    this.mimicContainer = this.container.querySelector("#mimicContainer");
-    this.toggleMimicBtn = this.container.querySelector("#toggleMimic");
     this.load3DBtn = this.container.querySelector("#load3DBtn");
 
     this._bindEvents();
@@ -117,8 +111,6 @@ export class ReplayViewer {
     });
 
     // 实时摄像头切换
-    this.toggleMimicBtn.addEventListener("click", () => this._toggleMimic());
-
     // 懒加载3D模型
     this.load3DBtn.addEventListener("click", () => this._load3D());
 
@@ -476,43 +468,6 @@ export class ReplayViewer {
       console.error("3D加载失败:", err);
       this.load3DBtn.textContent = "❌ 加载失败";
       this.load3DBtn.disabled = false;
-    }
-  }
-
-  /** 切换实时摄像头模式 */
-  async _toggleMimic() {
-    this.mimicMode = !this.mimicMode;
-
-    if (this.mimicMode) {
-      // 进入摄像头模式
-      this.toggleMimicBtn.textContent = "📹 关闭摄像头";
-      this.video.style.display = "none";
-      this.canvas.style.display = "none";
-      this.mimicContainer.style.display = "block";
-
-      // 懒加载摄像头控制器
-      if (!this.mimicController) {
-        // 动态导入
-        const module = await import("./hand_mimic.js");
-        this.mimicController = new module.HandMimicController(this.mimicContainer);
-      }
-
-      await this.mimicController.start();
-
-      // 暂停回放
-      if (this.isPlaying) {
-        this.togglePlay();
-      }
-    } else {
-      // 退出摄像头模式
-      this.toggleMimicBtn.textContent = "📷 实时摄像头";
-      this.video.style.display = "block";
-      this.canvas.style.display = "block";
-      this.mimicContainer.style.display = "none";
-
-      if (this.mimicController) {
-        this.mimicController.stop();
-      }
     }
   }
 }

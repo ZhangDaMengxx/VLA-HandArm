@@ -663,6 +663,8 @@ body {
     aria-controls="hp_sf"><span class="ic">◐</span><span class="lb">速度力控</span></button>
   <button class="tab-btn" role="tab" data-tab="preset" aria-selected="false"
     aria-controls="hp_preset"><span class="ic">☰</span><span class="lb">预设</span></button>
+  <button class="tab-btn" role="tab" data-tab="camera" aria-selected="false"
+    aria-controls="hp_camera"><span class="ic">📷</span><span class="lb">摄像头</span></button>
   <button class="tab-btn" role="tab" data-tab="rec"    aria-selected="false"
     aria-controls="hp_rec"><span class="ic">⏺</span><span class="lb">录制</span>
     <span class="badge"></span></button>
@@ -765,6 +767,25 @@ body {
     <div class="jgroup" style="margin-top:10px;line-height:1.5;">
       厂商 DefaultAction.txt 的快照。名字是<b>按索引号猜的</b>,实机跑一遍才能对准。
     </div>
+  </div>
+  </section>
+
+  <!-- ── 摄像头实时控制 ── -->
+  <section class="tab-pane" id="hp_camera" role="tabpanel" aria-labelledby="摄像头">
+  <div class="card">
+    <div class="card-head"><span>实时摄像头手势控制</span>
+      <button class="btn-inline" id="handCameraToggle">启动摄像头</button>
+    </div>
+    <div class="jgroup" style="margin-top:8px;line-height:1.5;">
+      使用 MediaPipe Hands 实时检测手部姿态，通过 retargeting 映射到灵巧手关节。
+      <br><b>需要 HTTPS</b> 才能访问摄像头（浏览器安全策略）。
+      <br><br>
+      <b>工作模式</b>：
+      <br>• 未接入：仅 3D 预览（无硬件控制）
+      <br>• 已接入：<b>实时木偶跟随</b>（硬件同步）
+    </div>
+    <!-- 摄像头容器（由 hand_mimic.js 动态创建内容） -->
+    <div id="handCameraContainer" style="margin-top:12px;display:none;width:100%;height:360px;border-radius:8px;overflow:hidden;background:#000;"></div>
   </div>
   </section>
 
@@ -1666,10 +1687,12 @@ body {
   import { ArmViewer } from "/static/arm3d.js";
   import { ComboViewer } from "/static/combo3d.js";
   import { ReplayViewer } from "/static/replay3d.js";
+  import { HandCameraControl } from "/static/hand_camera.js";
   window.HandViewer = HandViewer;
   window.ArmViewer = ArmViewer;
   window.ComboViewer = ComboViewer;
   window.ReplayViewer = ReplayViewer;
+  window.HandCameraControl = HandCameraControl;
   window.dispatchEvent(new Event("hand3d-ready"));
   window.dispatchEvent(new Event("arm3d-ready"));
   window.dispatchEvent(new Event("combo3d-ready"));
@@ -2303,6 +2326,8 @@ function connectWS() {
 let _handWs = null, _handActive = false, _handLimits = [], _handNames = [];
 let _handActions = [], _playingAction = null;
 let _handMock = false, _hand3d = true;      // 默认真手 + 开 3D
+let _handCamera = null;  // 摄像头控制器（懒加载）
+
 async function startHandDebug() {
   $("center").classList.add("has-data");
   $("handStatus").innerHTML = '<span class="dot busy"></span>打开串口…';
@@ -2396,6 +2421,18 @@ async function ensureHand3d() {
     console.log("[hand3d] 可动关节", n);
     $("screenHint").style.display = "none";
     _hv = v;
+
+    // 初始化摄像头控制器（如果还没初始化）
+    if (!_handCamera) {
+      if (!window.HandCameraControl) {
+        await new Promise(r => window.addEventListener("hand3d-ready", r, { once: true }));
+      }
+      _handCamera = new window.HandCameraControl();
+      _handCamera.setHandViewer(_hv);
+      _handCamera.setHardwareConnectedCheck(() => _handActive);  // 传入硬件连接状态
+      console.log("[hand_camera] 已初始化（接入时实时驱动，未接入时仅预览）");
+    }
+
     return v;
   })();
   try { return await _hvLoading; }

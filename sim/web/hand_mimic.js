@@ -1,10 +1,11 @@
 // sim/web/hand_mimic.js — 实时摄像头手势控制
 // 使用 MediaPipe Hands (WASM) 进行前端推理，不占用服务器 GPU
 
-const MP_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe";
+// 使用本地托管的 MediaPipe 文件（避免 CDN 访问问题）
+const MP_CDN = "/vendor/mediapipe";
 
 export class HandMimicController {
-  constructor(container) {
+  constructor(container, onJointAnglesCallback = null) {
     this.container = container;
     this.hands = null;
     this.camera = null;
@@ -12,9 +13,16 @@ export class HandMimicController {
     this.canvasElement = null;
     this.canvasCtx = null;
     this.statusElement = null;
+    this.onJointAngles = onJointAnglesCallback;  // 回调：将关节角度传给父组件
 
     this.lastSendTime = 0;
-    this.sendInterval = 100; // 10 FPS 节流
+    this.sendInterval = 33; // 30 FPS 节流（更流畅）
+    this._sending = false;  // 请求进行中标志
+
+    // FPS 监控
+    this.frameCount = 0;
+    this.lastFpsTime = 0;
+    this.currentFps = 0;
 
     this._setupUI();
   }
@@ -50,21 +58,21 @@ export class HandMimicController {
   }
 
   async _loadMediaPipe() {
-    // 动态加载 MediaPipe Hands
+    // 动态加载 MediaPipe Hands（本地文件）
     if (!window.Hands) {
-      await this._loadScript(`${MP_CDN}/hands@0.4.1675469240/hands.js`);
+      await this._loadScript(`${MP_CDN}/hands.js`);
     }
     if (!window.Camera) {
-      await this._loadScript(`${MP_CDN}/camera_utils@0.3.1640029074/camera_utils.js`);
+      await this._loadScript(`${MP_CDN}/camera_utils.js`);
     }
 
     this.hands = new window.Hands({
-      locateFile: (file) => `${MP_CDN}/hands@0.4.1675469240/${file}`
+      locateFile: (file) => `${MP_CDN}/${file}`
     });
 
     this.hands.setOptions({
       maxNumHands: 1,              // 单手
-      modelComplexity: 1,          // 0=lite, 1=full
+      modelComplexity: 1,          // 1=full (我们只有这个模型文件)
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5
     });
@@ -73,12 +81,13 @@ export class HandMimicController {
   }
 
   async _startCamera() {
-    // 请求摄像头权限（浏览器会提示用户）
+    // 请求摄像头权限（降低分辨率以提高帧率）
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "user",     // 前置摄像头
-        width: { ideal: 640 },
-        height: { ideal: 480 }
+        width: { ideal: 480 },   // 降低分辨率：640→480
+        height: { ideal: 360 },  // 降低分辨率：480→360
+        frameRate: { ideal: 60, min: 30 }  // 明确要求高帧率
       }
     });
 
@@ -96,19 +105,32 @@ export class HandMimicController {
     this.canvasElement.width = this.videoElement.videoWidth;
     this.canvasElement.height = this.videoElement.videoHeight;
 
+    console.log(`[HandMimic] 摄像头分辨率: ${this.videoElement.videoWidth}x${this.videoElement.videoHeight}`);
+
     // MediaPipe Camera 工具自动处理帧循环
     this.camera = new window.Camera(this.videoElement, {
       onFrame: async () => {
         await this.hands.send({ image: this.videoElement });
       },
-      width: 640,
-      height: 480
+      width: this.videoElement.videoWidth,
+      height: this.videoElement.videoHeight,
+      fps: 60  // 设置目标帧率
     });
 
     await this.camera.start();
   }
 
   _onResults(results) {
+    // FPS 监控
+    this.frameCount++;
+    const now = performance.now();
+    if (now - this.lastFpsTime >= 1000) {
+      this.currentFps = Math.round(this.frameCount * 1000 / (now - this.lastFpsTime));
+      console.log(`[HandMimic] MediaPipe FPS: ${this.currentFps}`);
+      this.frameCount = 0;
+      this.lastFpsTime = now;
+    }
+
     const w = this.canvasElement.width;
     const h = this.canvasElement.height;
 
@@ -117,21 +139,32 @@ export class HandMimicController {
     this.canvasCtx.clearRect(0, 0, w, h);
     this.canvasCtx.drawImage(results.image, 0, 0, w, h);
 
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0]; // 取第一只手
+    // 调试：检查是否检测到手
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      console.log("[HandMimic] 未检测到手");
+      this.canvasCtx.restore();
+      return;
+    }
 
-      // 绘制骨骼线
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0]; // 用于绘制（屏幕坐标）
+      const worldLandmarks = results.multiHandWorldLandmarks?.[0]; // 用于重定向（米制3D坐标）
+
+      // 绘制骨骼线（使用屏幕坐标）
       this._drawConnectors(landmarks);
       // 绘制关键点
       this._drawLandmarks(landmarks);
 
-      // 节流发送到服务器（10 FPS）
-      const now = Date.now();
-      if (now - this.lastSendTime >= this.sendInterval) {
-        this.lastSendTime = now;
-        this._sendToServer(landmarks);
+      // 立即发送到服务器，无节流（让 MediaPipe 和后端直接同步）
+      if (worldLandmarks) {
+        this._sendToServer(worldLandmarks);
+      } else {
+        console.warn("[HandMimic] multiHandWorldLandmarks 不可用");
       }
     }
+
+    // 绘制 FPS 到视频右上角
+    this._drawFps();
 
     this.canvasCtx.restore();
   }
@@ -171,7 +204,38 @@ export class HandMimicController {
     }
   }
 
+  _drawFps() {
+    const fps = this.currentFps || 0;
+    const text = `${fps} FPS`;
+
+    // 绘制位置：右上角，留10px边距
+    const x = this.canvasElement.width - 10;
+    const y = 30;
+
+    // 设置字体
+    this.canvasCtx.font = "bold 24px Arial";
+    this.canvasCtx.textAlign = "right";
+    this.canvasCtx.textBaseline = "top";
+
+    // 绘制黑色描边（确保在任何背景下都清晰）
+    this.canvasCtx.strokeStyle = "#000000";
+    this.canvasCtx.lineWidth = 4;
+    this.canvasCtx.strokeText(text, x, y);
+
+    // 绘制白色文字
+    this.canvasCtx.fillStyle = "#00ff00";  // 绿色，和骨骼点颜色一致
+    this.canvasCtx.fillText(text, x, y);
+  }
+
   async _sendToServer(landmarks) {
+    // 非阻塞发送：不等待响应，避免阻塞下一帧
+    // 如果上一次请求还在进行，跳过本次（避免请求堆积）
+    if (this._sending) {
+      return;
+    }
+
+    this._sending = true;
+
     try {
       // 转换为服务器期望的格式
       const payload = {
@@ -190,15 +254,22 @@ export class HandMimicController {
       });
 
       const result = await response.json();
-      
+
       if (result.ok) {
-        this._setStatus(`✅ ${result.gesture || "执行中"}`);
+        this._setStatus(`✅ ${this.currentFps} FPS | ${result.gesture || "执行中"}`);
+
+        // 将关节角度传递给父组件（用于更新 3D 渲染）
+        if (this.onJointAngles && result.joint_angles) {
+          this.onJointAngles(result.joint_angles);
+        }
       } else {
         this._setStatus(`⚠️ ${result.msg || "未识别"}`);
       }
     } catch (err) {
       console.error("[HandMimic] 发送失败:", err);
       this._setStatus(`❌ 网络错误: ${err.message}`);
+    } finally {
+      this._sending = false;
     }
   }
 

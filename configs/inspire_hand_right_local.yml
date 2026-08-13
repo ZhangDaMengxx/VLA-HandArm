@@ -23,7 +23,7 @@ retargeting:
   type: vector
   # ⚠ 使用无 mimic 约束的简化版 URDF，仅用于 retargeting
   # 实际机器人控制使用原始 inspire_hand_right.urdf（含 mimic）
-  urdf_path: hand/urdf/inspire_hand_right_6dof.urdf
+  urdf_path: ../assets/hand/urdf/inspire_hand_right_6dof.urdf
 
   # Target refers to the retargeting target, which is the robot hand
   # ⚠ 2026-08-11: 更新为新URDF关节名和链接名
