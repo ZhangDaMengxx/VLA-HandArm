@@ -93,13 +93,13 @@ export class ReplayViewer {
     this.scrubber.addEventListener("input", () => this.seekToFrame(+this.scrubber.value));
     this.playPauseBtn.addEventListener("click", () => this.togglePlay());
 
-    // 点时序图直接跳帧 —— 配合红色丢失条,看到问题段点一下就过去。
-    this.chartCanvas.addEventListener("click", (e) => {
-      if (!this.frames.length) return;
-      const r = this.chartCanvas.getBoundingClientRect();
-      const ratio = (e.clientX - r.left) / Math.max(r.width, 1);
-      this.seekToFrame(Math.round(ratio * (this.frames.length - 1)));
-    });
+    // 点时序图直接跳帧 —— 时序图已隐藏，跳过
+    // this.chartCanvas.addEventListener("click", (e) => {
+    //   if (!this.frames.length) return;
+    //   const r = this.chartCanvas.getBoundingClientRect();
+    //   const ratio = (e.clientX - r.left) / Math.max(r.width, 1);
+    //   this.seekToFrame(Math.round(ratio * (this.frames.length - 1)));
+    // });
 
     this.container.querySelectorAll('input[name="videoSrc"]').forEach(radio => {
       radio.addEventListener("change", async (e) => {
@@ -248,7 +248,7 @@ export class ReplayViewer {
     this.scrubber.value = f;
     const lost = this.frames[f].vis.every(v => v === 0);
     this.frameLabel.textContent = `${f} / ${this.frames.length - 1}${lost ? " · 检测丢失" : ""}`;
-    this._drawChart(f);
+    // this._drawChart(f);  // 时序图已隐藏，跳过绘制
   }
 
   /** 把视频帧和骨骼画进**同一个** canvas。

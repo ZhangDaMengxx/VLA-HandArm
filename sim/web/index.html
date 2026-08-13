@@ -68,7 +68,7 @@ body {
 
 /* replay3d 布局:视频+骨骼+3D 并排,下面时序图,底部控制条 */
 .replay-layout { position: absolute; inset: 0; display: flex; flex-direction: column; }
-.replay-top { flex: 2.2; display: flex; gap: 4px; }
+.replay-top { flex: 1; display: flex; gap: 4px; }
 .replay-video-panel { flex: 1; position: relative; background: #0a0b0d; }
 .replay-video, .replay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .replay-video { visibility: hidden; }  /* video 只用来解码,不直接显示;帧由 canvas 画 */
@@ -101,7 +101,7 @@ body {
 .load-3d-btn:hover { background: rgba(47,107,255,0.25); color: #fff; }
 .load-3d-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.replay-bottom { flex: 2; background: #16181d; position: relative; }
+.replay-bottom { display: none; }  /* 隐藏关节时序图，腾出空间 */
 .replay-chart { width: 100%; height: 100%; }
 .replay-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
   z-index: 10; display: flex; gap: 12px; align-items: center; background: rgba(22,24,29,0.92);
