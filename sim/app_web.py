@@ -968,9 +968,9 @@ async def replay_keypoints(robot: str = "") -> JSONResponse:
         max_v = np.nanmax(kp2d[:, :, 1])
         src_w = int(np.ceil(max_u / 20.0) * 20) if max_u > 0 else 540
         src_h = int(np.ceil(max_v / 20.0) * 20) if max_v > 0 else 960
-        logger.info(f"[replay_keypoints] 从kp2d推算源尺寸: max_u={max_u:.1f}, max_v={max_v:.1f} → {src_w}×{src_h}")
+        print(f"[replay_keypoints] 从kp2d推算源尺寸: max_u={max_u:.1f}, max_v={max_v:.1f} → {src_w}×{src_h}")
     else:
-        logger.info(f"[replay_keypoints] 从原始视频读取尺寸: {src_w}×{src_h}")
+        print(f"[replay_keypoints] 从原始视频读取尺寸: {src_w}×{src_h}")
     frames_data = []
     for i in range(len(kp2d)):
         obj = {"kp2d": kp2d[i].round(2).tolist(), "vis": vis[i].round(3).tolist()}
