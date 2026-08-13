@@ -232,15 +232,60 @@ async def hand_gesture(name: str):
 # ============================================================================
 @app.get("/arm/status")
 async def arm_status():
-    """查询臂状态"""
+    """查询臂状态（包含使能/急停状态）"""
     if arm is None:
         return {"connected": False, "message": "Arm not connected"}
 
     try:
         joints = arm.read_angles()
-        return {"connected": True, "joints": joints}
+        return {
+            "connected": True,
+            "enabled": arm.enabled,
+            "frozen": arm.frozen,
+            "joints": joints,
+        }
     except Exception as e:
         raise HTTPException(500, f"Read arm status failed: {e}")
+
+
+@app.post("/arm/enable")
+async def arm_enable():
+    """使能机械臂电机"""
+    if arm is None:
+        raise HTTPException(503, "Arm not connected")
+    ok = arm.enable()
+    if not ok:
+        raise HTTPException(500, "enable() 失败，检查 CAN 通信")
+    return {"ok": True, "enabled": arm.enabled}
+
+
+@app.post("/arm/disable")
+async def arm_disable():
+    """下使能机械臂电机（进入安全状态）"""
+    if arm is None:
+        raise HTTPException(503, "Arm not connected")
+    ok = arm.disable()
+    if not ok:
+        raise HTTPException(500, "disable() 失败")
+    return {"ok": True, "enabled": arm.enabled}
+
+
+@app.post("/arm/estop")
+async def arm_estop():
+    """急停：立即进入关节阻尼模式，电机失能。需要 /arm/reset 才能恢复。"""
+    if arm is None:
+        raise HTTPException(503, "Arm not connected")
+    arm.estop()
+    return {"ok": True, "frozen": arm.frozen, "enabled": arm.enabled}
+
+
+@app.post("/arm/reset")
+async def arm_reset():
+    """退出急停阻尼模式并重新使能。急停后必须调这个才能恢复运动。"""
+    if arm is None:
+        raise HTTPException(503, "Arm not connected")
+    arm.reset()
+    return {"ok": True, "frozen": arm.frozen, "enabled": arm.enabled}
 
 
 @app.post("/arm/joints")
