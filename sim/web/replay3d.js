@@ -34,8 +34,10 @@ export class ReplayViewer {
     this.frames = [];            // [{kp2d, vis, wrist_pose}]
     this.trajArm = [];           // [N][7]
     this.trajHand = [];          // [N][12]
-    this.comboViewer = null;     // 复用 ComboViewer
+    this.comboViewer = null;     // 复用 ComboViewer (懒加载)
     this.videoSrc = "canonical"; // "canonical" | "original"
+    this.mimicController = null; // 实时摄像头控制器 (懒加载)
+    this.mimicMode = false;      // 回放模式 vs 实时摄像头模式
 
     this._initDOM();
   }
@@ -47,13 +49,17 @@ export class ReplayViewer {
           <div class="replay-video-panel">
             <video class="replay-video" muted playsinline></video>
             <canvas class="replay-canvas"></canvas>
+            <div id="mimicContainer" style="display:none;"></div>
             <div class="replay-video-switch">
+              <button id="toggleMimic" class="mimic-toggle-btn">📷 实时摄像头</button>
               <label><input type="radio" name="videoSrc" value="canonical" checked> 规范层(256×256,对齐)</label>
               <label><input type="radio" name="videoSrc" value="original"> 原始视频</label>
               <span class="replay-video-msg"></span>
             </div>
           </div>
-          <div class="replay-3d-panel" id="replay3dHost"></div>
+          <div class="replay-3d-panel" id="replay3dHost">
+            <button id="load3DBtn" class="load-3d-btn">🎬 加载3D模型</button>
+          </div>
         </div>
         <div class="replay-bottom">
           <canvas class="replay-chart"></canvas>
@@ -74,6 +80,9 @@ export class ReplayViewer {
     this.scrubber = this.container.querySelector("#replayScrubber");
     this.frameLabel = this.container.querySelector("#replayFrameLabel");
     this.playPauseBtn = this.container.querySelector("#replayPlayPause");
+    this.mimicContainer = this.container.querySelector("#mimicContainer");
+    this.toggleMimicBtn = this.container.querySelector("#toggleMimic");
+    this.load3DBtn = this.container.querySelector("#load3DBtn");
 
     this._bindEvents();
   }
@@ -106,6 +115,12 @@ export class ReplayViewer {
         }
       });
     });
+
+    // 实时摄像头切换
+    this.toggleMimicBtn.addEventListener("click", () => this._toggleMimic());
+
+    // 懒加载3D模型
+    this.load3DBtn.addEventListener("click", () => this._load3D());
 
     // ⚠ 设了 currentTime 之后帧是**异步**解码的,立刻画会画出上一帧 —— 帧号就和画面
     // 差一格,正是"验证对不对"最致命的错。所以等 seeked 落定再重画。
@@ -171,13 +186,8 @@ export class ReplayViewer {
         this._armRange.push([lo, hi]);
       }
 
-      // 加载 3D
-      if (!window.ComboViewer) {
-        await new Promise(r => window.addEventListener("combo3d-ready", r, { once: true }));
-      }
-      const host = document.getElementById("replay3dHost");
-      this.comboViewer = new window.ComboViewer(host);
-      await this.comboViewer.load("/combo_assets/nero_inspire_right_viz.urdf");
+      // 加载 3D (懒加载 - 不默认创建)
+      // 用户点击"加载3D模型"按钮后才初始化
 
       // 加载视频
       await this._loadVideo();
@@ -426,7 +436,84 @@ export class ReplayViewer {
     if (this._onKey) document.removeEventListener("keydown", this._onKey);
     if (this._ro) { this._ro.disconnect(); this._ro = null; }
     try { this.video.pause(); this.video.removeAttribute("src"); this.video.load(); } catch (_) {}
+
+    // 清理3D资源
+    if (this.comboViewer && this.comboViewer.destroy) {
+      this.comboViewer.destroy();
+    }
     this.comboViewer = null;
+
+    // 清理摄像头资源
+    if (this.mimicController) {
+      this.mimicController.stop();
+      this.mimicController = null;
+    }
+  }
+
+  /** 懒加载3D模型 */
+  async _load3D() {
+    if (this.comboViewer) return;  // 已加载
+
+    try {
+      this.load3DBtn.textContent = "加载中...";
+      this.load3DBtn.disabled = true;
+
+      if (!window.ComboViewer) {
+        await new Promise(r => window.addEventListener("combo3d-ready", r, { once: true }));
+      }
+
+      const host = document.getElementById("replay3dHost");
+      this.comboViewer = new window.ComboViewer(host);
+      await this.comboViewer.load("/combo_assets/nero_inspire_right_viz.urdf");
+
+      // 同步当前帧
+      if (this.frames.length > 0) {
+        this._applyFrame(this.currentFrame);
+      }
+
+      this.load3DBtn.remove();  // 加载完成后移除按钮
+    } catch (err) {
+      console.error("3D加载失败:", err);
+      this.load3DBtn.textContent = "❌ 加载失败";
+      this.load3DBtn.disabled = false;
+    }
+  }
+
+  /** 切换实时摄像头模式 */
+  async _toggleMimic() {
+    this.mimicMode = !this.mimicMode;
+
+    if (this.mimicMode) {
+      // 进入摄像头模式
+      this.toggleMimicBtn.textContent = "📹 关闭摄像头";
+      this.video.style.display = "none";
+      this.canvas.style.display = "none";
+      this.mimicContainer.style.display = "block";
+
+      // 懒加载摄像头控制器
+      if (!this.mimicController) {
+        // 动态导入
+        const module = await import("./hand_mimic.js");
+        this.mimicController = new module.HandMimicController(this.mimicContainer);
+      }
+
+      await this.mimicController.start();
+
+      // 暂停回放
+      if (this.isPlaying) {
+        this.togglePlay();
+      }
+    } else {
+      // 退出摄像头模式
+      this.toggleMimicBtn.textContent = "📷 实时摄像头";
+      this.video.style.display = "block";
+      this.canvas.style.display = "block";
+      this.mimicContainer.style.display = "none";
+
+      if (this.mimicController) {
+        this.mimicController.stop();
+      }
+    }
   }
 }
 

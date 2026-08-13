@@ -2177,7 +2177,18 @@ async def hand_mimic(payload: dict) -> JSONResponse:
         )
 
     # 调用现有的手势播放逻辑
-    return await gesture_play({"name": gesture})
+    result = await gesture_play({"name": gesture})
+
+    # 在响应中附加识别到的手势名称
+    if isinstance(result, JSONResponse):
+        try:
+            data = json.loads(result.body.decode())
+            data["gesture"] = gesture
+            return JSONResponse(data, status_code=result.status_code)
+        except Exception:
+            pass
+
+    return result
 
 
 def _recognize_mediapipe_gesture(landmarks: list[dict]) -> str | None:

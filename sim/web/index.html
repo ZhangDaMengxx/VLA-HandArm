@@ -73,11 +73,34 @@ body {
 .replay-video, .replay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .replay-video { visibility: hidden; }  /* video 只用来解码,不直接显示;帧由 canvas 画 */
 .replay-canvas { pointer-events: none; z-index: 2; }  /* canvas 在上,吃鼠标事件;video 在下解码 */
+
+/* Mimic 摄像头面板 */
+#mimicContainer { position: absolute; inset: 0; z-index: 3; }
+.mimic-panel { position: relative; width: 100%; height: 100%; }
+.mimic-video, .mimic-canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.mimic-video { z-index: 1; }
+.mimic-canvas { z-index: 2; }
+.mimic-status { position: absolute; bottom: 12px; left: 12px; z-index: 3;
+  padding: 8px 14px; background: rgba(0,0,0,0.75); color: #0f0; font-size: 13px;
+  border-radius: 6px; font-family: var(--mono); }
+
 .replay-video-switch { position: absolute; top: 8px; left: 8px; z-index: 3;
-  display: flex; gap: 12px; font-size: 11px; color: rgba(255,255,255,0.7); }
+  display: flex; gap: 12px; font-size: 11px; color: rgba(255,255,255,0.7);
+  align-items: center; flex-wrap: wrap; }
 .replay-video-switch label { cursor: pointer; }
 .replay-video-msg { color: #fa0; }
-.replay-3d-panel { flex: 1.4; position: relative; background: #0e0f12; }
+.mimic-toggle-btn { padding: 6px 12px; background: rgba(47,107,255,0.85); color: #fff;
+  border: none; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all .2s; }
+.mimic-toggle-btn:hover { background: var(--accent); }
+
+.replay-3d-panel { flex: 1.4; position: relative; background: #0e0f12;
+  display: flex; align-items: center; justify-content: center; }
+.load-3d-btn { padding: 12px 24px; background: rgba(47,107,255,0.15); color: rgba(255,255,255,0.8);
+  border: 1px solid rgba(47,107,255,0.3); border-radius: 8px; cursor: pointer;
+  font-size: 14px; transition: all .2s; }
+.load-3d-btn:hover { background: rgba(47,107,255,0.25); color: #fff; }
+.load-3d-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .replay-bottom { flex: 2; background: #16181d; position: relative; }
 .replay-chart { width: 100%; height: 100%; }
 .replay-controls { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -2190,7 +2213,14 @@ function switchMode(view) {
   if (prev === "live") leaveCombo();          // 合体页:两台都断(silent)
   if (prev === "hand") stopHandDebug();
   if (prev === "arm")  stopArmDebug({ silent: true });
-  if (prev === "replay" || prev == null) stopLive();   // 老 Live 的 ROS 会话
+  if (prev === "replay" || prev == null) {
+    stopLive();   // 老 Live 的 ROS 会话
+    // 清理回放页资源（3D模型 + 摄像头）
+    if (_rv && _rv.destroy) {
+      _rv.destroy();
+      _rv = null;
+    }
+  }
 
   if (live) {
     enterCombo();
@@ -4319,7 +4349,8 @@ function vcShowCands(d) {
                         need_confirm: true, params: {}, notes: [],
                         devices: VC_PACK_DEVICES[c.kind] || [], ready: d.ready });
       } else {
-        vcEl("Text").value = c.name; vcParse();
+        // 技能：用 skill_id 重新解析，避免用 name 再次触发歧义
+        vcEl("Text").value = c.skill_id; vcParse();
       }
     };
     host.appendChild(b);
