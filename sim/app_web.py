@@ -963,8 +963,14 @@ async def replay_keypoints(robot: str = "") -> JSONResponse:
         except Exception:                                 # noqa: BLE001
             pass
     if not (src_w and src_h):                             # 兜底:按 kp2d 实际跨度估
-        src_w = int(np.ceil(np.nanmax(np.abs(kp2d[:, :, 0])) / 20.0) * 20) or 540
-        src_h = int(np.ceil(np.nanmax(np.abs(kp2d[:, :, 1])) / 20.0) * 20) or 960
+        # kp2d 是像素坐标（正数），找最大值向上取整到20的倍数
+        max_u = np.nanmax(kp2d[:, :, 0])  # 去掉 abs()
+        max_v = np.nanmax(kp2d[:, :, 1])
+        src_w = int(np.ceil(max_u / 20.0) * 20) if max_u > 0 else 540
+        src_h = int(np.ceil(max_v / 20.0) * 20) if max_v > 0 else 960
+        logger.info(f"[replay_keypoints] 从kp2d推算源尺寸: max_u={max_u:.1f}, max_v={max_v:.1f} → {src_w}×{src_h}")
+    else:
+        logger.info(f"[replay_keypoints] 从原始视频读取尺寸: {src_w}×{src_h}")
     frames_data = []
     for i in range(len(kp2d)):
         obj = {"kp2d": kp2d[i].round(2).tolist(), "vis": vis[i].round(3).tolist()}
