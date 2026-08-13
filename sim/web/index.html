@@ -93,11 +93,11 @@ body {
   border: none; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all .2s; }
 .mimic-toggle-btn:hover { background: var(--accent); }
 
-.replay-3d-panel { flex: 1.4; position: relative; background: #0e0f12;
-  display: flex; align-items: center; justify-content: center; }
+.replay-3d-panel { flex: 1.4; position: relative; background: #0e0f12; }
 .load-3d-btn { padding: 12px 24px; background: rgba(47,107,255,0.15); color: rgba(255,255,255,0.8);
   border: 1px solid rgba(47,107,255,0.3); border-radius: 8px; cursor: pointer;
-  font-size: 14px; transition: all .2s; }
+  font-size: 14px; transition: all .2s;
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 5; }
 .load-3d-btn:hover { background: rgba(47,107,255,0.25); color: #fff; }
 .load-3d-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
