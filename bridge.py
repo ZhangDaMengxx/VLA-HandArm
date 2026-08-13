@@ -335,6 +335,17 @@ async def startup():
     if WANT_MOCK:
         hand = InspireHand(InspireHandConfig(mock=True))
         print("● 灵巧手: MOCK 模式(--mock 显式指定),不会有任何真实运动")
+
+        # 机械臂也要 mock，不然 arm=None 导致所有机械臂端点 503
+        try:
+            from nero_arm import NeroArm
+            arm = NeroArm(mock=True)
+            arm.connect()  # mock 的 connect() 直接返回 True
+            print("● 机械臂: MOCK 模式")
+        except Exception as e:
+            arm = None
+            print(f"⚠ 机械臂 mock 初始化失败: {e}")
+
         return
 
     # 真机模式:连不上就抛,别静默退到 mock —— 那会让"测试通过"变成假象
