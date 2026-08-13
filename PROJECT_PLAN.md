@@ -151,3 +151,122 @@ MDH 参数 `(d, a, alpha, theta_offset)`,单位 m / rad:
 - 仓库已重构成自足可移植(路径自动定位、assets/configs/data 内置、nero_kin 加 vendored 检测器),推到了 GitHub(ZhangDaMengxx/VLA-HandArm)。
 - 剩下的关键资源/任务:Phase C 真训练在 RTX(见 `训练端部署.md`)、真实 RGB-D 相机采集接入、Web RGB-D 上传入口、`observation.images.depth` 是否入 canonical schema、正式 `T_base_camera` 标定、Phase D 第二本体。
 - **逐次具体更改见 `更新日志.md`(带时间戳)。**
+
+
+
+
+专用工具 robot:hand_gesture_custom 粗略方案
+1. MCP工具定义
+javascript
+{
+  "name": "robot:hand_gesture_custom",
+  "description": "调用自定义的原子级灵巧手手势",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "gesture_name": {
+        "type": "string",
+        "description": "手势名称：'six', 'eight', 'fist', 'peace', 'rock' 等"
+      },
+      "angles": {
+        "type": "array",
+        "items": {"type": "number"},
+        "minItems": 6,
+        "maxItems": 6,
+        "description": "可选，自定义6个关节角度。不提供则使用预定义"
+      }
+    },
+    "required": ["gesture_name"]
+  }
+}
+2. 手势映射表（后端）
+javascript
+const CUSTOM_GESTURES = {
+  "six": {
+    name: "比个6",
+    angles: [0, 0, 1.5, 1.5, 1.5, 0],
+    description: "大拇指和小指展开，其他手指弯曲"
+  },
+  
+  "eight": {
+    name: "比个8",
+    angles: [0.5, 0.5, 0, 0, 1.5, 1.5],
+    description: "食指和中指竖起，其他手指弯曲"
+  },
+  
+  "fist": {
+    name: "握拳",
+    angles: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5],
+    description: "所有手指弯曲"
+  },
+  
+  "peace": {
+    name: "和平手势",
+    angles: [1.5, 1.5, 0, 0, 1.5, 1.5],
+    description: "食指和中指展开"
+  },
+  
+  "rock": {
+    name: "摇滚手势",
+    angles: [0, 0, 0, 1.5, 1.5, 0],
+    description: "食指和小指展开"
+  },
+  
+  "open": {
+    name: "张开手",
+    angles: [0, 0, 0, 0, 0, 0],
+    description: "所有手指展开"
+  }
+};
+3. 工具实现逻辑
+python
+def hand_gesture_custom(gesture_name: str, angles: list = None):
+    """调用自定义手势"""
+    
+    # 如果提供了自定义角度，直接使用
+    if angles:
+        result = call_hand_set_angles(angles)
+        return {
+            "ok": result.ok,
+            "gesture": "custom",
+            "angles": angles,
+            "message": "自定义手势已执行"
+        }
+    
+    # 否则从映射表查找
+    if gesture_name not in CUSTOM_GESTURES:
+        return {
+            "ok": False,
+            "error": f"未知手势: {gesture_name}",
+            "available": list(CUSTOM_GESTURES.keys())
+        }
+    
+    gesture = CUSTOM_GESTURES[gesture_name]
+    result = call_hand_set_angles(gesture["angles"])
+    
+    return {
+        "ok": result.ok,
+        "gesture": gesture_name,
+        "name": gesture["name"],
+        "description": gesture["description"],
+        "angles": gesture["angles"],
+        "applied": result.applied if result.ok else None
+    }
+4. 我就能这样调用了
+✅ robot:hand_gesture_custom(gesture_name="six")
+   → 自动查表 [0, 0, 1.5, 1.5, 1.5, 0]
+   → 执行
+
+✅ robot:hand_gesture_custom(gesture_name="eight")
+   → 自动查表 [0.5, 0.5, 0, 0, 1.5, 1.5]
+   → 执行
+
+✅ robot:hand_gesture_custom(gesture_name="custom", angles=[0.2, 0.2, 0.5, 0.5, 1, 1])
+   → 用提供的自定义角度
+   → 执行
+5. 优势
+优势	说明
+🎯 自主调用	我能自动决定叫什么手势
+📚 易扩展	添加新手势只需加一条映射
+🔧 灵活	支持临时自定义角度
+📖 清晰	预设和自定义分离

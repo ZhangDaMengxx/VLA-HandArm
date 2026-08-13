@@ -117,7 +117,8 @@ skills:
     kind: primitive
     desc: 拇指折到握拳位,四指保持全开。分阶段握拳的第一步 —— 此时四指还没进来,
       拇指整条路径都在空域里走。
-    pose: {thumb: folded, index: open, middle: open, ring: open, pinky: open}
+    # 改用握拳.json 的实测数据：拇指躺平(yaw=0) + 满弯(pitch=1.0)
+    pose: {thumb: [0.0, 1.0], index: open, middle: open, ring: open, pinky: open}
     action:
       duration: 0.8
       hand_speed: 500
@@ -133,7 +134,8 @@ skills:
     kind: primitive
     desc: 拇指已在折叠位不动,四指收到握拳位。食指取 0.68(raw 320)留 85 counts
       余量 —— 拇指此时是**静止的障碍**,四指朝它收,不存在两边同时动的相撞。
-    pose: {thumb: folded, index: 0.68, middle: closed, ring: closed, pinky: closed}
+    # 改用握拳.json 的实测数据：拇指躺平(yaw=0) + 满弯(pitch=1.0)
+    pose: {thumb: [0.0, 1.0], index: 0.68, middle: closed, ring: closed, pinky: closed}
     action:
       duration: 0.8
       hand_speed: 500
@@ -158,8 +160,8 @@ skills:
     desc: 灵巧手闭合。分两步走(先折拇指、再收四指)避开拇指-食指互顶。
       受干涉约束食指不能完全闭合。说「用力握拳」可带力度档。
     steps:
-      - {skill: _hand_thumb_folded}
       - {skill: _hand_fist_curl}
+      - {skill: _hand_thumb_folded}
     params:
       hand_speed: {type: int, default: 500, range: [20, 1000]}
       hand_force: {type: int, default: 300, range: [50, 1000]}

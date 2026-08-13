@@ -21,14 +21,19 @@
 # scaling_factor 1.15 was tuned on the old tip locations and may need re-tuning.
 retargeting:
   type: vector
-  urdf_path: hand/urdf/inspire_hand_right.urdf
+  # ⚠ 使用无 mimic 约束的简化版 URDF，仅用于 retargeting
+  # 实际机器人控制使用原始 inspire_hand_right.urdf（含 mimic）
+  urdf_path: hand/urdf/inspire_hand_right_6dof.urdf
 
   # Target refers to the retargeting target, which is the robot hand
-  target_joint_names: [ 'pinky_proximal_joint', 'ring_proximal_joint', 'middle_proximal_joint', 'index_proximal_joint',
-                        'thumb_proximal_pitch_joint', 'thumb_proximal_yaw_joint' ]
-  # thumb origin = base (palm); each finger origin = its own MCP link
-  target_origin_link_names: [ "base", "index_proximal", "middle_proximal", "ring_proximal", "pinky_proximal" ]
-  target_task_link_names:   [ "thumb_tip", "index_tip", "middle_tip", "ring_tip", "pinky_tip" ]
+  # ⚠ 2026-08-11: 更新为新URDF关节名和链接名
+  #   · 驱动关节(6个): 四指 right_*_1_joint + 拇指 right_thumb_1/2_joint
+  #   · 所有 *_2_joint 和 thumb_3/4_joint 都是 mimic 关节，不列在 target_joint_names
+  target_joint_names: [ 'right_little_1_joint', 'right_ring_1_joint', 'right_middle_1_joint', 'right_index_1_joint',
+                        'right_thumb_2_joint', 'right_thumb_1_joint' ]
+  # thumb origin = R_base_link (palm); each finger origin = its own MCP link
+  target_origin_link_names: [ "R_base_link", "right_index_1", "right_middle_1", "right_ring_1", "right_little_1" ]
+  target_task_link_names:   [ "right_thumb_4", "right_index_2", "right_middle_2", "right_ring_2", "right_little_2" ]
   scaling_factor: 1.15
 
   # Source refers to the retargeting input, which usually corresponds to the human hand
