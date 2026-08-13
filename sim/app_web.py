@@ -2141,6 +2141,95 @@ async def hand_video_frames(limit: int = 400) -> JSONResponse:
                          "frames": fr})
 
 
+@app.post("/api/hand/mimic")
+async def hand_mimic(payload: dict) -> JSONResponse:
+    """根据 MediaPipe/WILOR 视觉数据控制手部
+
+    payload: {
+        "format": "mediapipe" | "wilor",
+        "landmarks": [...],  # 21个3D点（MediaPipe）
+    }
+
+    阶段1：识别离散手势 → 调用预定义角度
+    未来：连续角度映射
+    """
+    format_type = str(payload.get("format") or "mediapipe")
+    landmarks = payload.get("landmarks") or []
+
+    if format_type not in ("mediapipe", "wilor"):
+        return JSONResponse(
+            {"ok": False, "msg": f"未知格式: {format_type}"},
+            status_code=400
+        )
+
+    if format_type == "wilor":
+        return JSONResponse(
+            {"ok": False, "msg": "WILOR 格式暂未实现"},
+            status_code=501
+        )
+
+    # MediaPipe 手势识别（简化版）
+    gesture = _recognize_mediapipe_gesture(landmarks)
+    if not gesture:
+        return JSONResponse(
+            {"ok": False, "msg": "未识别到已知手势"},
+            status_code=400
+        )
+
+    # 调用现有的手势播放逻辑
+    return await gesture_play({"name": gesture})
+
+
+def _recognize_mediapipe_gesture(landmarks: list[dict]) -> str | None:
+    """简化版手势识别：MediaPipe 21点 → 预定义手势名"""
+    if len(landmarks) != 21:
+        return None
+
+    try:
+        # 提取关键点
+        wrist = landmarks[0]
+        thumb_tip = landmarks[4]
+        index_tip = landmarks[8]
+        middle_tip = landmarks[12]
+        ring_tip = landmarks[16]
+        pinky_tip = landmarks[20]
+
+        # 计算展开度
+        def dist(p1, p2):
+            return ((p1.get('x', 0) - p2.get('x', 0))**2 +
+                   (p1.get('y', 0) - p2.get('y', 0))**2 +
+                   (p1.get('z', 0) - p2.get('z', 0))**2) ** 0.5
+
+        middle_mcp = landmarks[9]
+        hand_size = dist(middle_mcp, wrist)
+        if hand_size < 0.01:
+            return None
+
+        thumb_norm = dist(thumb_tip, wrist) / hand_size
+        index_norm = dist(index_tip, wrist) / hand_size
+        middle_norm = dist(middle_tip, wrist) / hand_size
+        ring_norm = dist(ring_tip, wrist) / hand_size
+        pinky_norm = dist(pinky_tip, wrist) / hand_size
+
+        # 手势识别逻辑（映射到已有的技能包名称）
+        if all(d > 1.5 for d in [thumb_norm, index_norm, middle_norm, ring_norm, pinky_norm]):
+            return "张开手"  # 需要对应技能包存在
+
+        if thumb_norm > 1.3 and all(d < 1.2 for d in [index_norm, middle_norm, ring_norm, pinky_norm]):
+            return "点赞"
+
+        if index_norm > 1.5 and all(d < 1.2 for d in [thumb_norm, middle_norm, ring_norm, pinky_norm]):
+            return "食指指向"
+
+        if all(d < 1.2 for d in [thumb_norm, index_norm, middle_norm, ring_norm, pinky_norm]):
+            return "握拳"
+
+        return None
+
+    except (KeyError, TypeError, ZeroDivisionError):
+        return None
+
+
 @app.post("/api/hand/gesture/play")
 async def gesture_play(payload: dict) -> JSONResponse:
     """回放技能包。{"path":"..."} 或 {"name":"OK手势"},可选 "return_home"。

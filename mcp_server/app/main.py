@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import config
 from .auth import make_auth_middleware
 from .robot.controller import RobotController
-from .api.v1 import hand, arm
+from .api.v1 import hand, arm, combo
 from .mcp import server as mcp_server_rest  # 旧的 REST 端点，保留向后兼容
 from .mcp import jsonrpc_mcp  # 真实 MCP 协议 - JSON-RPC 2.0
 
@@ -82,12 +82,14 @@ app.add_middleware(
 # 注入 robot 到各个路由模块
 hand.robot = robot
 arm.robot = robot
+combo.robot = robot
 mcp_server_rest.robot = robot  # 旧 REST 端点
 jsonrpc_mcp.robot = robot  # 真 MCP 端点
 
 # 挂载子路由
 app.include_router(hand.router, prefix="/api/v1/hand", tags=["Hand"])
 app.include_router(arm.router, prefix="/api/v1/arm", tags=["Arm"])
+app.include_router(combo.router, prefix="/api/v1/combo", tags=["Combo"])
 app.include_router(mcp_server_rest.router, prefix="/mcp_rest", tags=["MCP (REST, deprecated)"])
 app.include_router(jsonrpc_mcp.router, tags=["MCP"])
 

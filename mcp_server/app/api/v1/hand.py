@@ -11,6 +11,11 @@ class HandAngles(BaseModel):
     angles: list[float]
 
 
+class HandMimicRequest(BaseModel):
+    format: str  # "mediapipe" | "wilor"
+    landmarks: list[dict]
+
+
 @router.get("/status")
 async def status():
     """查询手状态"""
@@ -51,5 +56,33 @@ async def execute_gesture(name: str):
     except ValueError as e:
         # bridge 判定不可行/找不到,原样透出原因
         raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/mimic")
+async def mimic_hand(req: HandMimicRequest):
+    """
+    根据视觉姿态估计数据控制灵巧手
+
+    支持格式：
+    - mediapipe: 21个3D关键点
+    - wilor: 全身姿态数据（待实现）
+
+    例：
+    {
+      "format": "mediapipe",
+      "landmarks": [
+        {"x": 0.5, "y": 0.3, "z": 0.1},
+        ...  // 21个点
+      ]
+    }
+    """
+    try:
+        return await robot.mimic_hand(req.format, req.landmarks)
+    except NotImplementedError as e:
+        raise HTTPException(501, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))

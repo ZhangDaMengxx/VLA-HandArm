@@ -13,8 +13,10 @@ mock(无硬件空跑)要**显式**加 --mock。
    · /health 和 /hand/status 都带 "mock" 字段,状态不会再含糊
 """
 import argparse
+import asyncio
 import os
 import sys
+import time
 from pathlib import Path
 
 # sim: inspire_hand 在那里。sim/skills: schema / hand_pose 在那里。
@@ -73,6 +75,12 @@ class HandAngles(BaseModel):
 
 class ArmJoints(BaseModel):
     joints: list[float]  # 7 个弧度值
+
+
+class SkillExecRequest(BaseModel):
+    """技能执行请求"""
+    skill: str           # 技能 ID 或别名
+    params: dict = {}    # 可选参数覆盖
 
 
 # ============================================================================
@@ -227,6 +235,131 @@ async def hand_gesture(name: str):
             "angles": rad6, "applied": applied}
 
 
+@app.post("/execute")
+async def execute_skill(req: SkillExecRequest):
+    """通用技能执行端点 - 支持 primitive/composite/trajectory
+
+    composite 技能（如 hand_close）会按序执行子步骤。
+    每个子步骤之间有 hold 时间间隔。
+    """
+    try:
+        reg = _get_registry()
+    except Exception as e:
+        raise HTTPException(500, f"技能表加载失败: {e}")
+
+    # 先按 ID 查，查不到再按别名
+    spec = reg.get(req.skill) or reg.by_alias(req.skill)
+    if spec is None:
+        raise HTTPException(404, f"技能 '{req.skill}' 不在清单里")
+
+    # 解析参数
+    try:
+        params, _ = spec.resolve_params(req.params)
+    except Exception as e:
+        raise HTTPException(400, f"参数解析失败: {e}")
+
+    # 导入 backend 来展开技能
+    try:
+        from backend import make_backend
+    except ImportError as e:
+        raise HTTPException(500, f"backend 模块加载失败: {e}")
+
+    # 创建后端并展开为指令序列
+    try:
+        backend = make_backend(spec, reg)
+        steps = list(backend.steps(params))
+    except Exception as e:
+        raise HTTPException(500, f"技能展开失败: {e}")
+
+    # 执行所有步骤
+    executed = []
+    for i, step in enumerate(steps):
+        cmd = step.cmd
+        hold = step.hold
+
+        # 执行这一步
+        try:
+            if "hand" in cmd:
+                # 手部动作
+                if hand is None:
+                    raise HTTPException(503, "Hand not connected")
+
+                # 设置速度和力控
+                if "hand_speed" in cmd:
+                    hand.set_speed(int(cmd["hand_speed"]))
+                if "hand_force" in cmd:
+                    hand.set_force(int(cmd["hand_force"]))
+
+                # 设置角度
+                if "hand" in cmd:
+                    rad6 = list(cmd["hand"])
+                    # 可行域检查
+                    import hand_pose as hp
+                    why = hp.check_feasible(rad6)
+                    if why is not None:
+                        raise HTTPException(409,
+                            f"步骤 {i+1}/{len(steps)} 姿态不可行: {why}")
+
+                    if not hand.set_angles(rad6):
+                        raise HTTPException(500,
+                            f"步骤 {i+1}/{len(steps)} 写 ANGLE_SET 失败")
+
+            elif "arm" in cmd:
+                # 臂部动作
+                if arm is None:
+                    raise HTTPException(503, "Arm not connected")
+
+                joints = list(cmd["arm"])
+                if len(joints) != 7:
+                    raise HTTPException(400, f"步骤 {i+1} 需要7个关节角")
+
+                if not arm.move_joints(joints):
+                    raise HTTPException(500,
+                        f"步骤 {i+1}/{len(steps)} 臂运动失败")
+
+            elif "action" in cmd:
+                # SDK 控制指令
+                action = cmd["action"]
+                if action == "enable" and arm:
+                    arm.enable()
+                elif action == "disable" and arm:
+                    arm.disable()
+                elif action == "reset" and arm:
+                    arm.reset()
+                elif action == "set_speed" and arm and "value" in cmd:
+                    arm.set_speed(cmd["value"])
+
+            elif "estop" in cmd:
+                # 急停
+                if arm:
+                    arm.estop()
+
+            executed.append({
+                "step": i + 1,
+                "cmd": cmd,
+                "hold": hold
+            })
+
+            # 等待 hold 时间
+            if hold > 0:
+                await asyncio.sleep(hold)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500,
+                f"步骤 {i+1}/{len(steps)} 执行失败: {e}")
+
+    return {
+        "ok": True,
+        "skill": spec.id,
+        "name": spec.name,
+        "kind": spec.kind,
+        "steps_executed": len(executed),
+        "total_duration": sum(s["hold"] for s in executed)
+    }
+
+
 # ============================================================================
 # 机械臂端点（占位，等你提供接口）
 # ============================================================================
@@ -304,6 +437,111 @@ async def arm_set_joints(req: ArmJoints):
         return {"ok": True, "joints": req.joints}
     except Exception as e:
         raise HTTPException(500, f"Move arm failed: {e}")
+
+
+# ============================================================================
+# Combo（臂+手联合动作）端点
+# ============================================================================
+class ComboPlayRequest(BaseModel):
+    """Combo 播放请求"""
+    name: str = None      # 按名称播放（动态查找）
+    path: str = None      # 按路径播放（直接加载）
+
+
+@app.get("/combo/list")
+async def combo_list():
+    """列出所有可用的联合动作包
+
+    动态扫描 data/combos/ 目录，返回实际存在的文件。
+    """
+    try:
+        # 延迟导入，避免影响 Bridge 的快速启动
+        sys.path.insert(0, str(Path(__file__).parent / "sim"))
+        import combo_pack as cbp
+
+        packs = cbp.list_packs()
+        return {
+            "ok": True,
+            "root": str(cbp.combo_root()),
+            "packs": packs
+        }
+    except Exception as e:
+        raise HTTPException(500, f"列出 combo 包失败: {e}")
+
+
+@app.post("/combo/play")
+async def combo_play(req: ComboPlayRequest):
+    """播放联合动作包（按名称或路径）
+
+    支持两种方式：
+    1. {"name": "挥手"} - 自动查找文件
+    2. {"path": "常用/挥手.json"} - 直接加载
+
+    ⚠ 实际播放逻辑需要通过 console 完成（arm_console + hand_console）
+    这里只负责：
+    1. 验证文件存在
+    2. 加载并返回内容
+    3. 由调用方（app_web.py 或其他）负责分发给两个 console
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "sim"))
+        import combo_pack as cbp
+
+        # 确定使用哪个路径
+        if req.path:
+            # 直接用路径加载
+            pack = cbp.load_pack(req.path)
+            pack_path = req.path
+        elif req.name:
+            # 按名称查找
+            packs = cbp.list_packs()
+            matches = [p for p in packs if p["name"] == req.name and not p.get("error")]
+
+            if not matches:
+                available = [p["name"] for p in packs if not p.get("error")]
+                raise HTTPException(
+                    404,
+                    f"未找到动作: {req.name}（可用: {', '.join(available) if available else '无'}）"
+                )
+
+            if len(matches) > 1:
+                paths = [p["path"] for p in matches]
+                raise HTTPException(
+                    409,
+                    f"找到多个同名动作: {req.name}，请使用路径指定: {paths}"
+                )
+
+            pack = cbp.load_pack(matches[0]["path"])
+            pack_path = matches[0]["path"]
+        else:
+            raise HTTPException(400, "需要提供 name 或 path")
+
+        # 验证包格式
+        if pack.mode == "stream":
+            raise HTTPException(
+                400,
+                f"stream 模式包不支持通过此端点播放（上千帧），"
+                f"请使用命令行: combo_player.py --combo {pack_path}"
+            )
+
+        # 返回包内容（由调用方负责分发）
+        # 这里不直接驱动硬件，而是返回数据让调用方处理
+        return {
+            "ok": True,
+            "name": pack.name,
+            "path": pack_path,
+            "mode": pack.mode,
+            "frames": len(pack.frames),
+            "duration_ms": pack.duration_ms,
+            "pack": pack.to_dict()  # 完整数据
+        }
+
+    except cbp.ComboError as e:
+        raise HTTPException(400, f"Combo 包格式错误: {e}")
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"文件不存在: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"播放 combo 失败: {e}")
 
 
 # ============================================================================
