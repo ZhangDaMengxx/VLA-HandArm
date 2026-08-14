@@ -85,3 +85,20 @@ node web/tests/hand_mimic_transport.test.mjs
 python3 test_hand_target_mailbox.py
 python3 test_hand_console_ack.py
 ```
+
+## Hardware validation record
+
+The 2026-08-14 RH56DFX run confirmed the warmed control path on real hardware:
+
+| Stage | Observed |
+| --- | ---: |
+| retargeting | typically 1-5 ms |
+| RS485 `ANGLE_SET` | typically 4.6-8.0 ms |
+| target received to serial ACK | about 7-39 ms |
+| pending replacement | normally 0, peak 1 |
+
+Observed settling times were 418.5 ms at speed 500, 336.8 ms at speed 800,
+and 110.6 ms at speed 1000. These runs did not use identical target steps, so
+they establish only that speed affects tracking; they are not a controlled
+speed benchmark. Chrome/Edge, GPU/CPU, permission denial, WebSocket recovery,
+and repeated equal-amplitude speed trials remain open acceptance items.

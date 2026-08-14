@@ -25,13 +25,17 @@
 - [ ] 核验机械臂不可用时 Bridge 的 hand-only 降级
 - [ ] 核验 MCP 心跳断线、恢复、健康状态和运动命令不自动重试
 - [ ] 记录每项真机验证的日期、硬件版本、固件和初始条件
+- [x] 验证摄像头 retarget → latest-target → ACK → RS485 真机控制链
+  - 目标到串口 ACK 约 7-39ms，无无界积压，峰值覆盖 1 个待发旧目标
 
 ## P1 Web 与视觉
 
 - [x] 单帧在途和 latest-frame-wins 背压
 - [x] `stop()` 后禁止异步重连
 - [x] MediaPipe Tasks 本地资源和兼容包装层单测
+- [x] 后端 latest-target mailbox、真实 ACK 和 WebSocket 断线清理
 - [ ] 浏览器摄像头实测 FPS、端到端延迟和断线恢复
+- [ ] 用相同固定角度阶跃各重复 3 次，对照 `SPEED_SET=500/800/1000` 的 settled、力、电流和温度
 - [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥
 
 ## P1 ROS2 与数据

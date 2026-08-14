@@ -6,6 +6,43 @@
 
 ---
 
+## [2026-08-14] - MediaPipe Tasks 与 latest-target 真机控制
+
+### Added (新增)
+
+- 本地化 `@mediapipe/tasks-vision@1.0.1`、Vision WASM 和 Hand Landmarker Full 模型，并记录固定校验值
+- 新增 Tasks/Legacy 统一追踪适配层，支持 Tasks GPU → CPU → Legacy 自动降级
+- 新增 30Hz `LatestTargetMailbox`：最多一个待发目标、一个真实 ACK 在途，250ms 旧目标丢弃，100ms ACK 超时
+- 新增 `frame_id`/ACK token 关联及 frontend、mailbox、stdin、RS485、tracking 分段性能日志
+
+### Changed (变更)
+
+- 摄像头循环改用 `requestVideoFrameCallback()`，不支持时回退 `requestAnimationFrame()`
+- `/ws/hand/mimic` 在返回 3D 预览角度的同时投递硬件目标；HTTP fallback 只保留 retarget 与预览
+- 连续视觉控制期间 `ANGLE_ACT` 保持 30Hz、`FORCE_ACT` 降至 10Hz，全量遥测在目标空闲 500ms 后补读
+- `HandDebugSession` 增加 stdin 写锁、真实子进程 ACK 等待和单摄像头硬件控制权
+
+### Removed (移除)
+
+- 移除 Tasks 主链对旧 `camera_utils.js` 帧循环的依赖
+- 移除 WebSocket retarget 返回后逐帧追加 `/api/hand/command` HTTP 硬件请求的双重链路
+- 移除无界旧目标排队；等待硬件 ACK 时只保留最新目标
+- Legacy 引擎和旧资源仍保留用于灰度降级，尚未删除
+
+### Verification (验证)
+
+- Node 适配层与前端传输测试通过；mailbox 6 项单测、stdin 回归和 mock console ACK 探针通过
+- mock WebSocket 全链路预热后：retarget 4.3ms、mailbox wait 4.8ms、目标到 ACK 5.18ms
+- RH56DFX 真机观测：retarget 通常 1-5ms、RS485 通常 4.6-8.0ms、目标到串口 ACK 约 7-39ms，队列最多覆盖一个旧目标
+- `SPEED_SET` 500/800/1000 三次运行分别观测到 418.5/336.8/110.6ms settled；动作幅度不同，只能说明提速趋势，不能作为严格横向基准
+
+### Commits (提交)
+
+- `dc562a2` `feat(mimic): add MediaPipe Tasks hand tracker`
+- `a48f9af` `refactor(mimic): add tracker engine fallback`
+- `253e073` `perf(mimic): add hardware latency diagnostics`
+- `806bcb4` `perf(mimic): add latest-target hardware control`
+
 ## [2026-08-14] - 文档时效性全面审查
 
 ### Changed (变更)
@@ -46,6 +83,9 @@
 - Python、JavaScript 语法检查及相关代码文件的 `git diff --check` 通过
 
 ### Known Issues (已知问题)
+
+> 以下是该阶段当时的已知问题，已由本页顶部的 latest-target 改造解决。
+
 - WebSocket 发送尚无单帧在途/背压控制；后端处理低于摄像头帧率时可能积压旧帧
 - `stop()` 主动关闭连接后，`onclose` 仍可能安排重连
 - 浏览器端实际 FPS 和端到端延迟仍需在摄像头页面实测

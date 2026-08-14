@@ -44,9 +44,15 @@ python sim/app_web.py
 主要能力：
 
 - 机械臂、灵巧手和合体 3D 状态与调试
-- 浏览器 MediaPipe Tasks Hand Landmarker
-- `/ws/hand/mimic` 低延迟重定向，HTTP 为断线降级路径
+- 浏览器 MediaPipe Tasks Hand Landmarker；GPU 失败转 CPU，Tasks 失败转 Legacy
+- `/ws/hand/mimic` 低延迟重定向和 latest-target 真机控制；最多一个待发目标和一个 ACK 在途
+- HTTP 为断线时的 retarget/3D 预览降级路径，WebSocket 恢复前不驱动真手
 - 联合动作录制和回放（这是 Web 工作台能力，不等于现行 MCP combo 工具）
+
+实时手部控制保持 MediaPipe 21 点与 dex-retargeting 后端协议不变。浏览器不再在
+WebSocket 返回后逐帧追加硬件 HTTP 请求；后端以 30Hz 投递最新目标并等待
+`hand_console` 的真实 RS485 ACK。实现与验收说明见
+[sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md)。
 
 ## VLA 数据管线
 

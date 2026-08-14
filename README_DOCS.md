@@ -49,7 +49,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 |------|------|
 | [sim/README.md](sim/README.md) | Web/技能/回放模块总览 |
 | [sim/ARM_DEBUG.md](sim/ARM_DEBUG.md) | 机械臂调试记录与现状 |
-| [sim/HAND_DEBUG.md](sim/HAND_DEBUG.md) | 灵巧手调试记录与现状 |
+| [sim/HAND_DEBUG.md](sim/HAND_DEBUG.md) | 灵巧手调试、实时摄像头控制和真机性能记录 |
 | [sim/COMBO_DEBUG.md](sim/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
 | [sim/HAND_SAFETY_PLAN.md](sim/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
 | [sim/CANONICAL_SPEC.md](sim/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
@@ -57,7 +57,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 | [sim/build_urdf/README.md](sim/build_urdf/README.md) | URDF 装配分析工具 |
 | [adjust_hand_mount_example.md](adjust_hand_mount_example.md) | 当前装配参数调整流程 |
 | [WINDOWS_DEPLOY.md](WINDOWS_DEPLOY.md) | 本仓库 Windows 开发参考；MCP 部署看独立仓库 |
-| [sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md) | 当前 MediaPipe Tasks 迁移和兼容契约 |
+| [sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md) | MediaPipe Tasks、引擎降级、latest-target 和验收契约 |
 | [sim/web/vendor/mediapipe-tasks/README.md](sim/web/vendor/mediapipe-tasks/README.md) | 本地模型/WASM 来源和校验值 |
 | [overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md](overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md) | overlay 可视化结构参考 |
 
@@ -107,6 +107,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 1. `sim/skills/hand_pose.py --verify` 有 10 项参数不一致。
 2. `verify_migration.py` 和 `final_summary.py` 仍引用旧资产路径，不能作为当前验收工具。
 3. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
+4. 摄像头真机链已有延迟样本，但跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
 
 ---
 

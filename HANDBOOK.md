@@ -24,8 +24,10 @@ ros2_ws/
 | `sim/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
 | `sim/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
 | `sim/hand_console.py` | 灵巧手调试和动作播放 |
+| `sim/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
 | `sim/arm_console.py` | 机械臂调试，默认 mock 和低速 |
 | `sim/app_web.py` | Web 工作台和 WebSocket 后端 |
+| `sim/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
 | `sim/skills/` | 技能清单、执行后端和安全闸 |
 | `sim/build_nero_inspire.py` | 生成臂、法兰、手装配 URDF |
 | `sim/build_combo_viz.py` | 生成本地 Web 合体模型 |
@@ -89,12 +91,22 @@ python3 sim/build_combo_viz.py
 
 ### 修改 Web 摄像头链路
 
-现行前端使用本地 vendored MediaPipe Tasks。传输采用单帧在途和
-latest-frame-wins，WebSocket 失败时降级 HTTP。修改后至少运行：
+现行前端使用本地 vendored MediaPipe Tasks。追踪器按 Tasks GPU → CPU → Legacy
+降级。浏览器传输采用单帧在途和 latest-frame-wins；WebSocket 失败时 HTTP 只维持
+retarget 与 3D 预览，不驱动真手。
+
+后端硬件路径由 30Hz `LatestTargetMailbox` 调度：最多一个待发目标、一个
+`hand_console` ACK 在途，新帧覆盖待发旧帧，WebSocket 断开清理控制权。不要重新增加
+“WebSocket 返回关节角后再逐帧 POST `/api/hand/command`”的第二条硬件链。
+
+修改后至少运行：
 
 ```bash
 node sim/web/tests/hand_tracker_tasks.test.mjs
 node sim/web/tests/hand_mimic_transport.test.mjs
+python3 sim/test_hand_target_mailbox.py
+python3 sim/test_hand_console_ack.py
+python3 sim/test_stdin_lines.py
 ```
 
 浏览器实测还应覆盖：启动、停止、重复启动、权限拒绝、WebSocket 断线恢复和页面切换。
@@ -121,6 +133,8 @@ python3 sim/skills/hand_pose.py --verify
 # Web 前端
 node sim/web/tests/hand_tracker_tasks.test.mjs
 node sim/web/tests/hand_mimic_transport.test.mjs
+python3 sim/test_hand_target_mailbox.py
+python3 sim/test_hand_console_ack.py
 
 # 独立 MCP 仓库
 cd /home/zhang123/ros2_ws/robot-mcp-server

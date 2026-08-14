@@ -8,8 +8,8 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
-| Web 手部追踪 | 主链已通 | MediaPipe Tasks、WebSocket 和 HTTP 降级已接入 |
-| Web 传输 | 单测通过 | 单帧在途、latest-frame-wins、停止后不重连已实现 |
+| Web 手部追踪 | 真机主链已通 | Tasks GPU/CPU、Legacy 降级、21点 retarget 和真手驱动已接入 |
+| Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
 | VLA 数据管线 | 可开发 | 规范层、映射和回放工具已存在，训练闭环未完成 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
 | ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
@@ -41,6 +41,9 @@
 - 验证 MCP 心跳单测 3 项通过、机械臂 mock 单测 1 项通过
 - Web 手势传输增加单帧在途、latest-frame-wins 和生命周期保护
 - MediaPipe Tasks 改用本地资源并补充 Node 单测
+- 摄像头真机控制改为 30Hz latest-target mailbox，移除逐帧二次 HTTP 硬件请求
+- 增加 stdin 写锁、ACK token、单摄像头控制权和分段 `perf-hand` 日志
+- RH56DFX 真机确认目标到串口 ACK 约 7-39ms，持续慢感主要来自手本体运动时间
 
 ### 2026-08-10 至 2026-08-13
 
@@ -69,7 +72,7 @@
 
 3. `verify_migration.py` 仍引用 `assets/inspire_hand/`，当前为 `assets/hand/`。
 4. `final_summary.py` 在路径失效时仍可能输出“全部完成”并退出 0。
-5. Web 摄像头仍缺真实浏览器的 FPS、延迟和断线恢复验收数据。
+5. Web 摄像头已有真手延迟样本，但仍缺 Chrome/Edge、GPU/CPU、拒绝权限和断线恢复的完整验收矩阵。
 6. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
 
 ## 验证记录
@@ -79,6 +82,9 @@
 ```bash
 node sim/web/tests/hand_tracker_tasks.test.mjs
 node sim/web/tests/hand_mimic_transport.test.mjs
+python3 sim/test_hand_target_mailbox.py
+python3 sim/test_hand_console_ack.py
+python3 sim/test_stdin_lines.py
 
 cd /home/zhang123/ros2_ws/robot-mcp-server
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mcp_server/tests -v
@@ -92,14 +98,17 @@ python3 sim/skills/hand_pose.py --verify
 python3 verify_migration.py
 ```
 
-文档审查没有运行任何真实硬件运动命令。
+2026-08-14 摄像头真机样本中，retarget 通常 1-5ms、RS485 通常 4.6-8.0ms、
+目标到串口 ACK 约 7-39ms，`replaced` 为 0，峰值时覆盖 1 个待发旧目标。
+500/800/1000 速度分别观测到 418.5/336.8/110.6ms settled，但动作幅度不同，
+尚不能视为严格速度对照实验。
 
 ## 下一步
 
 1. 统一手势安全表与驱动参数，并同步两个仓库。
 2. 轮换和停止跟踪 TLS 私钥。
 3. 修复迁移验收脚本的路径及退出码。
-4. 完成浏览器与真机验收。
+4. 完成浏览器兼容矩阵，并用相同固定角度阶跃复测 500/800/1000 速度。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
 
 详细行动项见 [TODO.md](TODO.md)。
