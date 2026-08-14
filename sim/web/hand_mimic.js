@@ -1,33 +1,50 @@
-// sim/web/hand_mimic.js — 实时摄像头手势控制
-// 使用 MediaPipe Hands (WASM) 进行前端推理，不占用服务器 GPU
+// 实时摄像头手势控制：浏览器推理，后端只负责坐标转换和 dex-retargeting。
+import { initializeHandTracker, requestedHandEngine } from "./hand_tracker_tasks.js";
 
-// 使用本地托管的 MediaPipe 文件（避免 CDN 访问问题）
-const MP_CDN = "/vendor/mediapipe";
+const HAND_CONNECTIONS = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [0, 9], [9, 10], [10, 11], [11, 12],
+  [0, 13], [13, 14], [14, 15], [15, 16],
+  [0, 17], [17, 18], [18, 19], [19, 20],
+  [5, 9], [9, 13], [13, 17]
+];
 
 export class HandMimicController {
   constructor(container, onJointAnglesCallback = null) {
     this.container = container;
-    this.hands = null;
-    this.camera = null;
+    this.onJointAngles = onJointAnglesCallback;
+    this.tracker = null;
+    this.engine = null;
+    this.fallbackReason = null;
+
     this.videoElement = null;
     this.canvasElement = null;
     this.canvasCtx = null;
     this.statusElement = null;
-    this.onJointAngles = onJointAnglesCallback;  // 回调：将关节角度传给父组件
 
-    this.lastSendTime = 0;
-    this.sendInterval = 33; // 30 FPS 节流（更流畅）
-    this._sending = false;  // 请求进行中标志
+    this.active = false;
+    this.generation = 0;
+    this.frameHandle = null;
+    this.frameHandleType = null;
+    this.inferenceRunning = false;
+    this.lastVideoTime = -1;
 
-    // FPS 监控
     this.frameCount = 0;
     this.lastFpsTime = 0;
     this.currentFps = 0;
+    this.inferenceSamples = [];
+    this.inferenceP95 = 0;
 
-    // WebSocket 连接
     this.ws = null;
-    this.useWebSocket = true;  // 优先使用 WebSocket
+    this.wsConnectPromise = null;
+    this.wsConnectFinish = null;
     this.wsReconnectTimer = null;
+    this.transportInFlight = false;
+    this.transportType = null;
+    this.inFlightPayload = null;
+    this.pendingPayload = null;
+    this.httpAbortController = null;
 
     this._setupUI();
   }
@@ -35,12 +52,11 @@ export class HandMimicController {
   _setupUI() {
     this.container.innerHTML = `
       <div class="mimic-panel">
-        <video class="mimic-video" autoplay playsinline></video>
+        <video class="mimic-video" autoplay playsinline muted></video>
         <canvas class="mimic-canvas"></canvas>
         <div class="mimic-status">初始化中...</div>
       </div>
     `;
-
     this.videoElement = this.container.querySelector(".mimic-video");
     this.canvasElement = this.container.querySelector(".mimic-canvas");
     this.canvasCtx = this.canvasElement.getContext("2d");
@@ -48,361 +64,481 @@ export class HandMimicController {
   }
 
   async start() {
+    if (this.active) return;
+    this.active = true;
+    const generation = ++this.generation;
+    this._resetRuntimeState();
+
     try {
       this._setStatus("加载 MediaPipe...");
-      await this._loadMediaPipe();
+      const initialized = await initializeHandTracker({ engine: requestedHandEngine() });
+      if (!this._isCurrent(generation)) {
+        await initialized.tracker.close();
+        return;
+      }
+      this.tracker = initialized.tracker;
+      this.engine = initialized.engine;
+      this.fallbackReason = initialized.fallbackReason;
 
       this._setStatus("连接服务器...");
-      await this._connectWebSocket();
+      await this._connectWebSocket(generation);
+      if (!this._isCurrent(generation)) return;
 
       this._setStatus("启动摄像头...");
-      await this._startCamera();
+      await this._startCamera(generation);
+      if (!this._isCurrent(generation)) return;
 
-      this._setStatus("✅ 就绪 - 对着镜头做手势");
-    } catch (err) {
-      this._setStatus(`❌ 错误: ${err.message}`);
-      console.error("[HandMimic] 启动失败:", err);
+      this.lastFpsTime = performance.now();
+      this._setStatus(this._readyStatus());
+      this._scheduleFrame(generation);
+    } catch (error) {
+      console.error("[HandMimic] 启动失败:", error);
+      await this.stop();
+      this._setStatus(`错误: ${error.message}`);
+      throw error;
     }
   }
 
-  async _connectWebSocket() {
-    if (!this.useWebSocket) {
-      console.log("[HandMimic] WebSocket 已禁用，使用 HTTP");
+  _resetRuntimeState() {
+    this.frameCount = 0;
+    this.lastFpsTime = 0;
+    this.currentFps = 0;
+    this.inferenceSamples = [];
+    this.inferenceP95 = 0;
+    this.lastVideoTime = -1;
+    this.pendingPayload = null;
+    this.inFlightPayload = null;
+    this.transportInFlight = false;
+    this.transportType = null;
+  }
+
+  _isCurrent(generation) {
+    return this.active && generation === this.generation;
+  }
+
+  async _startCamera(generation) {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("当前浏览器不支持摄像头访问");
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 480 },
+        height: { ideal: 360 },
+        frameRate: { ideal: 60, min: 30 }
+      }
+    });
+    if (!this._isCurrent(generation)) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
-    return new Promise((resolve) => {
-      try {
-        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${location.host}/ws/hand/mimic`;
-
-        this.ws = new WebSocket(wsUrl);
-
-        this.ws.onopen = () => {
-          console.log('[HandMimic] ✅ WebSocket 连接成功');
-          resolve();
-        };
-
-        this.ws.onmessage = (event) => {
-          const result = JSON.parse(event.data);
-          this._handleServerResponse(result);
-        };
-
-        this.ws.onerror = (error) => {
-          console.warn('[HandMimic] WebSocket 错误，降级到 HTTP:', error);
-          this.useWebSocket = false;
-          this.ws = null;
-          resolve(); // 继续启动，但使用 HTTP
-        };
-
-        this.ws.onclose = () => {
-          console.log('[HandMimic] WebSocket 已关闭');
-          if (this.useWebSocket) {
-            // 尝试重连（5秒后）
-            this.wsReconnectTimer = setTimeout(() => {
-              console.log('[HandMimic] 尝试重连 WebSocket...');
-              this._connectWebSocket();
-            }, 5000);
-          }
-        };
-
-        // 3 秒超时，降级到 HTTP
-        setTimeout(() => {
-          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
-            console.warn('[HandMimic] WebSocket 连接超时，降级到 HTTP');
-            this.useWebSocket = false;
-            this.ws.close();
-            this.ws = null;
-            resolve();
-          }
-        }, 3000);
-
-      } catch (err) {
-        console.warn('[HandMimic] WebSocket 初始化失败，降级到 HTTP:', err);
-        this.useWebSocket = false;
-        this.ws = null;
-        resolve();
-      }
-    });
-  }
-
-  _handleServerResponse(result) {
-    if (result.ok) {
-      this._setStatus(`✅ ${this.currentFps} FPS | ${result.gesture || "执行中"}`);
-
-      // 将关节角度传递给父组件（用于更新 3D 渲染）
-      if (this.onJointAngles && result.joint_angles) {
-        this.onJointAngles(result.joint_angles);
-      }
-    } else {
-      this._setStatus(`⚠️ ${result.msg || "未识别"}`);
-    }
-  }
-
-  async _loadMediaPipe() {
-    // 动态加载 MediaPipe Hands（本地文件）
-    if (!window.Hands) {
-      await this._loadScript(`${MP_CDN}/hands.js`);
-    }
-    if (!window.Camera) {
-      await this._loadScript(`${MP_CDN}/camera_utils.js`);
-    }
-
-    this.hands = new window.Hands({
-      locateFile: (file) => `${MP_CDN}/${file}`
-    });
-
-    this.hands.setOptions({
-      maxNumHands: 1,              // 单手
-      modelComplexity: 1,          // 1=full (我们只有这个模型文件)
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-
-    this.hands.onResults((results) => this._onResults(results));
-  }
-
-  async _startCamera() {
-    // 请求摄像头权限（降低分辨率以提高帧率）
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "user",     // 前置摄像头
-        width: { ideal: 480 },   // 降低分辨率：640→480
-        height: { ideal: 360 },  // 降低分辨率：480→360
-        frameRate: { ideal: 60, min: 30 }  // 明确要求高帧率
-      }
-    });
-
     this.videoElement.srcObject = stream;
+    if (this.videoElement.readyState < HTMLMediaElement.HAVE_METADATA) {
+      await new Promise((resolve, reject) => {
+        this.videoElement.addEventListener("loadedmetadata", resolve, { once: true });
+        this.videoElement.addEventListener("error", () => reject(new Error("摄像头视频加载失败")), { once: true });
+      });
+    }
+    await this.videoElement.play();
+    if (!this._isCurrent(generation)) return;
 
-    // 等待视频元数据加载
-    await new Promise((resolve) => {
-      this.videoElement.onloadedmetadata = () => {
-        this.videoElement.play();
-        resolve();
-      };
-    });
-
-    // 调整 canvas 尺寸匹配视频
     this.canvasElement.width = this.videoElement.videoWidth;
     this.canvasElement.height = this.videoElement.videoHeight;
-
+    // 画面和骨骼统一由 canvas 显示，避免 video/canvas 各自 object-fit 产生偏移。
+    this.videoElement.style.visibility = "hidden";
     console.log(`[HandMimic] 摄像头分辨率: ${this.videoElement.videoWidth}x${this.videoElement.videoHeight}`);
-
-    // MediaPipe Camera 工具自动处理帧循环
-    this.camera = new window.Camera(this.videoElement, {
-      onFrame: async () => {
-        await this.hands.send({ image: this.videoElement });
-      },
-      width: this.videoElement.videoWidth,
-      height: this.videoElement.videoHeight,
-      fps: 60  // 设置目标帧率
-    });
-
-    await this.camera.start();
   }
 
-  _onResults(results) {
-    // FPS 监控
+  _scheduleFrame(generation) {
+    if (!this._isCurrent(generation) || this.frameHandle !== null) return;
+    if (typeof this.videoElement.requestVideoFrameCallback === "function") {
+      this.frameHandleType = "video";
+      this.frameHandle = this.videoElement.requestVideoFrameCallback((timestamp, metadata) => {
+        this.frameHandle = null;
+        this._processFrame(timestamp, metadata, generation);
+      });
+    } else {
+      this.frameHandleType = "raf";
+      this.frameHandle = requestAnimationFrame((timestamp) => {
+        this.frameHandle = null;
+        this._processFrame(timestamp, null, generation);
+      });
+    }
+  }
+
+  async _processFrame(timestamp, metadata, generation) {
+    if (!this._isCurrent(generation)) return;
+
+    // rAF 可能比视频解码快；同一个 currentTime 只处理一次。
+    if (!metadata && this.videoElement.currentTime === this.lastVideoTime) {
+      this._scheduleFrame(generation);
+      return;
+    }
+    this.lastVideoTime = metadata?.mediaTime ?? this.videoElement.currentTime;
+    if (this.inferenceRunning) return;
+
+    this.inferenceRunning = true;
+    const startedAt = performance.now();
+    try {
+      this._drawVideoFrame();
+      const result = await this.tracker.detect(this.videoElement, timestamp);
+      if (this._isCurrent(generation)) this._onTrackerResult(result);
+    } catch (error) {
+      if (this._isCurrent(generation)) {
+        console.warn("[HandMimic] 单帧推理失败，继续下一帧:", error);
+        this._setStatus(`推理错误: ${error.message}`);
+      }
+    } finally {
+      this.inferenceRunning = false;
+      if (this._isCurrent(generation)) {
+        this._recordInference(performance.now() - startedAt);
+        this._scheduleFrame(generation);
+      }
+    }
+  }
+
+  _recordInference(durationMs) {
     this.frameCount++;
+    this.inferenceSamples.push(durationMs);
+    if (this.inferenceSamples.length > 300) this.inferenceSamples.shift();
+
     const now = performance.now();
     if (now - this.lastFpsTime >= 1000) {
       this.currentFps = Math.round(this.frameCount * 1000 / (now - this.lastFpsTime));
-      console.log(`[HandMimic] MediaPipe FPS: ${this.currentFps}`);
+      const sorted = [...this.inferenceSamples].sort((a, b) => a - b);
+      this.inferenceP95 = sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] || 0;
+      console.log(`[HandMimic] ${this.engine} FPS=${this.currentFps}, inference P95=${this.inferenceP95.toFixed(1)}ms`);
       this.frameCount = 0;
       this.lastFpsTime = now;
     }
+  }
 
-    const w = this.canvasElement.width;
-    const h = this.canvasElement.height;
+  _onTrackerResult(result) {
+    const { landmarks, worldLandmarks } = result;
 
-    // 清空并绘制视频帧
-    this.canvasCtx.save();
-    this.canvasCtx.clearRect(0, 0, w, h);
-    this.canvasCtx.drawImage(results.image, 0, 0, w, h);
-
-    // 调试：检查是否检测到手
-    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-      console.log("[HandMimic] 未检测到手");
-      this.canvasCtx.restore();
-      return;
-    }
-
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0]; // 用于绘制（屏幕坐标）
-      const worldLandmarks = results.multiHandWorldLandmarks?.[0]; // 用于重定向（米制3D坐标）
-
-      // 绘制骨骼线（使用屏幕坐标）
+    if (landmarks?.length === 21) {
       this._drawConnectors(landmarks);
-      // 绘制关键点
       this._drawLandmarks(landmarks);
-
-      // 立即发送到服务器，无节流（让 MediaPipe 和后端直接同步）
-      if (worldLandmarks) {
-        this._sendToServer(worldLandmarks);
-      } else {
-        console.warn("[HandMimic] multiHandWorldLandmarks 不可用");
-      }
     }
-
-    // 绘制 FPS 到视频右上角
     this._drawFps();
 
-    this.canvasCtx.restore();
+    if (worldLandmarks) {
+      const payload = this._makePayload(worldLandmarks);
+      if (payload) this._queuePayload(payload);
+    }
+  }
+
+  _drawVideoFrame() {
+    const width = this.canvasElement.width;
+    const height = this.canvasElement.height;
+    this.canvasCtx.clearRect(0, 0, width, height);
+    this.canvasCtx.drawImage(this.videoElement, 0, 0, width, height);
+  }
+
+  _makePayload(landmarks) {
+    if (landmarks.length !== 21) {
+      console.warn(`[HandMimic] 忽略非 21 点结果: ${landmarks.length}`);
+      return null;
+    }
+    const points = landmarks.map(({ x, y, z }) => ({ x, y, z }));
+    if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z))) {
+      console.warn("[HandMimic] 忽略包含非有限坐标的结果");
+      return null;
+    }
+    return { format: "mediapipe", landmarks: points };
+  }
+
+  _queuePayload(payload) {
+    this.pendingPayload = payload;
+    this._flushTransport();
+  }
+
+  _flushTransport() {
+    if (!this.active || this.transportInFlight || !this.pendingPayload) return;
+    const payload = this.pendingPayload;
+    this.pendingPayload = null;
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify(payload));
+        this.transportInFlight = true;
+        this.transportType = "websocket";
+        this.inFlightPayload = payload;
+        return;
+      } catch (error) {
+        console.warn("[HandMimic] WebSocket 发送失败，使用 HTTP:", error);
+        this.pendingPayload = payload;
+        this.ws.close();
+      }
+    } else {
+      this.pendingPayload = payload;
+    }
+
+    this._sendPendingViaHttp();
+  }
+
+  async _sendPendingViaHttp() {
+    if (!this.active || this.transportInFlight || !this.pendingPayload) return;
+    const payload = this.pendingPayload;
+    this.pendingPayload = null;
+    this.transportInFlight = true;
+    this.transportType = "http";
+    this.inFlightPayload = payload;
+    const controller = new AbortController();
+    this.httpAbortController = controller;
+
+    try {
+      const response = await fetch("/api/hand/mimic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch (error) {
+        console.warn("[HandMimic] HTTP 响应 JSON 无效，摄像头继续运行:", error);
+        return;
+      }
+      if (this.active) this._handleServerResponse(result);
+    } catch (error) {
+      if (this.active && error.name !== "AbortError") {
+        console.warn("[HandMimic] HTTP 请求失败，摄像头继续运行:", error);
+        this._setStatus(`网络错误: ${error.message}`);
+      }
+    } finally {
+      if (this.httpAbortController === controller) this.httpAbortController = null;
+      if (this.transportType === "http") this._releaseTransport();
+    }
+  }
+
+  _releaseTransport() {
+    this.transportInFlight = false;
+    this.transportType = null;
+    this.inFlightPayload = null;
+    this._flushTransport();
+  }
+
+  async _connectWebSocket(generation) {
+    if (!this._isCurrent(generation) || this.ws?.readyState === WebSocket.OPEN) return;
+    if (this.wsConnectPromise) return this.wsConnectPromise;
+
+    const connectionPromise = new Promise((resolve) => {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      let socket;
+      try {
+        socket = new WebSocket(`${protocol}//${location.host}/ws/hand/mimic`);
+      } catch (error) {
+        console.warn("[HandMimic] WebSocket 不可用，暂用 HTTP:", error);
+        resolve();
+        return;
+      }
+      this.ws = socket;
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (this.wsConnectFinish === finish) this.wsConnectFinish = null;
+        resolve();
+      };
+      this.wsConnectFinish = finish;
+      const timeout = setTimeout(() => {
+        if (socket.readyState !== WebSocket.OPEN) socket.close();
+        finish();
+      }, 3000);
+
+      socket.onopen = () => {
+        if (!this._isCurrent(generation) || this.ws !== socket) {
+          socket.close();
+          finish();
+          return;
+        }
+        console.log("[HandMimic] WebSocket 连接成功");
+        finish();
+        this._flushTransport();
+      };
+      socket.onmessage = (event) => this._handleWebSocketMessage(socket, event);
+      socket.onerror = (error) => {
+        console.warn("[HandMimic] WebSocket 错误，暂用 HTTP:", error);
+        if (socket.readyState === WebSocket.CONNECTING) socket.close();
+        finish();
+      };
+      socket.onclose = () => {
+        finish();
+        if (this.ws === socket) this.ws = null;
+        if (this.transportInFlight && this.transportType === "websocket") {
+          // 未收到响应的帧可能已丢失；没有更新帧时重试它，有更新帧时保留更新帧。
+          this.pendingPayload ||= this.inFlightPayload;
+          this.transportInFlight = false;
+          this.transportType = null;
+          this.inFlightPayload = null;
+        }
+        if (this._isCurrent(generation)) {
+          this._flushTransport();
+          this._scheduleWebSocketReconnect(generation);
+        }
+      };
+    });
+    this.wsConnectPromise = connectionPromise;
+    try {
+      await connectionPromise;
+    } finally {
+      if (this.wsConnectPromise === connectionPromise) this.wsConnectPromise = null;
+    }
+  }
+
+  _handleWebSocketMessage(socket, event) {
+    if (socket !== this.ws || !this.active) return;
+    try {
+      const result = JSON.parse(event.data);
+      this._handleServerResponse(result);
+    } catch (error) {
+      console.warn("[HandMimic] WebSocket 响应 JSON 无效，摄像头继续运行:", error);
+    } finally {
+      if (this.transportInFlight && this.transportType === "websocket") {
+        this._releaseTransport();
+      }
+    }
+  }
+
+  _scheduleWebSocketReconnect(generation) {
+    if (!this._isCurrent(generation) || this.wsReconnectTimer) return;
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      if (this._isCurrent(generation)) this._connectWebSocket(generation);
+    }, 5000);
+  }
+
+  _handleServerResponse(result) {
+    if (result?.ok) {
+      this._setStatus(`${this._metricsStatus()} | ${result.gesture || "执行中"}`);
+      if (this.onJointAngles && result.joint_angles) this.onJointAngles(result.joint_angles);
+    } else {
+      this._setStatus(`${this._metricsStatus()} | ${result?.msg || "未识别"}`);
+    }
+  }
+
+  _readyStatus() {
+    const fallback = this.fallbackReason ? " (Tasks 已降级)" : "";
+    return `就绪 ${this.engine}/${this.tracker.delegate}${fallback}`;
+  }
+
+  _metricsStatus() {
+    return `${this.engine}/${this.tracker?.delegate || "-"} ${this.currentFps} FPS P95 ${this.inferenceP95.toFixed(1)}ms`;
+  }
+
+  getMetrics() {
+    return {
+      requestedEngine: requestedHandEngine(),
+      engine: this.engine,
+      delegate: this.tracker?.delegate || null,
+      fps: this.currentFps,
+      inferenceP95Ms: this.inferenceP95,
+      transportInFlight: this.transportInFlight ? 1 : 0,
+      hasPendingFrame: Boolean(this.pendingPayload)
+    };
   }
 
   _drawConnectors(landmarks) {
-    // MediaPipe Hands 21点连线定义
-    const connections = [
-      [0,1],[1,2],[2,3],[3,4],           // 拇指
-      [0,5],[5,6],[6,7],[7,8],           // 食指
-      [0,9],[9,10],[10,11],[11,12],      // 中指
-      [0,13],[13,14],[14,15],[15,16],    // 无名指
-      [0,17],[17,18],[18,19],[19,20],    // 小指
-      [5,9],[9,13],[13,17]               // 掌部横线
-    ];
-
     this.canvasCtx.strokeStyle = "#00ff00";
     this.canvasCtx.lineWidth = 2;
-
-    for (const [i, j] of connections) {
-      const pt1 = landmarks[i];
-      const pt2 = landmarks[j];
+    for (const [start, end] of HAND_CONNECTIONS) {
+      const pointA = landmarks[start];
+      const pointB = landmarks[end];
       this.canvasCtx.beginPath();
-      this.canvasCtx.moveTo(pt1.x * this.canvasElement.width, pt1.y * this.canvasElement.height);
-      this.canvasCtx.lineTo(pt2.x * this.canvasElement.width, pt2.y * this.canvasElement.height);
+      this.canvasCtx.moveTo(pointA.x * this.canvasElement.width, pointA.y * this.canvasElement.height);
+      this.canvasCtx.lineTo(pointB.x * this.canvasElement.width, pointB.y * this.canvasElement.height);
       this.canvasCtx.stroke();
     }
   }
 
   _drawLandmarks(landmarks) {
     this.canvasCtx.fillStyle = "#00ff00";
-    for (const pt of landmarks) {
-      const x = pt.x * this.canvasElement.width;
-      const y = pt.y * this.canvasElement.height;
+    for (const point of landmarks) {
       this.canvasCtx.beginPath();
-      this.canvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
+      this.canvasCtx.arc(
+        point.x * this.canvasElement.width,
+        point.y * this.canvasElement.height,
+        4,
+        0,
+        2 * Math.PI
+      );
       this.canvasCtx.fill();
     }
   }
 
   _drawFps() {
-    const fps = this.currentFps || 0;
-    const text = `${fps} FPS`;
-
-    // 绘制位置：右上角，留10px边距
-    const x = this.canvasElement.width - 10;
-    const y = 30;
-
-    // 设置字体
-    this.canvasCtx.font = "bold 24px Arial";
-    this.canvasCtx.textAlign = "right";
-    this.canvasCtx.textBaseline = "top";
-
-    // 绘制黑色描边（确保在任何背景下都清晰）
-    this.canvasCtx.strokeStyle = "#000000";
-    this.canvasCtx.lineWidth = 4;
-    this.canvasCtx.strokeText(text, x, y);
-
-    // 绘制白色文字
-    this.canvasCtx.fillStyle = "#00ff00";  // 绿色，和骨骼点颜色一致
-    this.canvasCtx.fillText(text, x, y);
+    const context = this.canvasCtx;
+    context.font = "bold 24px Arial";
+    context.textAlign = "right";
+    context.textBaseline = "top";
+    context.strokeStyle = "#000000";
+    context.lineWidth = 4;
+    context.strokeText(`${this.currentFps} FPS`, this.canvasElement.width - 10, 10);
+    context.fillStyle = "#00ff00";
+    context.fillText(`${this.currentFps} FPS`, this.canvasElement.width - 10, 10);
   }
 
-  async _sendToServer(landmarks) {
-    // 转换为服务器期望的格式
-    const payload = {
-      format: "mediapipe",
-      landmarks: landmarks.map(pt => ({
-        x: pt.x,
-        y: pt.y,
-        z: pt.z
-      }))
-    };
-
-    // WebSocket 路径（优先）
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(payload));
-        // WebSocket 是异步的，响应通过 onmessage 处理
-        return;
-      } catch (err) {
-        console.warn('[HandMimic] WebSocket 发送失败，降级到 HTTP:', err);
-        this.useWebSocket = false;
-        this.ws = null;
-        // 继续执行 HTTP 降级
-      }
+  _cancelFrame() {
+    if (this.frameHandle === null) return;
+    if (this.frameHandleType === "video") {
+      this.videoElement.cancelVideoFrameCallback?.(this.frameHandle);
+    } else {
+      cancelAnimationFrame(this.frameHandle);
     }
-
-    // HTTP 降级路径（保持原有逻辑）
-    if (this._sending) {
-      return; // HTTP 需要节流，避免请求堆积
-    }
-
-    this._sending = true;
-
-    try {
-      const response = await fetch("/api/hand/mimic", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-      this._handleServerResponse(result);
-
-    } catch (err) {
-      console.error("[HandMimic] HTTP 请求失败:", err);
-      this._setStatus(`❌ 网络错误: ${err.message}`);
-    } finally {
-      this._sending = false;
-    }
+    this.frameHandle = null;
+    this.frameHandleType = null;
   }
 
-  stop() {
-    // 清理 WebSocket
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+  async stop() {
+    this.active = false;
+    this.generation++;
+    this._cancelFrame();
+
+    if (this.wsReconnectTimer) clearTimeout(this.wsReconnectTimer);
+    this.wsReconnectTimer = null;
+    this.wsConnectFinish?.();
+    this.wsConnectFinish = null;
+    this.wsConnectPromise = null;
+    this.httpAbortController?.abort();
+    this.httpAbortController = null;
+
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      socket.close();
     }
 
-    if (this.wsReconnectTimer) {
-      clearTimeout(this.wsReconnectTimer);
-      this.wsReconnectTimer = null;
-    }
-
-    // 清理摄像头
-    if (this.camera) {
-      this.camera.stop();
-      this.camera = null;
-    }
-
-    if (this.videoElement && this.videoElement.srcObject) {
-      const tracks = this.videoElement.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
+    const stream = this.videoElement?.srcObject;
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    if (this.videoElement) {
+      this.videoElement.pause();
       this.videoElement.srcObject = null;
+      this.videoElement.style.visibility = "";
     }
 
-    // 清理 MediaPipe
-    if (this.hands) {
-      this.hands.close();
-      this.hands = null;
-    }
+    const tracker = this.tracker;
+    this.tracker = null;
+    if (tracker) await Promise.resolve(tracker.close()).catch((error) => {
+      console.warn("[HandMimic] 关闭 tracker 失败:", error);
+    });
 
+    this.pendingPayload = null;
+    this.inFlightPayload = null;
+    this.transportInFlight = false;
+    this.transportType = null;
+    this.inferenceRunning = false;
     this._setStatus("已停止");
   }
 
-  _loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = src;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error(`加载失败: ${src}`));
-      document.head.appendChild(script);
-    });
-  }
-
-  _setStatus(msg) {
-    this.statusElement.textContent = msg;
+  _setStatus(message) {
+    if (this.statusElement) this.statusElement.textContent = message;
   }
 }
