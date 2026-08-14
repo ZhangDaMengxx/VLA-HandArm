@@ -187,18 +187,25 @@ python3 sim/build_combo_viz.py
 
 ### Web服务器 (`sim/app_web.py`)
 
-**用途**：Gradio Web界面（控制台 + 3D可视化）
+**用途**：FastAPI Web 工作台（控制台 + 3D可视化 + 实时摄像头手部追踪）
 
 **启动**：
 ```bash
-~/gradio_venv/bin/python sim/app_web.py
+conda activate lerobot
+python sim/app_web.py
 ```
+
+实时手部追踪依赖 `lerobot` 环境中的 MediaPipe/dex-retargeting 和
+Uvicorn WebSocket 支持。不要使用默认 Python 或缺少 `websockets`/`wsproto`
+的环境验证 `/ws/hand/mimic`。
 
 **功能**：
 - 手部调试页面（单指控制）
 - Combo页面（臂+手联合）
 - 技能测试
 - 3D实时可视化
+- 浏览器 MediaPipe 摄像头追踪
+- `/ws/hand/mimic` 低延迟重定向，失败时降级到 `/api/hand/mimic`
 
 **关键配置**：
 - 第810行：`_COMBO_ASSETS = REPO / "assets/viz/combo"`
@@ -293,7 +300,7 @@ python3 sim/build_combo_viz.py
 # 5. 测试
 python3 sim/hand_console.py --no-mock  # 真机测试
 # 或
-~/gradio_venv/bin/python sim/app_web.py  # Web测试
+conda run -n lerobot python sim/app_web.py  # Web/摄像头/WebSocket测试
 
 # 6. 提交
 git add .
@@ -337,7 +344,7 @@ python3 sim/build_combo_viz.py
 
 # 重启服务器
 pkill -f app_web.py
-~/gradio_venv/bin/python sim/app_web.py
+conda run -n lerobot python sim/app_web.py
 
 # 浏览器 Ctrl+Shift+R
 ```
@@ -374,6 +381,7 @@ pkill -f app_web.py
 
 ---
 
-**最后更新**：2026-08-10  
+**最后更新**：2026-08-14
+
 **维护者**：项目团队  
 **反馈**：遇到文档错误或不清楚的地方，请提issue或直接修改

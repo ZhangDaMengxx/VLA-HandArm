@@ -24,6 +24,11 @@ export class HandMimicController {
     this.lastFpsTime = 0;
     this.currentFps = 0;
 
+    // WebSocket 连接
+    this.ws = null;
+    this.useWebSocket = true;  // 优先使用 WebSocket
+    this.wsReconnectTimer = null;
+
     this._setupUI();
   }
 
@@ -47,6 +52,9 @@ export class HandMimicController {
       this._setStatus("加载 MediaPipe...");
       await this._loadMediaPipe();
 
+      this._setStatus("连接服务器...");
+      await this._connectWebSocket();
+
       this._setStatus("启动摄像头...");
       await this._startCamera();
 
@@ -54,6 +62,80 @@ export class HandMimicController {
     } catch (err) {
       this._setStatus(`❌ 错误: ${err.message}`);
       console.error("[HandMimic] 启动失败:", err);
+    }
+  }
+
+  async _connectWebSocket() {
+    if (!this.useWebSocket) {
+      console.log("[HandMimic] WebSocket 已禁用，使用 HTTP");
+      return;
+    }
+
+    return new Promise((resolve) => {
+      try {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${location.host}/ws/hand/mimic`;
+
+        this.ws = new WebSocket(wsUrl);
+
+        this.ws.onopen = () => {
+          console.log('[HandMimic] ✅ WebSocket 连接成功');
+          resolve();
+        };
+
+        this.ws.onmessage = (event) => {
+          const result = JSON.parse(event.data);
+          this._handleServerResponse(result);
+        };
+
+        this.ws.onerror = (error) => {
+          console.warn('[HandMimic] WebSocket 错误，降级到 HTTP:', error);
+          this.useWebSocket = false;
+          this.ws = null;
+          resolve(); // 继续启动，但使用 HTTP
+        };
+
+        this.ws.onclose = () => {
+          console.log('[HandMimic] WebSocket 已关闭');
+          if (this.useWebSocket) {
+            // 尝试重连（5秒后）
+            this.wsReconnectTimer = setTimeout(() => {
+              console.log('[HandMimic] 尝试重连 WebSocket...');
+              this._connectWebSocket();
+            }, 5000);
+          }
+        };
+
+        // 3 秒超时，降级到 HTTP
+        setTimeout(() => {
+          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            console.warn('[HandMimic] WebSocket 连接超时，降级到 HTTP');
+            this.useWebSocket = false;
+            this.ws.close();
+            this.ws = null;
+            resolve();
+          }
+        }, 3000);
+
+      } catch (err) {
+        console.warn('[HandMimic] WebSocket 初始化失败，降级到 HTTP:', err);
+        this.useWebSocket = false;
+        this.ws = null;
+        resolve();
+      }
+    });
+  }
+
+  _handleServerResponse(result) {
+    if (result.ok) {
+      this._setStatus(`✅ ${this.currentFps} FPS | ${result.gesture || "执行中"}`);
+
+      // 将关节角度传递给父组件（用于更新 3D 渲染）
+      if (this.onJointAngles && result.joint_angles) {
+        this.onJointAngles(result.joint_angles);
+      }
+    } else {
+      this._setStatus(`⚠️ ${result.msg || "未识别"}`);
     }
   }
 
@@ -228,25 +310,38 @@ export class HandMimicController {
   }
 
   async _sendToServer(landmarks) {
-    // 非阻塞发送：不等待响应，避免阻塞下一帧
-    // 如果上一次请求还在进行，跳过本次（避免请求堆积）
+    // 转换为服务器期望的格式
+    const payload = {
+      format: "mediapipe",
+      landmarks: landmarks.map(pt => ({
+        x: pt.x,
+        y: pt.y,
+        z: pt.z
+      }))
+    };
+
+    // WebSocket 路径（优先）
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify(payload));
+        // WebSocket 是异步的，响应通过 onmessage 处理
+        return;
+      } catch (err) {
+        console.warn('[HandMimic] WebSocket 发送失败，降级到 HTTP:', err);
+        this.useWebSocket = false;
+        this.ws = null;
+        // 继续执行 HTTP 降级
+      }
+    }
+
+    // HTTP 降级路径（保持原有逻辑）
     if (this._sending) {
-      return;
+      return; // HTTP 需要节流，避免请求堆积
     }
 
     this._sending = true;
 
     try {
-      // 转换为服务器期望的格式
-      const payload = {
-        format: "mediapipe",
-        landmarks: landmarks.map(pt => ({
-          x: pt.x,
-          y: pt.y,
-          z: pt.z
-        }))
-      };
-
       const response = await fetch("/api/hand/mimic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -254,19 +349,10 @@ export class HandMimicController {
       });
 
       const result = await response.json();
+      this._handleServerResponse(result);
 
-      if (result.ok) {
-        this._setStatus(`✅ ${this.currentFps} FPS | ${result.gesture || "执行中"}`);
-
-        // 将关节角度传递给父组件（用于更新 3D 渲染）
-        if (this.onJointAngles && result.joint_angles) {
-          this.onJointAngles(result.joint_angles);
-        }
-      } else {
-        this._setStatus(`⚠️ ${result.msg || "未识别"}`);
-      }
     } catch (err) {
-      console.error("[HandMimic] 发送失败:", err);
+      console.error("[HandMimic] HTTP 请求失败:", err);
       this._setStatus(`❌ 网络错误: ${err.message}`);
     } finally {
       this._sending = false;
@@ -274,6 +360,18 @@ export class HandMimicController {
   }
 
   stop() {
+    // 清理 WebSocket
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+
+    // 清理摄像头
     if (this.camera) {
       this.camera.stop();
       this.camera = null;
@@ -285,6 +383,7 @@ export class HandMimicController {
       this.videoElement.srcObject = null;
     }
 
+    // 清理 MediaPipe
     if (this.hands) {
       this.hands.close();
       this.hands = null;

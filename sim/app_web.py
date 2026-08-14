@@ -2213,6 +2213,68 @@ async def hand_mimic(payload: dict) -> JSONResponse:
         )
 
 
+@app.websocket("/ws/hand/mimic")
+async def ws_hand_mimic(websocket: WebSocket):
+    """WebSocket 版手部追踪 - 更低延迟的实时通信
+
+    协议：
+      客户端发送: {"format": "mediapipe", "landmarks": [{x,y,z}, ...]}
+      服务端返回: {"ok": true, "joint_angles": {...}, "gesture": "..."}
+    """
+    await websocket.accept()
+    print("[ws] 客户端已连接")
+
+    try:
+        while True:
+            # 接收客户端数据
+            data = await websocket.receive_json()
+
+            format_type = data.get("format")
+            landmarks = data.get("landmarks", [])
+
+            # 验证数据
+            if format_type != "mediapipe":
+                await websocket.send_json({
+                    "ok": False,
+                    "msg": f"仅支持 MediaPipe 格式，收到: {format_type}"
+                })
+                continue
+
+            if len(landmarks) != 21:
+                await websocket.send_json({
+                    "ok": False,
+                    "msg": f"需要 21 个关键点，收到: {len(landmarks)}"
+                })
+                continue
+
+            try:
+                # 调用 retargeting 计算关节角度
+                joint_angles = await _mediapipe_to_joint_angles(landmarks)
+
+                # 可选：识别手势名称
+                gesture = _recognize_mediapipe_gesture(landmarks) or "未知"
+
+                # 立即返回结果
+                await websocket.send_json({
+                    "ok": True,
+                    "joint_angles": joint_angles,
+                    "gesture": gesture
+                })
+
+            except Exception as e:
+                print(f"[ws] Retargeting 失败: {e}")
+                await websocket.send_json({
+                    "ok": False,
+                    "msg": f"Retargeting 失败: {str(e)}"
+                })
+
+    except WebSocketDisconnect:
+        print("[ws] 客户端已断开")
+    except Exception as e:
+        print(f"[ws] WebSocket 错误: {e}")
+
+
+
 def _estimate_hand_frame(kp_array: "np.ndarray") -> "np.ndarray":
     """从 MediaPipe 关键点估计手腕局部坐标系（消除手腕旋转影响）
 

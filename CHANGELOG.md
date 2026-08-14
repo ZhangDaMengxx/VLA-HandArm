@@ -6,6 +6,45 @@
 
 ---
 
+## [2026-08-14] - 实时摄像头手部追踪 WebSocket 优化
+
+### Added (新增)
+- 新增 `GET /ws/hand/mimic` WebSocket 端点，接收 MediaPipe 21 点世界坐标并实时返回 6 个灵巧手关节角度和手势名称
+- `sim/web/hand_mimic.js` 优先使用 WebSocket，并保留 `/api/hand/mimic` HTTP 降级路径
+- 前端增加连接超时、断线重连和统一响应处理
+
+### Verified (验证)
+- 在 `lerobot` Conda 环境完成真实 WebSocket 握手和消息往返测试
+- 21 点数据成功经过 dex-retargeting，返回 6 个 `right_*_joint` 关节角度
+- 测试姿态成功识别为“张开手”；非法点数能返回协议错误
+- Python、JavaScript 语法检查及相关代码文件的 `git diff --check` 通过
+
+### Known Issues (已知问题)
+- WebSocket 发送尚无单帧在途/背压控制；后端处理低于摄像头帧率时可能积压旧帧
+- `stop()` 主动关闭连接后，`onclose` 仍可能安排重连
+- 浏览器端实际 FPS 和端到端延迟仍需在摄像头页面实测
+
+---
+
+## [2026-08-13] - 摄像头手势控制与回放优化
+
+### Added (新增)
+- 增加 MediaPipe 实时摄像头手势识别和完整手势控制流程
+- 回放页面支持实时摄像头控制及 3D 懒加载
+- 增加动态包扫描能力和 WSL 摄像头测试指南
+
+### Changed (变更)
+- 更新 retargeting 配置以适配厂商新 URDF 关节名
+- 优化实时摄像头重定向和处理性能
+
+### Fixed (修复)
+- 修复骨骼点坐标计算错误
+- 修复 3D 加载导致视频消失的问题
+- 修复 `app_web` 中 `logger` 未定义导致的 HTTP 500 错误
+- 隐藏回放页面暂不使用的关节时序图
+
+---
+
 ## [2026-08-10] - 灵巧手URDF迁移 + Assets重构
 
 ### Added (新增)
