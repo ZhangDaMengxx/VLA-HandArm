@@ -36,6 +36,20 @@ WebSocket ← 实时遥测 ← pump_console               └─ 退出时自动
 拖动滑块 → 不出浏览器(只改本地值 + three.js 预览)
 ```
 
+摄像头实时模仿走独立的连续控制路径，不再逐帧追加 HTTP 硬件请求：
+
+```text
+MediaPipe → /ws/hand/mimic → retarget → 3D 预览
+                                  └→ latest-only mailbox(30Hz)
+                                         ↓ 等真实 ACK，最多一条在途
+                                    hand_console → ANGLE_SET
+```
+
+等待 ACK 时只保留最新目标；WebSocket 断开会清掉待发目标，且同一时刻只有一个摄像头
+会话能取得硬件控制权。HTTP fallback 只维持 retarget 和 3D 预览，WebSocket 恢复后才继续
+驱动真手。连续控制时角度反馈保持 30Hz、力反馈降到 10Hz，全量温度/电流/状态在目标空闲
+500ms 后补读，避免遥测读事务抢占控制写事务。
+
 - `hand_console.py`: Python 3 系统解释器,只依赖 pyserial,独占 `/dev/ttyUSB0`
 - `hand_rerun.py`: conda lerobot 解释器(有 pinocchio / rerun),从 console stdin 读 JSON
 

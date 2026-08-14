@@ -50,6 +50,7 @@ from skills.intent import PackTarget                       # noqa: E402
 from skills.intent import parse as intent_parse            # noqa: E402
 from skills.runner import _log_invocation, log_parse       # noqa: E402
 from lerobot_env import lerobot_python                  # noqa: E402
+from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
@@ -477,6 +478,9 @@ class HandDebugSession:
         self.port: str | None = None
         self.latest: dict | None = None                # 最近一帧遥测,给刚连上的客户端
         self._last_hw_tracking_log = 0.0
+        self._stdin_lock = threading.Lock()
+        self._ack_waiters: dict[str, asyncio.Future] = {}
+        self._ack_seq = 0
 
     def start(self, mock: bool = False) -> None:
         """拉起会话:只起 hand_console(串口)。mock=False(默认)= 真开 /dev/ttyUSB0。
@@ -526,11 +530,16 @@ class HandDebugSession:
 
     def stop(self) -> None:
         self._running = False
+        try:
+            self.loop.call_soon_threadsafe(self._cancel_ack_waiters)
+        except RuntimeError:
+            pass
         # quit 指令让 console 复位手到安全张开位再断开
         if self.console and self.console.stdin and self.console.poll() is None:
             try:
-                self.console.stdin.write('{"cmd":"quit"}\n')
-                self.console.stdin.flush()
+                with self._stdin_lock:
+                    self.console.stdin.write('{"cmd":"quit"}\n')
+                    self.console.stdin.flush()
                 self.console.wait(timeout=2)            # 等它复位手 + 断开
             except Exception:                           # noqa: BLE001
                 pass
@@ -592,6 +601,8 @@ class HandDebugSession:
                     )
             elif typ == "ack" and row.get("cmd") == "angles":
                 perf = row.get("perf") or {}
+                if perf.get("ack_token"):
+                    self.loop.call_soon_threadsafe(self._resolve_ack, row)
                 if perf:
                     print(
                         "[perf-hand/serial] "
@@ -627,11 +638,58 @@ class HandDebugSession:
         if not (self.console and self.console.stdin):
             return {"ok": False, "msg": "console 未启动"}
         try:
-            self.console.stdin.write(json.dumps(cmd) + "\n")
-            self.console.stdin.flush()
+            with self._stdin_lock:
+                self.console.stdin.write(json.dumps(cmd) + "\n")
+                self.console.stdin.flush()
             return {"ok": True, "sent": cmd}
         except Exception as e:                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
+
+    async def send_angles_wait_ack(
+        self, angles: tuple[float, ...], frame_id: object
+    ) -> dict:
+        """Write one ANGLE_SET and complete only after hand_console ACKs it."""
+        self._ack_seq += 1
+        token = f"mimic-{self._ack_seq}"
+        future = self.loop.create_future()
+        self._ack_waiters[token] = future
+        started_at = time.perf_counter()
+        command = {
+            "cmd": "angles",
+            "rad": list(angles),
+            "perf_id": frame_id,
+            "_perf": {
+                "id": frame_id,
+                "ack_token": token,
+                "source": "mimic",
+                "enqueued_ns": time.perf_counter_ns(),
+            },
+        }
+        result = self.command(command)
+        print(
+            f"[perf-hand/enqueue] id={frame_id} "
+            f"FastAPI到stdin={(time.perf_counter()-started_at)*1000:.1f}ms",
+            flush=True,
+        )
+        if not result.get("ok"):
+            self._ack_waiters.pop(token, None)
+            return result
+        try:
+            return await future
+        finally:
+            self._ack_waiters.pop(token, None)
+
+    def _resolve_ack(self, row: dict) -> None:
+        token = (row.get("perf") or {}).get("ack_token")
+        future = self._ack_waiters.get(token)
+        if future is not None and not future.done():
+            future.set_result(row)
+
+    def _cancel_ack_waiters(self) -> None:
+        for future in self._ack_waiters.values():
+            if not future.done():
+                future.cancel()
+        self._ack_waiters.clear()
 
 
 class ArmDebugSession:
@@ -770,6 +828,7 @@ class ArmDebugSession:
 
 _hand: HandDebugSession | None = None
 _arm: ArmDebugSession | None = None
+_hand_target_mailbox: LatestTargetMailbox | None = None
 
 
 def _get_arm() -> ArmDebugSession:
@@ -784,6 +843,36 @@ def _get_hand() -> HandDebugSession:
     if _hand is None:
         _hand = HandDebugSession(asyncio.get_event_loop())
     return _hand
+
+
+async def _send_mimic_target(target: HandTarget) -> dict:
+    hand = _get_hand()
+    if not (hand.ready and hand.console and hand.console.poll() is None):
+        return {"ok": False, "msg": "灵巧手未接入"}
+    return await hand.send_angles_wait_ack(target.angles, target.frame_id)
+
+
+def _report_mimic_target(perf: dict) -> None:
+    print(
+        "[perf-hand/mailbox] "
+        f"id={perf.get('id')} replaced={perf.get('replaced')} "
+        f"wait={perf.get('wait_ms')}ms age={perf.get('age_ms')}ms "
+        f"ack={perf.get('status')}",
+        flush=True,
+    )
+
+
+def _get_hand_target_mailbox() -> LatestTargetMailbox:
+    global _hand_target_mailbox
+    if _hand_target_mailbox is None:
+        _hand_target_mailbox = LatestTargetMailbox(
+            _send_mimic_target,
+            rate_hz=30.0,
+            max_age_ms=250.0,
+            ack_timeout_ms=100.0,
+            reporter=_report_mimic_target,
+        )
+    return _hand_target_mailbox
 
 
 
@@ -1722,6 +1811,8 @@ async def hand_start(mock: bool = False) -> JSONResponse:
 @app.post("/api/hand/stop")
 async def hand_stop() -> JSONResponse:
     """断开:console 先复位手到安全张开位,再关串口。"""
+    if _hand_target_mailbox is not None:
+        _hand_target_mailbox.reset()
     if _hand is not None:
         await asyncio.get_event_loop().run_in_executor(_executor, _hand.stop)
     return JSONResponse({"ok": True})
@@ -2235,6 +2326,7 @@ async def hand_mimic(payload: dict) -> JSONResponse:
 
         return JSONResponse({
             "ok": True,
+            "frame_id": payload.get("frame_id"),
             "joint_angles": joint_angles,
             "gesture": gesture
         })
@@ -2252,19 +2344,23 @@ async def ws_hand_mimic(websocket: WebSocket):
     """WebSocket 版手部追踪 - 更低延迟的实时通信
 
     协议：
-      客户端发送: {"format": "mediapipe", "landmarks": [{x,y,z}, ...]}
+      客户端发送: {"format": "mediapipe", "landmarks": [{x,y,z}, ...],
+                   "drive_hardware": true, "frame_id": 123}
       服务端返回: {"ok": true, "joint_angles": {...}, "gesture": "..."}
     """
     await websocket.accept()
+    owner = f"mimic-ws-{id(websocket)}"
     print("[ws] 客户端已连接")
 
     try:
         while True:
             # 接收客户端数据
             data = await websocket.receive_json()
+            received_at = time.monotonic()
 
             format_type = data.get("format")
             landmarks = data.get("landmarks", [])
+            frame_id = data.get("frame_id")
 
             # 验证数据
             if format_type != "mediapipe":
@@ -2288,11 +2384,47 @@ async def ws_hand_mimic(websocket: WebSocket):
                 # 可选：识别手势名称
                 gesture = _recognize_mediapipe_gesture(landmarks) or "未知"
 
+                hardware = {"queued": False, "reason": "disabled"}
+                if data.get("drive_hardware"):
+                    hand = _hand
+                    online = bool(
+                        hand and hand.ready and hand.console
+                        and hand.console.poll() is None
+                    )
+                    if online:
+                        joint_order = (
+                            "right_thumb_1_joint",
+                            "right_thumb_2_joint",
+                            "right_index_1_joint",
+                            "right_middle_1_joint",
+                            "right_ring_1_joint",
+                            "right_little_1_joint",
+                        )
+                        result = _get_hand_target_mailbox().submit(
+                            owner,
+                            frame_id,
+                            [joint_angles[name] for name in joint_order],
+                            created_at=received_at,
+                        )
+                        hardware = {
+                            "queued": result.accepted,
+                            "replaced": result.replaced,
+                            "reason": result.reason,
+                        }
+                    else:
+                        if _hand_target_mailbox is not None:
+                            _hand_target_mailbox.release(owner)
+                        hardware = {"queued": False, "reason": "offline"}
+                elif _hand_target_mailbox is not None:
+                    _hand_target_mailbox.release(owner)
+
                 # 立即返回结果
                 await websocket.send_json({
                     "ok": True,
+                    "frame_id": frame_id,
                     "joint_angles": joint_angles,
-                    "gesture": gesture
+                    "gesture": gesture,
+                    "hardware": hardware,
                 })
 
             except Exception as e:
@@ -2306,6 +2438,9 @@ async def ws_hand_mimic(websocket: WebSocket):
         print("[ws] 客户端已断开")
     except Exception as e:
         print(f"[ws] WebSocket 错误: {e}")
+    finally:
+        if _hand_target_mailbox is not None:
+            _hand_target_mailbox.release(owner)
 
 
 

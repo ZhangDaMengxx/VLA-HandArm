@@ -341,6 +341,44 @@ def main() -> None:
     last_angle_id = None
     last_angle_serial_ms: float | None = None
     last_angle_settled_ms: float | None = None
+    last_mimic_angle_at: float | None = None
+    next_force_tick = time.monotonic()
+
+    def process_line(line: str) -> None:
+        nonlocal last_angle_at, last_angle_id, last_angle_serial_ms
+        nonlocal last_angle_settled_ms, last_mimic_angle_at
+        try:
+            cmd = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if cmd.get("cmd") == "quit":
+            raise KeyboardInterrupt
+        received_ns = time.perf_counter_ns()
+        event = handle(hand, cmd, sequences)
+        completed_ns = time.perf_counter_ns()
+        if cmd.get("cmd") == "angles":
+            meta = cmd.get("_perf") or {}
+            try:
+                enqueued_ns = int(meta.get("enqueued_ns") or received_ns)
+            except (TypeError, ValueError):
+                enqueued_ns = received_ns
+            serial_ms = (completed_ns - received_ns) / 1e6
+            event["perf"] = {
+                "id": meta.get("id", cmd.get("perf_id")),
+                "ack_token": meta.get("ack_token"),
+                "source": meta.get("source"),
+                "stdin_queue_ms": round((received_ns - enqueued_ns) / 1e6, 2),
+                "serial_ms": round(serial_ms, 2),
+                "enqueue_to_serial_ms": round((completed_ns - enqueued_ns) / 1e6, 2),
+            }
+            last_angle_at = time.monotonic()
+            if meta.get("source") == "mimic":
+                last_mimic_angle_at = last_angle_at
+            last_angle_id = event["perf"]["id"]
+            last_angle_serial_ms = serial_ms
+            last_angle_settled_ms = None
+        emit(event)
+
     try:
         while True:
             # 读 stdin。阻塞等到下一个截止时刻为止 —— 命令一到就立刻醒,
@@ -356,33 +394,7 @@ def main() -> None:
             deadline = next_tick if _player is None else min(next_tick, next_ptick)
             timeout = max(0.0, deadline - time.monotonic())
             for line in stdin_lines.poll(timeout):
-                try:
-                    cmd = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if cmd.get("cmd") == "quit":
-                    raise KeyboardInterrupt
-                received_ns = time.perf_counter_ns()
-                event = handle(hand, cmd, sequences)
-                completed_ns = time.perf_counter_ns()
-                if cmd.get("cmd") == "angles":
-                    meta = cmd.get("_perf") or {}
-                    try:
-                        enqueued_ns = int(meta.get("enqueued_ns") or received_ns)
-                    except (TypeError, ValueError):
-                        enqueued_ns = received_ns
-                    serial_ms = (completed_ns - received_ns) / 1e6
-                    event["perf"] = {
-                        "id": meta.get("id", cmd.get("perf_id")),
-                        "stdin_queue_ms": round((received_ns - enqueued_ns) / 1e6, 2),
-                        "serial_ms": round(serial_ms, 2),
-                        "enqueue_to_serial_ms": round((completed_ns - enqueued_ns) / 1e6, 2),
-                    }
-                    last_angle_at = time.monotonic()
-                    last_angle_id = event["perf"]["id"]
-                    last_angle_serial_ms = serial_ms
-                    last_angle_settled_ms = None
-                emit(event)
+                process_line(line)
             if stdin_lines.eof:                              # stdin 关闭 = 上层退出
                 raise KeyboardInterrupt
 
@@ -410,6 +422,13 @@ def main() -> None:
             # 少了这个判断的话,播放器每 10ms tick 一次会顺带把遥测也发 100 次/秒。
             if time.monotonic() < next_tick:
                 continue
+
+            # ANGLE_SET 优先于遥测。播放器 tick 后到达的命令在开始任何读寄存器
+            # 之前再排空一次，避免被一轮 FORCE_ACT/全量遥测压住。
+            for line in stdin_lines.poll(0):
+                process_line(line)
+            if stdin_lines.eof:
+                raise KeyboardInterrupt
 
             now = time.monotonic()
             # raw 和 rad 一起发:调试页要看原始 ANGLE_ACT(和 demo_485 的 read6('angleAct')
@@ -455,11 +474,19 @@ def main() -> None:
             # 全量遥测要读 8 个寄存器所以贵、必须节流;温度/电流/状态本来变化慢,
             # 1Hz 够用。只有力需要快。
             # 项目顺序,和 telemetry() 一致(见 inspire_hand.telemetry 的注释)。
-            if not hand.cfg.mock:
+            mimic_active = (
+                last_mimic_angle_at is not None
+                and now - last_mimic_angle_at < 0.5
+            )
+            if not hand.cfg.mock and (not mimic_active or now >= next_force_tick):
                 fv = hand.read_regs("FORCE_ACT", 12, "6h")
                 row["force_act"] = ([int(fv[PROJECT_TO_VENDOR[i]]) for i in range(6)]
                                     if fv is not None else None)
-            if now - last_full >= args.full_telemetry_every:
+                next_force_tick = now + (0.1 if mimic_active else dt)
+            # 连续视觉控制期间全量遥测让路。温度/电流/状态变化慢，目标空闲
+            # 500ms 后会立即补读，不会永久丢失安全数据。
+            target_idle = last_angle_at is None or now - last_angle_at >= 0.5
+            if target_idle and now - last_full >= args.full_telemetry_every:
                 last_full = now
                 row["tel"] = hand.telemetry()
                 if hand.last_error:

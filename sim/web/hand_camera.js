@@ -11,9 +11,6 @@ export class HandCameraControl {
     this.isActive = false;
     this.handViewer = null;  // 灵巧手 3D 查看器（由外部设置）
     this.isHardwareConnectedFn = null;  // 硬件连接状态检查函数
-    this._hardwareSending = false;  // 硬件请求进行中标志
-    this._hardwareSeq = 0;
-    this._hardwareDropped = 0;
 
     this._bindEvents();
   }
@@ -32,6 +29,7 @@ export class HandCameraControl {
    */
   setHardwareConnectedCheck(checkFn) {
     this.isHardwareConnectedFn = checkFn;
+    this.mimicController?.setHardwareDriveCheck(checkFn);
   }
 
   async _toggle() {
@@ -56,6 +54,7 @@ export class HandCameraControl {
           this.container,
           (jointAngles) => this._updateHand3D(jointAngles)
         );
+        this.mimicController.setHardwareDriveCheck(this.isHardwareConnectedFn);
       }
 
       await this.mimicController.start();
@@ -114,60 +113,6 @@ export class HandCameraControl {
       this.handViewer.setJoints(angles);
     }
 
-    const t1 = performance.now();
-
-    // 2. 如果硬件已连接，发送到硬件（实时木偶跟随）
-    // 非阻塞：如果上次请求还在进行，跳过本次（避免请求堆积）
-    if (this.isHardwareConnectedFn && this.isHardwareConnectedFn()) {
-      if (!this._hardwareSending) {
-        this._sendToHardware(angles);
-      } else {
-        this._hardwareDropped++;
-      }
-    }
-
-    const t2 = performance.now();
-    console.log(`[HandCamera] 3D更新 ${(t1-t0).toFixed(1)}ms, 硬件发送 ${(t2-t1).toFixed(1)}ms`);
-  }
-
-  /**
-   * 发送关节角度到硬件
-   * @param {Array<number>} angles - 6 个关节角度（弧度）
-   */
-  async _sendToHardware(angles) {
-    this._hardwareSending = true;
-    const perfId = ++this._hardwareSeq;
-    const startedAt = performance.now();
-    try {
-      const response = await fetch("/api/hand/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cmd: "angles",
-          rad: angles,
-          perf_id: perfId
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      if (!result.ok) {
-        console.warn("[HandCamera] 硬件控制返回错误:", result.msg);
-      }
-    } catch (err) {
-      // 网络错误或硬件断开，不要中断摄像头
-      console.warn("[HandCamera] 发送到硬件失败:", err);
-    } finally {
-      const dropped = this._hardwareDropped;
-      this._hardwareDropped = 0;
-      console.log(
-        `[perf-hand/frontend] id=${perfId} HTTP_RTT=${(performance.now() - startedAt).toFixed(1)}ms ` +
-        `等待期间丢弃=${dropped}帧`
-      );
-      this._hardwareSending = false;
-    }
+    console.log(`[HandCamera] 3D更新 ${(performance.now()-t0).toFixed(1)}ms`);
   }
 }

@@ -35,6 +35,9 @@ export class HandMimicController {
     this.currentFps = 0;
     this.inferenceSamples = [];
     this.inferenceP95 = 0;
+    this.frameSequence = 0;
+    this.frameTimings = new Map();
+    this.shouldDriveHardware = () => false;
 
     this.ws = null;
     this.wsConnectPromise = null;
@@ -114,6 +117,10 @@ export class HandMimicController {
 
   _isCurrent(generation) {
     return this.active && generation === this.generation;
+  }
+
+  setHardwareDriveCheck(checkFn) {
+    this.shouldDriveHardware = typeof checkFn === "function" ? checkFn : () => false;
   }
 
   async _startCamera(generation) {
@@ -246,10 +253,20 @@ export class HandMimicController {
       console.warn("[HandMimic] 忽略包含非有限坐标的结果");
       return null;
     }
-    return { format: "mediapipe", landmarks: points };
+    const frameId = ++this.frameSequence;
+    this.frameTimings.set(frameId, performance.now());
+    return {
+      format: "mediapipe",
+      landmarks: points,
+      drive_hardware: Boolean(this.shouldDriveHardware()),
+      frame_id: frameId
+    };
   }
 
   _queuePayload(payload) {
+    if (this.pendingPayload?.frame_id != null) {
+      this.frameTimings.delete(this.pendingPayload.frame_id);
+    }
     this.pendingPayload = payload;
     this._flushTransport();
   }
@@ -315,6 +332,9 @@ export class HandMimicController {
   }
 
   _releaseTransport() {
+    if (this.inFlightPayload?.frame_id != null) {
+      this.frameTimings.delete(this.inFlightPayload.frame_id);
+    }
     this.transportInFlight = false;
     this.transportType = null;
     this.inFlightPayload = null;
@@ -413,6 +433,18 @@ export class HandMimicController {
   }
 
   _handleServerResponse(result) {
+    if (result?.frame_id != null) {
+      const startedAt = this.frameTimings.get(result.frame_id);
+      this.frameTimings.delete(result.frame_id);
+      if (startedAt != null) {
+        const hardware = result.hardware || {};
+        console.log(
+          `[perf-hand/frontend] id=${result.frame_id} ` +
+          `WS_RTT=${(performance.now() - startedAt).toFixed(1)}ms ` +
+          `hardware=${hardware.queued ? "queued" : (hardware.reason || "off")}`
+        );
+      }
+    }
     if (result?.ok) {
       this._setStatus(`${this._metricsStatus()} | ${result.gesture || "执行中"}`);
       if (this.onJointAngles && result.joint_angles) this.onJointAngles(result.joint_angles);
@@ -438,7 +470,8 @@ export class HandMimicController {
       fps: this.currentFps,
       inferenceP95Ms: this.inferenceP95,
       transportInFlight: this.transportInFlight ? 1 : 0,
-      hasPendingFrame: Boolean(this.pendingPayload)
+      hasPendingFrame: Boolean(this.pendingPayload),
+      driveHardware: Boolean(this.shouldDriveHardware())
     };
   }
 
@@ -532,6 +565,7 @@ export class HandMimicController {
 
     this.pendingPayload = null;
     this.inFlightPayload = null;
+    this.frameTimings.clear();
     this.transportInFlight = false;
     this.transportType = null;
     this.inferenceRunning = false;

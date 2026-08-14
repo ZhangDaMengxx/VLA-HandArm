@@ -49,4 +49,15 @@ console.warn = originalWarn;
 assert.equal(controller.transportInFlight, false);
 assert.equal(controller.pendingPayload, null);
 
+Object.assign(controller, {
+  frameSequence: 0,
+  frameTimings: new Map(),
+  shouldDriveHardware: () => true
+});
+const points = Array.from({ length: 21 }, (_, i) => ({ x: i, y: i + 1, z: i + 2 }));
+const mimicPayload = controller._makePayload(points);
+assert.equal(mimicPayload.frame_id, 1);
+assert.equal(mimicPayload.drive_hardware, true);
+assert.equal(mimicPayload.landmarks.length, 21);
+
 console.log("hand_mimic transport tests passed");
