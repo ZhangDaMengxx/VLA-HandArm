@@ -12,6 +12,8 @@ export class HandCameraControl {
     this.handViewer = null;  // 灵巧手 3D 查看器（由外部设置）
     this.isHardwareConnectedFn = null;  // 硬件连接状态检查函数
     this._hardwareSending = false;  // 硬件请求进行中标志
+    this._hardwareSeq = 0;
+    this._hardwareDropped = 0;
 
     this._bindEvents();
   }
@@ -73,13 +75,19 @@ export class HandCameraControl {
 
   _stop() {
     if (this.mimicController) {
-      this.mimicController.stop();
+      this.mimicController.stop().catch((err) => {
+        console.warn("[HandCamera] 清理摄像头失败:", err);
+      });
     }
 
     this.container.style.display = "none";
     this.isActive = false;
     this.toggleBtn.textContent = "启动摄像头";
     this.toggleBtn.classList.remove("active");
+  }
+
+  getMetrics() {
+    return this.mimicController?.getMetrics() || null;
   }
 
   /**
@@ -113,6 +121,8 @@ export class HandCameraControl {
     if (this.isHardwareConnectedFn && this.isHardwareConnectedFn()) {
       if (!this._hardwareSending) {
         this._sendToHardware(angles);
+      } else {
+        this._hardwareDropped++;
       }
     }
 
@@ -126,13 +136,16 @@ export class HandCameraControl {
    */
   async _sendToHardware(angles) {
     this._hardwareSending = true;
+    const perfId = ++this._hardwareSeq;
+    const startedAt = performance.now();
     try {
       const response = await fetch("/api/hand/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cmd: "angles",
-          rad: angles
+          rad: angles,
+          perf_id: perfId
         })
       });
 
@@ -148,6 +161,12 @@ export class HandCameraControl {
       // 网络错误或硬件断开，不要中断摄像头
       console.warn("[HandCamera] 发送到硬件失败:", err);
     } finally {
+      const dropped = this._hardwareDropped;
+      this._hardwareDropped = 0;
+      console.log(
+        `[perf-hand/frontend] id=${perfId} HTTP_RTT=${(performance.now() - startedAt).toFixed(1)}ms ` +
+        `等待期间丢弃=${dropped}帧`
+      );
       this._hardwareSending = false;
     }
   }

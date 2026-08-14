@@ -476,6 +476,7 @@ class HandDebugSession:
         self.error: str | None = None                  # 串口打不开等致命错误
         self.port: str | None = None
         self.latest: dict | None = None                # 最近一帧遥测,给刚连上的客户端
+        self._last_hw_tracking_log = 0.0
 
     def start(self, mock: bool = False) -> None:
         """拉起会话:只起 hand_console(串口)。mock=False(默认)= 真开 /dev/ttyUSB0。
@@ -576,6 +577,29 @@ class HandDebugSession:
                 self.error = row.get("msg") or "串口打开失败"
             elif typ == "state":
                 self.latest = row
+                perf = row.get("tracking_perf") or {}
+                now = time.monotonic()
+                if perf and now - self._last_hw_tracking_log >= 0.5:
+                    self._last_hw_tracking_log = now
+                    settled = perf.get("settled_ms")
+                    print(
+                        "[perf-hand/tracking] "
+                        f"id={perf.get('id')} target_age={perf.get('target_age_ms')}ms "
+                        f"mean_err={perf.get('mean_err_rad')}rad "
+                        f"max_err={perf.get('max_err_rad')}rad "
+                        f"settled={settled if settled is not None else 'pending'}ms",
+                        flush=True,
+                    )
+            elif typ == "ack" and row.get("cmd") == "angles":
+                perf = row.get("perf") or {}
+                if perf:
+                    print(
+                        "[perf-hand/serial] "
+                        f"id={perf.get('id')} stdin_queue={perf.get('stdin_queue_ms')}ms "
+                        f"RS485={perf.get('serial_ms')}ms "
+                        f"enqueue_to_serial={perf.get('enqueue_to_serial_ms')}ms",
+                        flush=True,
+                    )
             # 广播给网页
             if typ in ("state", "action_step", "action_done", "error"):
                 self.loop.call_soon_threadsafe(self._broadcast, row)
@@ -1731,11 +1755,21 @@ async def hand_command(payload: dict) -> JSONResponse:
     t0 = time.perf_counter()
 
     hand = _get_hand()
-    result = hand.command(payload)
+    command = dict(payload)
+    perf_id = command.get("perf_id")
+    if command.get("cmd") == "angles":
+        command["_perf"] = {
+            "id": perf_id,
+            "enqueued_ns": time.perf_counter_ns(),
+        }
+    result = hand.command(command)
 
     t1 = time.perf_counter()
     if payload.get("cmd") == "angles":
-        print(f"[perf] 硬件控制 {(t1-t0)*1000:.1f}ms")
+        print(
+            f"[perf-hand/enqueue] id={perf_id} FastAPI到stdin={(t1-t0)*1000:.1f}ms",
+            flush=True,
+        )
 
     return JSONResponse(result)
 

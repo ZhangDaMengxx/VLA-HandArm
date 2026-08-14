@@ -337,6 +337,10 @@ def main() -> None:
     next_tick = time.monotonic()                       # 下一次发遥测
     next_ptick = time.monotonic()                      # 下一次 tick 播放器
     stdin_lines = StdinLines()
+    last_angle_at: float | None = None
+    last_angle_id = None
+    last_angle_serial_ms: float | None = None
+    last_angle_settled_ms: float | None = None
     try:
         while True:
             # 读 stdin。阻塞等到下一个截止时刻为止 —— 命令一到就立刻醒,
@@ -358,7 +362,27 @@ def main() -> None:
                     continue
                 if cmd.get("cmd") == "quit":
                     raise KeyboardInterrupt
-                emit(handle(hand, cmd, sequences))
+                received_ns = time.perf_counter_ns()
+                event = handle(hand, cmd, sequences)
+                completed_ns = time.perf_counter_ns()
+                if cmd.get("cmd") == "angles":
+                    meta = cmd.get("_perf") or {}
+                    try:
+                        enqueued_ns = int(meta.get("enqueued_ns") or received_ns)
+                    except (TypeError, ValueError):
+                        enqueued_ns = received_ns
+                    serial_ms = (completed_ns - received_ns) / 1e6
+                    event["perf"] = {
+                        "id": meta.get("id", cmd.get("perf_id")),
+                        "stdin_queue_ms": round((received_ns - enqueued_ns) / 1e6, 2),
+                        "serial_ms": round(serial_ms, 2),
+                        "enqueue_to_serial_ms": round((completed_ns - enqueued_ns) / 1e6, 2),
+                    }
+                    last_angle_at = time.monotonic()
+                    last_angle_id = event["perf"]["id"]
+                    last_angle_serial_ms = serial_ms
+                    last_angle_settled_ms = None
+                emit(event)
             if stdin_lines.eof:                              # stdin 关闭 = 上层退出
                 raise KeyboardInterrupt
 
@@ -409,6 +433,21 @@ def main() -> None:
                    "raw_vendor": list(raw_vendor),
                    "raw": [raw_vendor[PROJECT_TO_VENDOR[i]] for i in range(6)],
                    "target": [round(v, 4) for v in hand._target_rad]}
+            if last_angle_at is not None:
+                errors = [abs(target - actual)
+                          for target, actual in zip(hand._target_rad, rad)]
+                target_age_ms = (time.monotonic() - last_angle_at) * 1000
+                if last_angle_settled_ms is None and max(errors) <= 0.05:
+                    last_angle_settled_ms = target_age_ms
+                row["tracking_perf"] = {
+                    "id": last_angle_id,
+                    "target_age_ms": round(target_age_ms, 1),
+                    "mean_err_rad": round(sum(errors) / len(errors), 4),
+                    "max_err_rad": round(max(errors), 4),
+                    "last_serial_ms": round(last_angle_serial_ms or 0.0, 2),
+                    "settled_ms": (round(last_angle_settled_ms, 1)
+                                   if last_angle_settled_ms is not None else None),
+                }
             # 力单独按**每帧**读(只 1 个寄存器,~3ms),不跟着全量遥测的 1s 节流走。
             #
             # 为什么必须这样:抓握时力会冲高再落回,1Hz 采样在一次 1-2 秒的抓握里
