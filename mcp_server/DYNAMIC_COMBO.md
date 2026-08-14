@@ -1,5 +1,8 @@
 # Combo 动态扫描机制
 
+> **实验功能归档。** 现行 `robot-mcp-server` 不包含 combo router、combo MCP 工具或
+> Bridge `/combo/*`。本文只用于理解本仓内嵌分叉，不能作为部署说明。
+
 ## 改动背景
 
 **之前**：硬编码的 `COMBO_PRESETS` 映射表

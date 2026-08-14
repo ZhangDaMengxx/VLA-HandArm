@@ -1,5 +1,8 @@
 # 部署到真机主机
 
+> 本文部署的是本仓完整 Web/ROS2 开发栈。这里的 `nero_arm_bridge.py` 是 ROS2 硬件桥，
+> 与独立 `robot-mcp-server/robot-bridge/bridge.py` 的 MCP HTTP Bridge 不是同一进程。
+
 ## 为什么整套跑在机械臂那台
 
 `app_web.py` 是**编排器**,不 import rclpy、不发 ROS 消息 —— 它用 `subprocess` 拉起本机的

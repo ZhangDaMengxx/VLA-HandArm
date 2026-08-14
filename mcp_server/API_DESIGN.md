@@ -1,5 +1,8 @@
 # Web API 设计文档
 
+> **实验设计归档。** 本文的 combo 与感知端点没有进入现行独立 MCP Server。
+> 当前服务只提供 hand、arm、`/mcp` 和弃用的 `/mcp_rest`，见 [README.md](README.md)。
+
 ## 架构概览
 
 ### 3层5端点体系

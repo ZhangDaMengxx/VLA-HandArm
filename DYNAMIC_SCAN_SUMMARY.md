@@ -1,5 +1,9 @@
 # 动态扫描改造总结
 
+> **已撤回的 MCP 实验记录。** 本地 Web 工作台仍使用 `data/combos/`，但现行
+> `robot-mcp-server` 已移除 Bridge `/combo/*` 和 MCP combo 工具。本文不能用于部署或
+> 当前 API 调用，当前边界见 [mcp_server/README.md](mcp_server/README.md)。
+
 ## 改动概述
 
 将 MCP Server 的 Combo 功能从**静态映射表**改为**动态扫描磁盘**。

@@ -1,252 +1,113 @@
 # 项目文档导航
 
-NERO-7 + 灵巧手项目的完整文档系统。
+本文是 `lerobotTest` 文档清单和时效性入口。文档分为“现行”“专题参考”“历史归档”
+三类；历史文档保留当时事实，不作为当前命令、路径或接口依据。
 
----
+## 现行文档
 
-## 📚 文档结构
+| 文档 | 内容 | 当前基准 |
+|------|------|----------|
+| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-14 |
+| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-14 |
+| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-14 |
+| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-14 |
+| [TODO.md](TODO.md) | 可执行待办 | 2026-08-14 |
+| [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
+| [GIT_GUIDE.md](GIT_GUIDE.md) | 三个仓库的 Git 约定 | 2026-08-14 |
+| [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
+| [HTTPS_SETUP.md](HTTPS_SETUP.md) | Web 摄像头 HTTPS 和证书安全 | 2026-08-14 |
+| [WSL_CAMERA_SETUP.md](WSL_CAMERA_SETUP.md) | WSL + Windows 浏览器摄像头验证 | 2026-08-14 |
 
-我们的文档分为4个主要部分，各司其职：
+## MCP 与 Bridge
 
-### 🎯 快速导航
+现行部署代码不在本仓库，权威来源是：
 
-| 文档 | 用途 | 什么时候看 |
-|------|------|-----------|
-| **[HANDBOOK.md](HANDBOOK.md)** | 开发手册 | 每次写代码前 |
-| **[HARDWARE.md](HARDWARE.md)** | 硬件文档 | 调试硬件/查规格 |
-| **[GIT_GUIDE.md](GIT_GUIDE.md)** | Git操作指南 | Git操作/提交代码 |
-| **[CHANGELOG.md](CHANGELOG.md)** | 更新日志 | 了解历史变更 |
-| **[PROJECT_STATUS.md](PROJECT_STATUS.md)** | 项目进度 | 看当前任务状态 |
-
----
-
-## 📖 详细说明
-
-### 1. HANDBOOK.md - 开发手册
-
-**这是你每次修改代码前应该看的文档。**
-
-包含内容：
-- ✅ 完整项目结构
-- ✅ 核心代码说明（`paths.py`, `inspire_hand.py`, `build_nero_inspire.py`等）
-- ✅ 常用开发任务步骤
-- ✅ 参考资料位置
-- ✅ 调试技巧
-- ✅ 工作流程
-
-**适合人群**：所有开发者
-
-**推荐阅读顺序**：
-1. 项目结构 → 了解文件在哪
-2. 核心代码说明 → 知道改哪个文件
-3. 常用开发任务 → 按步骤操作
-
----
-
-### 2. HARDWARE.md - 硬件说明文档
-
-**硬件集成、调试、故障排除时看这个。**
-
-包含内容：
-- ✅ 硬件清单（NERO-7臂 + RH56DFX手）
-- ✅ 通信协议（RS485寄存器、通道映射）
-- ✅ 装配参数（法兰位置、坐标系）
-- ✅ 供电要求
-- ✅ 故障排除
-- ✅ 厂商资料位置
-
-**适合人群**：
-- 硬件集成人员
-- 故障排查时
-- 需要查通信协议/限位参数时
-
-**关键章节**：
-- 通信协议 → 了解RS485通信
-- 装配参数 → 修改手部位置
-- 故障排除 → 出问题时
-
----
-
-### 3. GIT_GUIDE.md - Git操作指南
-
-**提交代码、分支管理、解决冲突时看这个。**
-
-包含内容：
-- ✅ 仓库信息（Python/ROS2两个仓库）
-- ✅ SSH密钥配置
-- ✅ 日常Git操作（add/commit/push/pull）
-- ✅ 分支管理
-- ✅ 提交规范
-- ✅ 常见问题（冲突、撤销等）
-- ✅ 最佳实践
-
-**适合人群**：所有开发者
-
-**什么时候看**：
-- 不确定Git命令 → 查日常操作
-- 遇到冲突 → 查处理冲突
-- 写提交信息 → 查提交规范
-- SSH连接失败 → 查SSH配置
-
----
-
-### 4. CHANGELOG.md - 更新日志
-
-**了解项目演进历史、追溯变更原因。**
-
-包含内容：
-- ✅ 按日期倒序的所有重要变更
-- ✅ 分类（Added/Changed/Fixed/Removed）
-- ✅ 具体文件和代码变动
-- ✅ 提交规范说明
-
-**适合人群**：所有人
-
-**什么时候看**：
-- 新人入职 → 快速了解项目历史
-- 出现bug → 看看最近改了什么
-- 准备提交 → 参考提交信息格式
-
----
-
-### 5. PROJECT_STATUS.md - 项目进度
-
-**查看当前进度、待办任务、已知问题。**
-
-包含内容：
-- ✅ 当前阶段
-- ✅ 已完成任务（带日期）
-- ✅ 进行中任务
-- ✅ 待办任务（按优先级分类）
-- ✅ 已知问题
-- ✅ 里程碑规划
-
-**适合人群**：所有人
-
-**什么时候看**：
-- 每天开始工作前 → 看今天做什么
-- 周会前 → 了解整体进度
-- 分配任务时 → 看待办列表
-
----
-
-## 🚀 新手入门路径
-
-如果你是第一次接触这个项目：
-
-```
-1. 先看 PROJECT_STATUS.md
-   └─ 了解项目目标和当前阶段
-
-2. 再看 HANDBOOK.md
-   └─ 了解项目结构和开发流程
-
-3. 然后看 HARDWARE.md
-   └─ 了解硬件配置
-
-4. 最后浏览 CHANGELOG.md
-   └─ 了解项目历史
-
-5. 开始开发！
-   └─ 有问题随时回来查文档
+```text
+/home/zhang123/ros2_ws/robot-mcp-server
+git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 ```
 
----
+其中 `README.md`、`frp_deploy.md`、`robot-bridge/README.md` 和
+`robot-bridge/WINDOWS_DEPLOY.md` 是部署入口。现行标准接口是 JSON-RPC
+`POST /mcp`，旧 REST 兼容接口位于 `/mcp_rest/tools/*`。
 
-## 🔄 文档维护规则
+本仓库的 `mcp_server/` 是拆仓前快照：
 
-### 什么时候更新文档
+| 文档 | 状态 |
+|------|------|
+| [mcp_server/README.md](mcp_server/README.md) | 当前边界和 10 个工具的接口速查 |
+| [mcp_server/DEPLOY.md](mcp_server/DEPLOY.md) | 跳转到独立仓库的部署说明 |
+| [mcp_server/DOCKER_BUILD.md](mcp_server/DOCKER_BUILD.md) | 旧镜像构建参考，部署前核对独立仓库 |
+| [mcp_server/SERVER_DEPLOY.md](mcp_server/SERVER_DEPLOY.md) | 旧服务器部署参考，部署前核对独立仓库 |
+| `API_DESIGN.md`、`DYNAMIC_COMBO.md`、`TEST_REPORT.md` | 已归档，不代表现行服务 |
 
-| 操作 | 更新文档 | 更新时机 |
-|------|---------|----------|
-| 修改代码结构 | HANDBOOK.md | 代码提交前 |
-| 添加新功能 | CHANGELOG.md, PROJECT_STATUS.md | 提交时 |
-| 完成任务 | PROJECT_STATUS.md | 任务完成后 |
-| 修改硬件参数 | HARDWARE.md | 参数确认后 |
-| 发现bug | PROJECT_STATUS.md (已知问题) | 发现时 |
-| 修复bug | CHANGELOG.md | 修复提交时 |
+## 专题技术文档
 
-### 文档更新检查清单
+这些文档描述仍存在的本地开发模块。涉及真机时，仍以代码、硬件手册和当前状态页为准。
 
-**提交代码前检查**：
-- [ ] 如果改了核心代码，更新了 HANDBOOK.md 吗？
-- [ ] 如果改了硬件参数，更新了 HARDWARE.md 吗？
-- [ ] 更新了 CHANGELOG.md 记录变更吗？
-- [ ] 如果完成了任务，更新了 PROJECT_STATUS.md 吗？
+| 文档 | 主题 |
+|------|------|
+| [sim/README.md](sim/README.md) | Web/技能/回放模块总览 |
+| [sim/ARM_DEBUG.md](sim/ARM_DEBUG.md) | 机械臂调试记录与现状 |
+| [sim/HAND_DEBUG.md](sim/HAND_DEBUG.md) | 灵巧手调试记录与现状 |
+| [sim/COMBO_DEBUG.md](sim/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
+| [sim/HAND_SAFETY_PLAN.md](sim/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
+| [sim/CANONICAL_SPEC.md](sim/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
+| [VISUALIZER_SPEC.md](VISUALIZER_SPEC.md) | 可视化约定 |
+| [sim/build_urdf/README.md](sim/build_urdf/README.md) | URDF 装配分析工具 |
+| [adjust_hand_mount_example.md](adjust_hand_mount_example.md) | 当前装配参数调整流程 |
+| [WINDOWS_DEPLOY.md](WINDOWS_DEPLOY.md) | 本仓库 Windows 开发参考；MCP 部署看独立仓库 |
+| [sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md) | 当前 MediaPipe Tasks 迁移和兼容契约 |
+| [sim/web/vendor/mediapipe-tasks/README.md](sim/web/vendor/mediapipe-tasks/README.md) | 本地模型/WASM 来源和校验值 |
+| [overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md](overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md) | overlay 可视化结构参考 |
 
----
+## 历史归档
 
-## 📂 其他文档
+下列文档记录 2026-08-10 至 2026-08-11 的迁移、阶段性验证或已撤回实验。文中的
+旧目录、代码行号、通过结论和接口不保证仍有效：
 
-除了上述4个核心文档，项目中还有：
+- [MIGRATION_2026_08_10.md](MIGRATION_2026_08_10.md)
+- [MIGRATION_README.md](MIGRATION_README.md)
+- [ASSET_MIGRATION_PLAN.md](ASSET_MIGRATION_PLAN.md)
+- [ASSEMBLY_SUCCESS.md](ASSEMBLY_SUCCESS.md)
+- [WEB_COMBO_UPDATE.md](WEB_COMBO_UPDATE.md)
+- [sim/URDF_FIX_2026-08-10.md](sim/URDF_FIX_2026-08-10.md)
+- [DOC_SUMMARY.md](DOC_SUMMARY.md)
+- [DYNAMIC_SCAN_SUMMARY.md](DYNAMIC_SCAN_SUMMARY.md)
+- [mcp_server/TEST_REPORT.md](mcp_server/TEST_REPORT.md)
+- [更新日志.md](更新日志.md)（旧日志，后续记录看 `CHANGELOG.md`）
+- [assets/nero_official/README.md](assets/nero_official/README.md)（厂商资产来源记录）
+- [assets/arm_legacy/nero_official/README.md](assets/arm_legacy/nero_official/README.md)（重复的旧资产来源记录）
+- `user-package/README.md`、`user-package/USER_GUIDE.md`（拆仓前用户包）
 
-### 迁移相关
-- `MIGRATION_2026_08_10.md` - 灵巧手URDF迁移详细记录
-- `MIGRATION_README.md` - 迁移快速参考
-- `QUICKSTART.md` - 迁移后快速启动指南
-- `ASSEMBLY_SUCCESS.md` - 装配体生成成功报告
-- `WEB_COMBO_UPDATE.md` - Web combo更新报告
+`FILE_LIST.md`、`PROJECT_PLAN.md` 和 `QUICKSTART.md` 是阶段性清单/方案，顶部已标出
+时效性；使用其中命令前先对照本页和当前代码。
 
-### 工具脚本文档
-- `migrate_hand_joints.py` - 内含使用说明注释
-- `verify_migration.py` - 内含使用说明注释
-- `final_summary.py` - 生成迁移总结
+## 审查范围
 
-### 历史文档（上级目录）
-- `/home/zhang123/ros2_ws/handarm_notes.md` - 旧版技术笔记（已被新文档替代）
-- `/home/zhang123/ros2_ws/progress.md` - 旧版进度记录（已被PROJECT_STATUS.md替代）
-- `/home/zhang123/ros2_ws/更新日志.md` - 旧版更新日志（已被CHANGELOG.md整合）
+本次审查覆盖项目团队维护的入口、硬件、Web、MCP、部署、迁移和调试文档。以下内容按
+上游或生成物处理，不改写其技术正文：
 
----
+- `dex-retargeting-main/`、`dex-urdf-main/`、`egozero-main/`
+- `pinocchio-kinematics-lite-main/`、`pyAgxArm-master/`、`unitree_sdk2-main/`
+- `.pytest_cache/` 与各测试缓存中的 README
 
-## 🆘 获取帮助
+引用这些文档时应同时记录上游版本；它们不能替代本项目的当前状态和安全约束。
 
-### 找不到信息？
+## 维护规则
 
-1. **先查文档索引**（就是本页顶部表格）
-2. **搜索关键词**：`grep -r "关键词" *.md`
-3. **查看代码注释**：关键文件都有详细注释
-4. **查看Git历史**：`git log --grep="关键词"`
+- 修改运行方式、接口或目录时，同一提交更新 `README.md`、`HANDBOOK.md` 和本页。
+- 修改硬件参数时更新 `HARDWARE.md`，并运行相关只读/模拟校验。
+- 历史报告不改写当时事实，只在顶部注明归档状态和当前入口。
+- MCP 部署变化首先更新独立 `robot-mcp-server`，本仓只维护边界和链接。
+- 文档不得记录私钥、API Key、个人 SSH 指纹或可复用凭据。
 
-### 文档不清楚？
+## 当前未闭环文档风险
 
-- 直接修改文档并提交
-- 或者提issue说明哪里不清楚
-
----
-
-## 📋 文档编写规范
-
-### Markdown格式
-
-- 标题层级：# 一级 → ## 二级 → ### 三级
-- 代码块：用\`\`\`python 或 \`\`\`bash 指定语言
-- 表格：对齐清晰，用 `|` 分隔
-- 链接：相对路径链接其他文档
-
-### 风格指南
-
-- ✅ **简洁明了**：一句话说清楚
-- ✅ **结构清晰**：用标题、列表、表格
-- ✅ **示例代码**：提供可运行的例子
-- ✅ **保持更新**：改代码同时改文档
-- ❌ **避免过时信息**：及时删除或标记
-
----
-
-## 🎯 文档质量标准
-
-好文档应该：
-1. ✅ **能快速找到**信息（清晰的目录和索引）
-2. ✅ **能看懂**（例子和步骤清楚）
-3. ✅ **能直接用**（代码可复制运行）
-4. ✅ **保持最新**（与代码同步）
+1. `sim/skills/hand_pose.py --verify` 有 10 项参数不一致。
+2. `verify_migration.py` 和 `final_summary.py` 仍引用旧资产路径，不能作为当前验收工具。
+3. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 
 ---
 
-**最后更新**：2026-08-10  
-**维护者**：项目团队
-
-**开始开发？** 👉 先看 [HANDBOOK.md](HANDBOOK.md)  
-**硬件问题？** 👉 查看 [HARDWARE.md](HARDWARE.md)  
-**查进度？** 👉 打开 [PROJECT_STATUS.md](PROJECT_STATUS.md)
+**最后全面审查**：2026-08-14

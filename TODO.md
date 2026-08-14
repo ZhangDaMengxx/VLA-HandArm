@@ -1,49 +1,53 @@
-# 待办事项 (TODO)
+# 待办事项
 
-## 灵巧手安全计划 - 暂停（2026-08-11）
+本页只保留尚未完成、能够执行的事项。完成情况和背景见
+[PROJECT_STATUS.md](PROJECT_STATUS.md)。
 
-**已完成：**
-- ✅ 第 0 步：TrajectoryBackend 加载期预检
-- ✅ 第 1 步：读 Kilohertz-Safe 论文
-- ✅ 第 3 步：几何碰撞检查器（标定参数：span2=0.525, k3=1.075）
+## P0 安全与一致性
 
-**待办：**
-- [ ] **第 4 步：路径检查**（~40 行，按 SPEED_SET 推中间轨迹查碰撞）
-  - 计划：`HAND_SAFETY_PLAN.md` 第 190 行
-  - 验收：能离线复现"握拳时堵转"
-  
-- [ ] **第 5 步：约束进 dex_retargeting**
-  - 加 `add_inequality_constraint` 到 derive_embodiment
-  - 修复 `derive_embodiment.py:366` 的裸 clip
-  
-- [ ] **第 6 步：换手复用**
-  - 把 1-5 的输入收成"手型档案"
+- [ ] 统一 `sim/inspire_hand.py` 与 `sim/skills/hand_pose.py` 的手指 span/limit
+  - 当前 `python3 sim/skills/hand_pose.py --verify` 报 10 项不一致
+  - 先确认真机安全范围、URDF 表达和已录动作影响，再修改代码
+  - 同步独立仓库 `robot-mcp-server/robot-bridge/sim/`
+- [ ] 轮换已经进入 Git 的 `ssl/key.pem`
+  - 停止把现有私钥用于共享或生产环境
+  - 将私钥移出跟踪并加入忽略规则
+  - 单独评估是否需要清理 Git 历史及通知所有使用者
+- [ ] 修复迁移验收脚本
+  - `verify_migration.py` 仍检查 `assets/inspire_hand/`，当前路径是 `assets/hand/`
+  - `final_summary.py` 仍输出旧路径且在错误状态下宣称完成
+  - 验收工具应在失败时返回非零退出码
 
-- [ ] **遗留：统一 thumb_2 limit**
-  - URDF: 0.48 → 0.525（让网页端读到正确值）
-  - hand_pose.LIMIT_HI: 0.6 → 0.525
-  - collision_checker: 已是 0.525 ✓
-  - 影响：网页滑块范围、实际发送限制
+## P0 真机验证
 
-- [ ] **旧表的二维问题**
-  - 发现：(yaw=600, pitch=100) 会碰，但旧表说 T=600 安全
-  - 旧表只在对角线 (T,T) 测过，离对角线的点未验证
-  - 考虑：是否需要二维表，或者改用几何实时检查
+- [ ] 核验灵巧手连接、只读反馈、单关节低速运动和力控范围
+- [ ] 核验机械臂固件自动探测、CAN、使能、低速单关节运动、急停和复位
+- [ ] 核验机械臂不可用时 Bridge 的 hand-only 降级
+- [ ] 核验 MCP 心跳断线、恢复、健康状态和运动命令不自动重试
+- [ ] 记录每项真机验证的日期、硬件版本、固件和初始条件
+
+## P1 Web 与视觉
+
+- [x] 单帧在途和 latest-frame-wins 背压
+- [x] `stop()` 后禁止异步重连
+- [x] MediaPipe Tasks 本地资源和兼容包装层单测
+- [ ] 浏览器摄像头实测 FPS、端到端延迟和断线恢复
+- [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥
+
+## P1 ROS2 与数据
+
+- [ ] 审查独立 ROS2 仓库是否仍有旧灵巧手关节名
+- [ ] 验证 `ros2_control`、JointTrajectoryController 和 RViz2
+- [ ] 完成灵巧手路径碰撞检查，并接入 retargeting 约束
+- [ ] 按确认后的限位重新评估或录制手势包
+
+## P2 后续能力
+
+- [ ] 完善 VLA 数据集验证和训练流程
+- [ ] 增加仿真碰撞与场景测试
+- [ ] 为 Web 7860 端口增加鉴权或可信反向代理边界
+- [ ] 如果需要 MCP combo，先形成新的接口、安全和执行语义设计，再在独立仓库实现
 
 ---
 
-## 当前任务：MCP Server（2026-08-11 启动）
-
-**目标**：让大模型（Claude 等）通过 MCP 协议调用现有技能包，控制真实硬件。
-
-**技术栈**：FastAPI + MCP protocol
-
-**需求**：
-- 配置 `control_address`（局域网/公网可切换）
-- 封装技能包为 MCP tools
-- 公网模式需鉴权（API key）
-
-**参考**：
-- MCP 规范：https://modelcontextprotocol.io
-- 现有技能包：`sim/skills/registry.yaml` + `backend.py`
-- 控制层：`hand_console.py`, `app_web.py`
+**最后整理**：2026-08-14

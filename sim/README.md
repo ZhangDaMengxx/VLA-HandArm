@@ -1,5 +1,14 @@
 # sim/ 说明
 
+> **维护提示（2026-08-14）**：本文包含长期数据管线和大量阶段性调试结论。涉及资产
+> 路径、灵巧手限位或装配参数时，以当前代码、根目录 `HARDWARE.md` 和
+> `PROJECT_STATUS.md` 为准。现行 MCP 部署不在 `sim/`，本地 Web combo 也不等于 MCP
+> combo 能力。
+>
+> 特别注意：下文 `build_inspire_from_vendor.py` 段落描述的是旧生成链。该脚本仍输出
+> `assets/inspire_hand/` 并保留 0.6/1.47 限位，而当前运行驱动和标准资产使用
+> `assets/hand/` 与 0.48/1.333。修复脚本前不要运行它覆盖当前标准资产。
+
 NERO(7-DoF 臂)+ inspire 灵巧手的仿真与数据管线代码。总体方案见仓库根 `PROJECT_PLAN.md`,快速上手见根 `README.md`。
 
 ## 数据流(两层架构)

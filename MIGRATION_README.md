@@ -1,5 +1,8 @@
 # 灵巧手URDF迁移 README
 
+> **历史归档。** `verify_migration.py` 和 `final_summary.py` 当前仍引用旧资产路径，
+> 不能作为现行验收入口。当前开发流程见 [HANDBOOK.md](HANDBOOK.md)。
+
 ## 概述
 
 本次迁移（2026-08-10）将项目使用的灵巧手URDF从旧版本更新为厂商2025-04-18提供的最新版本。真机已到位，采用新URDF作为项目标准。

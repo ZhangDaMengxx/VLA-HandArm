@@ -1,5 +1,8 @@
 # nero_official
 
+> **资产来源归档。** 本文保留 2026-07-28 的上游取材记录，文中的旧目录不代表当前
+> `assets/` 布局。当前机械臂模型入口见根目录 `HARDWARE.md`。
+
 AgileX 官方 NERO URDF/mesh,取自 <https://github.com/agilexrobotics/agx_arm_urdf> 的 `nero/` 目录
 (main 分支,2026-07-28 取)。用途:给 `sim/assets/nero_gripper_right.urdf` 提供 CAD 真值,
 替掉原先按网格反推的估计值(装配偏移、行程、质量/惯量)。

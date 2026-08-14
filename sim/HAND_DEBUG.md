@@ -1,5 +1,10 @@
 # 灵巧手调试页使用说明
 
+> **调试记录，含历史结论。** 当前驱动限位为拇指弯曲 0.48、四指 1.333；Web 手模型
+> 挂载自 `assets/viz/hand/`。下文关于 `assets/inspire_hand/`、0.6/1.47 和旧生成脚本
+> 的段落仅保留排错背景，当前状态以 `sim/inspire_hand.py`、`sim/app_web.py` 和根目录
+> `PROJECT_STATUS.md` 为准。
+
 ## 概述
 
 在 app_web.py 新增第三个模式**「灵巧手调试」**,用于单独调试 Inspire RH56DFX 灵巧手：
@@ -811,7 +816,7 @@ URDF 两端,两个方向都跑满。用 1.39626 的话 `rad_to_raw(1.308)=63`,�
   Euler order。机械臂调试页(`web/arm3d.js`)用的是同一份,见 `ARM_DEBUG.md`
 - `web/hand3d.js`:只剩手特有的部分(6 驱动关节 + mimic),继承 `UrdfViewer`
 - three.js r160 + GLTFLoader + OrbitControls **本地 vendor** 在 `web/vendor/`,不依赖 CDN
-- URDF 和 mesh 由 `/hand_assets` 静态挂载提供,用的是 `assets/inspire_hand/` 那份 URDF —— 它的 mesh 路径是相对的(`meshes/visual/*.glb`),浏览器能顺着取;`sim/assets/inspire_hand_viz.urdf` 里是绝对文件系统路径,那是给 pinocchio 的,浏览器取不到
+- URDF 和 mesh 由 `/hand_assets` 静态挂载提供，当前目录是 `assets/viz/hand/`；浏览器资产必须使用可访问的相对 mesh 路径
 - **mimic 在 JS 里补算**,和 `hand_rerun.py` 的 MIMIC 表是同一份数据 —— 改一处要改两处。**2026-08-07** 更新为厂家新 URDF 的倍率(拇指 1.1425/0.858,四指 1.1169 无 offset)。
 - URDF 是 Z-up,three.js 是 Y-up,根节点转 -90°(零位四指指 +Z,转完指 +Y 向上)。⚠ **新 URDF 的 `base_joint` 是单位变换**(不再有老 dex-urdf 那层 `-90°X,180°Z` 人为旋转),但 three.js 这边仍需转 -90° 让手指向上。
 - **rpy 必须按 `'ZYX'` order 解释**:URDF 是固定轴 RPY(`Rz·Ry·Rx`),three.js 的

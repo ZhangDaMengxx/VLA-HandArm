@@ -1,5 +1,9 @@
 # 云服务器部署指南 - 开箱即用
 
+> **旧部署包记录。** 文中的固定镜像大小、包名和配置不代表当前发布物。现行服务器
+> 部署以 `/home/zhang123/ros2_ws/robot-mcp-server/frp_deploy.md` 及最新 compose 文件
+> 为准。
+
 ## 📦 部署包内容
 
 - `robot-mcp-server.tar` — Docker 镜像文件（67MB）

@@ -6,6 +6,32 @@
 
 ---
 
+## [2026-08-14] - 文档时效性全面审查
+
+### Changed (变更)
+
+- 明确现行 MCP/Bridge 基准为独立 `robot-mcp-server` 仓库
+- 重建文档导航，将现行操作文档、专题参考和历史报告分层
+- 修正 MCP 标准入口、弃用 REST 路径、10 个工具、心跳与 hand-only 降级语义
+- 更新 WebSocket latest-frame-wins、停止/重连和 MediaPipe Tasks 本地资源说明
+- 更新当前项目状态、待办、硬件参数和装配参数
+
+### Security (安全)
+
+- 标记 `ssl/key.pem` 已进入 Git，不得继续作为共享或生产私钥使用
+- 标记 `hand_pose.py` 与驱动存在 10 项参数不一致，禁止宣称可行域校验已对齐
+
+### Deprecated (弃用)
+
+- 本仓 `mcp_server/` 和根目录 `bridge.py` 作为拆仓前快照保留
+- MCP combo、视觉 mimic 和 `/execute` 文档归档，不代表现行部署能力
+
+### Verification (验证)
+
+- MCP 心跳单测 3 项通过，机械臂 mock 单测 1 项通过
+- Web MediaPipe/传输 Node 单测通过
+- `hand_pose.py --verify` 与旧迁移脚本仍失败，已列入待办
+
 ## [2026-08-14] - 实时摄像头手部追踪 WebSocket 优化
 
 ### Added (新增)

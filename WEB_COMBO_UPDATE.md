@@ -1,5 +1,8 @@
 # Web端Combo页面更新完成 - 2026-08-10
 
+> **历史归档。** 本文记录当时的 Web 合体模型修复。Web combo 仍是本地工作台能力，
+> 但现行独立 MCP Server 不提供 combo 工具或接口。当前边界见 [README.md](README.md)。
+
 ## ✅ 问题解决
 
 **问题**：Web端combo页面显示的还是旧模型（旧关节名）

@@ -1,153 +1,85 @@
 # VLA-HandArm
 
-机械臂 + 灵巧手的 MCP 服务，让 AI 用自然语言驱动硬件。另含一条 VLA 数据管线：
-人手视频 → 关节轨迹 → LeRobotDataset。
+NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 VLA 数据管线。
 
-```
-[Claude] --MCP--> [MCP Server] --HTTP--> [bridge] --RS485/CAN--> [硬件]
-                   本地或云端             用户本机
-```
+本仓库用于本体开发、仿真、标定、数据处理和 Web 调试。对外部署的 MCP Server
+及轻量硬件 Bridge 已拆分到独立仓库：
 
-MCP Server 不碰硬件，只发 HTTP；驱动、技能表、可行域校验全在 bridge。
+- 本地目录：`/home/zhang123/ros2_ws/robot-mcp-server`
+- GitHub：`git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git`
+- 现行基准：`main` 分支；本页最后核对时为 `f4e1c7e`（2026-08-14）
 
-## 只想跑硬件
-
-用独立的轻量仓库，**别 clone 这个** —— 这里带着仿真资产和第三方库，2.9GB：
-
-```bash
-git clone https://github.com/ZhangDaMengxx/robot-bridge.git
-cd robot-bridge
-pip install -r requirements.txt
-python bridge.py --mock --host 127.0.0.1 --port 9000
+```text
+[MCP client] -- JSON-RPC /mcp --> [MCP Server] -- HTTP --> [robot-bridge]
+                                                           | RS485 / CAN
+                                                           v
+                                                     [灵巧手 / 机械臂]
 ```
 
-[robot-bridge](https://github.com/ZhangDaMengxx/robot-bridge) 只有运行时需要的
-东西，260KB，从本仓库拆出去的，驱动和标定数据同源。
+## 从哪里开始
 
-### 或者从本仓库精确检出
-
-不想另开仓库就用 sparse-checkout。别写 `sim` 整个目录（422MB），下面这 7 个文件
-合计 120KB：
-
-```bash
-git clone --filter=blob:none --no-checkout \
-  https://github.com/ZhangDaMengxx/VLA-HandArm.git
-cd VLA-HandArm
-git sparse-checkout init --no-cone
-git sparse-checkout set \
-  /bridge.py /sim/inspire_hand.py /sim/skills/schema.py \
-  /sim/skills/hand_pose.py /sim/skills/registry.yaml \
-  /sim/skills/gestures.yaml /mcp_server/DEPLOY.md
-git checkout main
-```
-
-接真机械臂再补 `/sim/nero_arm.py`。
-
-### 启动 bridge
-
-```bash
-pip install fastapi uvicorn pyserial pyyaml
-
-# mock：不连硬件，先跑通链路
-python bridge.py --mock --host 127.0.0.1 --port 9000
-
-# 真机 Linux
-python bridge.py --hand-port /dev/ttyUSB0 --host 127.0.0.1 --port 9000
-
-# 真机 Windows
-python bridge.py --hand-port COM5 --host 127.0.0.1 --port 9000
-```
-
-不加 `--mock` 时连不上硬件会**直接启动失败**，不会静默退到 mock。
-
-详见 [mcp_server/DEPLOY.md](mcp_server/DEPLOY.md)。
-
-## 单机验证（不用云服务器）
-
-bridge 和 MCP Server 同一台机器，不用隧道、不用防火墙：
-
-```bash
-# 终端 1
-python bridge.py --mock --host 127.0.0.1 --port 9000
-
-# 终端 2（在 mcp_server/ 下）
-ROBOT_BRIDGE_URL=http://127.0.0.1:9000 MCP_SECURITY_MODE=lan \
-  python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-Claude Desktop 配置（`mcpServers` 走 stdio，需要 mcp-remote 代理）：
-
-```json
-{
-  "mcpServers": {
-    "robot": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
-    }
-  }
-}
-```
-
-重启 Claude Desktop，问它"列出可用的手势"验证链路。
-
-## 云端部署 MCP Server
-
-从 [Releases](https://github.com/ZhangDaMengxx/VLA-HandArm/releases) 下载
-Docker 镜像部署包，或自行构建：
-
-```bash
-cd mcp_server
-docker compose up -d
-```
-
-详见 [mcp_server/SERVER_DEPLOY.md](mcp_server/SERVER_DEPLOY.md)。
-
-## 完整 clone（开发用）
-
-```bash
-git clone https://github.com/ZhangDaMengxx/VLA-HandArm.git
-```
-
-2.9GB，含仿真资产（URDF、网格）、第三方库、数据集。
-
-## 文档
-
-| 文档 | 说明 |
+| 目标 | 入口 |
 |------|------|
-| [DEPLOY.md](mcp_server/DEPLOY.md) | 用户部署指南（本地 bridge + 隧道） |
-| [SERVER_DEPLOY.md](mcp_server/SERVER_DEPLOY.md) | 云端 MCP Server 部署 |
-| [DOCKER_BUILD.md](mcp_server/DOCKER_BUILD.md) | Docker 构建问题排查 |
+| 部署 MCP Server 或硬件 Bridge | `/home/zhang123/ros2_ws/robot-mcp-server/README.md` |
+| 查看本项目文档状态 | [README_DOCS.md](README_DOCS.md) |
+| 调试硬件 | [HARDWARE.md](HARDWARE.md) |
+| 修改本项目代码 | [HANDBOOK.md](HANDBOOK.md) |
+| 查看当前进度和已知问题 | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
+| 部署完整 Web/ROS2 真机主机 | [deploy/README.md](deploy/README.md) |
 
-## VLA 数据管线（开发）
+> `mcp_server/` 和根目录 `bridge.py` 是拆仓前的内嵌快照，包含曾经试验过的
+> combo、视觉 mimic 和 `/execute` 能力。它们不是当前 MCP 部署基准；不要从这些
+> 文件推断线上接口，也不要与独立仓库混合部署。
 
-把一段人手视频转成 NERO（7-DoF）+ Inspire 手的关节轨迹，打包成 LeRobotDataset，
-验证这套数据能否用来训 VLA。
+## Web 工作台
+
+```bash
+conda activate lerobot
+python sim/app_web.py
+```
+
+服务监听 `0.0.0.0:7860`。若本机存在 `ssl/key.pem` 和 `ssl/cert.pem` 会启用 HTTPS，
+否则使用 HTTP。`localhost` 开发可以使用 HTTP；局域网摄像头访问需要可信 HTTPS。
+
+主要能力：
+
+- 机械臂、灵巧手和合体 3D 状态与调试
+- 浏览器 MediaPipe Tasks Hand Landmarker
+- `/ws/hand/mimic` 低延迟重定向，HTTP 为断线降级路径
+- 联合动作录制和回放（这是 Web 工作台能力，不等于现行 MCP combo 工具）
+
+## VLA 数据管线
 
 ```bash
 pip install -r requirements.txt
-python sim/build_nero_inspire.py     # NERO + inspire 装配 URDF
-python sim/build_canonical.py        # 视频 → 规范层
-python sim/derive_embodiment.py --emit-traj  # 规范层 → 本体数据集
-python sim/replay_rerun.py --serve   # Rerun 回放
+python sim/build_nero_inspire.py
+python sim/build_canonical.py
+python sim/derive_embodiment.py --emit-traj
+python sim/replay_rerun.py --serve
 ```
 
-## 仓库结构
+管线将人手视频转换为规范层，再映射到 NERO + Inspire 的关节轨迹和
+LeRobotDataset。具体约定见 [sim/CANONICAL_SPEC.md](sim/CANONICAL_SPEC.md)。
 
+## 目录
+
+```text
+bridge.py              拆仓前的硬件代理快照，不是部署基准
+mcp_server/            拆仓前的 MCP 快照和历史文档
+sim/                   驱动、Web、技能、标定、仿真和数据管线
+assets/                URDF、mesh 和浏览器模型
+data/                  动作包、标定和数据集
+deploy/                完整 Web/ROS2 真机主机部署
 ```
-├── bridge.py              # 硬件代理（用户本地运行）
-├── mcp_server/            # MCP Server（云端部署）
-│   ├── DEPLOY.md          # 用户部署指南
-│   ├── SERVER_DEPLOY.md   # 服务器部署指南
-│   └── app/               # MCP 服务代码
-├── sim/                   # 驱动和技能库
-│   ├── inspire_hand.py    # 灵巧手驱动
-│   ├── nero_arm.py        # 机械臂驱动
-│   └── skills/            # 技能定义和执行
-├── assets/                # URDF 模型和网格（开发用）
-└── data/                  # 数据和标定（开发用）
-```
+
+## 当前安全约束
+
+- 真机运动前必须确认工作区、低速、使能状态和急停可达。
+- `sim/skills/hand_pose.py --verify` 当前有 10 项与 `sim/inspire_hand.py` 不一致，
+  在修复并完成真机验证前，不得把手势可行域表视为已对齐。
+- Web 的 7860 端口没有应用层鉴权，不应直接暴露到公网。
+- `ssl/key.pem` 曾被 Git 跟踪。现有私钥不得继续作为共享或生产凭据使用。
 
 ---
 
-**仓库**：https://github.com/ZhangDaMengxx/VLA-HandArm  
-**问题反馈**：[Issues](https://github.com/ZhangDaMengxx/VLA-HandArm/issues)
+**最后核对**：2026-08-14

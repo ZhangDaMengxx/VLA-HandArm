@@ -1,5 +1,9 @@
 # Docker 构建指南
 
+> **兼容性参考，不是现行构建入口。** 请在
+> `/home/zhang123/ros2_ws/robot-mcp-server/mcp_server` 使用最新 Dockerfile 和 compose
+> 文件；公网 FRP 部署看独立仓库 `frp_deploy.md`。本文保留旧网络故障排查经验。
+
 ## 问题：本地网络限制
 
 如果遇到以下错误：
