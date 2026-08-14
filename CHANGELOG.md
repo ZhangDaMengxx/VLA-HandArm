@@ -14,6 +14,7 @@
 - 新增 Tasks/Legacy 统一追踪适配层，支持 Tasks GPU → CPU → Legacy 自动降级
 - 新增 30Hz `LatestTargetMailbox`：最多一个待发目标、一个真实 ACK 在途，250ms 旧目标丢弃，100ms ACK 超时
 - 新增 `frame_id`/ACK token 关联及 frontend、mailbox、stdin、RS485、tracking 分段性能日志
+- 新增六关节 One Euro 实时目标滤波和 `perf-hand/filter` 日志；滤波状态按 WebSocket 隔离
 
 ### Changed (变更)
 
@@ -21,6 +22,11 @@
 - `/ws/hand/mimic` 在返回 3D 预览角度的同时投递硬件目标；HTTP fallback 只保留 retarget 与预览
 - 连续视觉控制期间 `ANGLE_ACT` 保持 30Hz、`FORCE_ACT` 降至 10Hz，全量遥测在目标空闲 500ms 后补读
 - `HandDebugSession` 增加 stdin 写锁、真实子进程 ACK 等待和单摄像头硬件控制权
+- 真手目标在 retarget 后使用 `min_cutoff=1.5Hz`、`beta=2.5`、导数截止 `1.0Hz` 的 One Euro 滤波；超过 200ms 无目标时重置
+
+### Fixed (修复)
+
+- 移除会积累滤波尾差的 `0.015-0.02rad` 大位置死区，改为统一 `0.0005rad` 硬件分辨率门限，修复张手末端和保持姿态时约 `0.02rad` 的台阶式卡顿抖动
 
 ### Removed (移除)
 
@@ -32,7 +38,9 @@
 ### Verification (验证)
 
 - Node 适配层与前端传输测试通过；mailbox 6 项单测、stdin 回归和 mock console ACK 探针通过
+- One Euro 滤波 8 项单测通过，覆盖静止抑制、快速斜坡、200ms 重置和末端连续收敛
 - mock WebSocket 全链路预热后：retarget 4.3ms、mailbox wait 4.8ms、目标到 ACK 5.18ms
+- mock 滤波链路观测开销约 0.012-0.033ms；修正后的 0.0005rad 门限仍待真手复测
 - RH56DFX 真机观测：retarget 通常 1-5ms、RS485 通常 4.6-8.0ms、目标到串口 ACK 约 7-39ms，队列最多覆盖一个旧目标
 - `SPEED_SET` 500/800/1000 三次运行分别观测到 418.5/336.8/110.6ms settled；动作幅度不同，只能说明提速趋势，不能作为严格横向基准
 

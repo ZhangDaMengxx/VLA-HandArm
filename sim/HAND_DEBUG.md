@@ -986,6 +986,30 @@ MediaPipe Tasks 和 latest-target 改造后，RH56DFX 真机样本为：
 1000 相对 500 严格提升了某个倍率。下一轮应使用固定起点和终点，各速度重复至少 3 次，
 同时记录 `settled`、`FORCE_ACT`、电流、温度和机械冲击。
 
+### 实时目标滤波（2026-08-14）
+
+真手下发目标在 dex-retargeting 之后增加六关节 One Euro 自适应滤波：静止时降低
+目标抖动，运动速度升高时自动提高截止频率，避免固定低通带来的持续相位延迟。默认
+`min_cutoff=1.5Hz`、`beta=2.5`、导数截止 `1.0Hz`。六个关节的最小命令变化量均为
+`0.0005rad`，约等于或小于一个硬件 raw count；全部关节低于该分辨率门限时不写
+`ANGLE_SET`。
+
+滤波状态按 WebSocket 隔离；目标中断超过 200ms、关闭硬件驱动、灵巧手离线、控制权
+被拒或连接断开都会清理状态。浏览器 3D 预览仍显示未经滤波的 retarget 结果，方便对照
+算法输出与真手命令。验证日志：
+
+```text
+[perf-hand/filter] id=42 reset=0 raw_delta=0.0310rad filtered_delta=0.0182rad suppressed=4/6 cost=0.025ms
+```
+
+静止测试重点比较 `raw_delta` 与 `filtered_delta`，动作测试同时看新增滤波延迟和
+`perf-hand/tracking`。自动测试为 `python3 test_hand_target_filter.py`。
+
+首轮曾使用拇指 `0.02rad`、四指 `0.015rad` 的大死区，真机日志出现原始目标只变化
+`0.0002rad`、下发目标却突然变化 `0.0200rad`。原因是滤波尾差在死区内累计后一次性
+跨阈值，表现为张手末端或保持姿态时的卡顿抖动。现行分辨率门限用于避免重复 raw 命令，
+不再承担姿态平滑；平滑只由 One Euro 完成。
+
 ## 已知限制
 
 1. **拇指弯曲行程压缩**: xls 实测 40° = 0.698 rad,URDF 限 0.6 rad,写角度只能到 86%,回读也在 0.6 处饱和

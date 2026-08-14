@@ -34,6 +34,10 @@
 - [x] `stop()` 后禁止异步重连
 - [x] MediaPipe Tasks 本地资源和兼容包装层单测
 - [x] 后端 latest-target mailbox、真实 ACK 和 WebSocket 断线清理
+- [x] 六关节 One Euro 滤波、200ms 状态重置和硬件分辨率级写入门限
+- [ ] 真机复测滤波后的张手末端与静止手势
+  - 静止阶段不得再出现 `raw_delta` 接近 0、`filtered_delta` 突跳约 0.02rad
+  - 记录 `perf-hand/filter` 与 `perf-hand/tracking`，确认无可见台阶且跟随延迟可接受
 - [ ] 浏览器摄像头实测 FPS、端到端延迟和断线恢复
 - [ ] 用相同固定角度阶跃各重复 3 次，对照 `SPEED_SET=500/800/1000` 的 settled、力、电流和温度
 - [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥

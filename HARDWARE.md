@@ -143,6 +143,12 @@ MediaPipe Tasks → WebSocket → dex-retargeting → latest-target mailbox → 
 不能用于计算严格倍率。正式选定运行速度前，仍需用相同固定角度阶跃重复测试，并同时
 记录力、电流、温度、机械冲击和噪声。每次重新接入仍会恢复代码默认值 500。
 
+实时摄像头下发前的软件层会对六关节目标应用 One Euro 滤波，参数为
+`min_cutoff=1.5Hz`、`beta=2.5`、导数截止 `1.0Hz`。最小命令变化门限为
+`0.0005rad`，约等于或小于一个硬件 raw count。曾测试的 `0.015-0.02rad` 大死区会
+积累滤波尾差并产生约 `0.02rad` 的末端台阶，已移除。该滤波不改变 RH56DFX 固件、
+`SPEED_SET` 或 `FORCE_SET`，也不能提升本体内部位置环带宽。
+
 ---
 
 ## 2. RH56DFX RS485 协议

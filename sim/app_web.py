@@ -51,6 +51,7 @@ from skills.intent import parse as intent_parse            # noqa: E402
 from skills.runner import _log_invocation, log_parse       # noqa: E402
 from lerobot_env import lerobot_python                  # noqa: E402
 from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
+from hand_target_filter import OneEuroJointFilter  # noqa: E402
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
@@ -2350,6 +2351,7 @@ async def ws_hand_mimic(websocket: WebSocket):
     """
     await websocket.accept()
     owner = f"mimic-ws-{id(websocket)}"
+    target_filter = OneEuroJointFilter()
     print("[ws] 客户端已连接")
 
     try:
@@ -2400,23 +2402,50 @@ async def ws_hand_mimic(websocket: WebSocket):
                             "right_ring_1_joint",
                             "right_little_1_joint",
                         )
-                        result = _get_hand_target_mailbox().submit(
-                            owner,
-                            frame_id,
-                            [joint_angles[name] for name in joint_order],
-                            created_at=received_at,
+                        raw_target = [joint_angles[name] for name in joint_order]
+                        filter_started = time.perf_counter()
+                        filtered = target_filter.update(raw_target, received_at)
+                        filter_ms = (time.perf_counter() - filter_started) * 1000.0
+                        print(
+                            "[perf-hand/filter] "
+                            f"id={frame_id} reset={int(filtered.reset)} "
+                            f"raw_delta={filtered.raw_delta_rad:.4f}rad "
+                            f"filtered_delta={filtered.filtered_delta_rad:.4f}rad "
+                            f"suppressed={filtered.suppressed}/6 "
+                            f"cost={filter_ms:.3f}ms",
+                            flush=True,
                         )
-                        hardware = {
-                            "queued": result.accepted,
-                            "replaced": result.replaced,
-                            "reason": result.reason,
-                        }
+                        if filtered.changed:
+                            result = _get_hand_target_mailbox().submit(
+                                owner,
+                                frame_id,
+                                filtered.angles,
+                                created_at=received_at,
+                            )
+                            hardware = {
+                                "queued": result.accepted,
+                                "replaced": result.replaced,
+                                "reason": result.reason,
+                                "filtered": True,
+                            }
+                            if not result.accepted:
+                                target_filter.reset()
+                        else:
+                            hardware = {
+                                "queued": False,
+                                "replaced": 0,
+                                "reason": "filter_resolution",
+                                "filtered": True,
+                            }
                     else:
+                        target_filter.reset()
                         if _hand_target_mailbox is not None:
                             _hand_target_mailbox.release(owner)
                         hardware = {"queued": False, "reason": "offline"}
-                elif _hand_target_mailbox is not None:
-                    _hand_target_mailbox.release(owner)
+                else:
+                    target_filter.reset()
+                    if _hand_target_mailbox is not None:
+                        _hand_target_mailbox.release(owner)
 
                 # 立即返回结果
                 await websocket.send_json({

@@ -8,7 +8,7 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
-| Web 手部追踪 | 真机主链已通 | Tasks GPU/CPU、Legacy 降级、21点 retarget 和真手驱动已接入 |
+| Web 手部追踪 | 真机主链已通 | Tasks GPU/CPU、Legacy 降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
 | VLA 数据管线 | 可开发 | 规范层、映射和回放工具已存在，训练闭环未完成 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
@@ -44,6 +44,7 @@
 - 摄像头真机控制改为 30Hz latest-target mailbox，移除逐帧二次 HTTP 硬件请求
 - 增加 stdin 写锁、ACK token、单摄像头控制权和分段 `perf-hand` 日志
 - RH56DFX 真机确认目标到串口 ACK 约 7-39ms，持续慢感主要来自手本体运动时间
+- 真手目标增加六关节 One Euro 滤波；实测发现并移除导致约 0.02rad 台阶抖动的大死区，现使用 0.0005rad 分辨率门限
 
 ### 2026-08-10 至 2026-08-13
 
@@ -74,6 +75,7 @@
 4. `final_summary.py` 在路径失效时仍可能输出“全部完成”并退出 0。
 5. Web 摄像头已有真手延迟样本，但仍缺 Chrome/Edge、GPU/CPU、拒绝权限和断线恢复的完整验收矩阵。
 6. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
+7. One Euro 滤波自动测试和 mock 链路已通过，0.0005rad 门限的张手末端与静止姿态仍需真机复测。
 
 ## 验证记录
 
@@ -83,6 +85,7 @@
 node sim/web/tests/hand_tracker_tasks.test.mjs
 node sim/web/tests/hand_mimic_transport.test.mjs
 python3 sim/test_hand_target_mailbox.py
+python3 sim/test_hand_target_filter.py
 python3 sim/test_hand_console_ack.py
 python3 sim/test_stdin_lines.py
 
@@ -103,12 +106,16 @@ python3 verify_migration.py
 500/800/1000 速度分别观测到 418.5/336.8/110.6ms settled，但动作幅度不同，
 尚不能视为严格速度对照实验。
 
+同日滤波首轮真机日志确认 `raw_delta=0.0002rad` 时曾释放
+`filtered_delta=0.0200rad`，定位为大死区累积后的台阶。现行门限已降至
+`0.0005rad`；自动测试通过，等待相同动作真机复测。
+
 ## 下一步
 
 1. 统一手势安全表与驱动参数，并同步两个仓库。
 2. 轮换和停止跟踪 TLS 私钥。
 3. 修复迁移验收脚本的路径及退出码。
-4. 完成浏览器兼容矩阵，并用相同固定角度阶跃复测 500/800/1000 速度。
+4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
 
 详细行动项见 [TODO.md](TODO.md)。

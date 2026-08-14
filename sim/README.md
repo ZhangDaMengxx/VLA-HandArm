@@ -63,11 +63,14 @@ python sim/replay_rerun.py --robot nero_inspire_rgbd --serve           # Rerun �
 ## 各组件
 
 **Web 实时手部控制** `app_web.py` + `web/hand_tracker_tasks.js` +
-`hand_target_mailbox.py`：浏览器使用本地 `@mediapipe/tasks-vision` Hand Landmarker，
+`hand_target_filter.py` + `hand_target_mailbox.py`：浏览器使用本地
+`@mediapipe/tasks-vision` Hand Landmarker，
 按 Tasks GPU → CPU → Legacy 降级；21 点世界坐标经 `/ws/hand/mimic` 和
-dex-retargeting 得到 6 个驱动关节。3D 预览立即返回，真手目标由 30Hz latest-target
-mailbox 单独投递，最多一个待发目标和一个真实 ACK 在途。HTTP fallback 只维持
-retarget/预览，不驱动真手。协议、真机数据和验收项见
+dex-retargeting 得到 6 个驱动关节。3D 预览立即返回原始 retarget 结果；真手目标先经
+六关节 One Euro 自适应滤波和硬件分辨率级写入抑制，再由 30Hz latest-target mailbox
+单独投递，
+最多一个待发目标和一个真实 ACK 在途。超过 200ms 没有有效目标会重置滤波状态，
+HTTP fallback 只维持 retarget/预览，不驱动真手。协议、真机数据和验收项见
 `web/MEDIAPIPE_TASKS_MIGRATION.md` 与 `HAND_DEBUG.md`。
 
 **装配** `build_nero_inspire.py`:合成 NERO 臂 + RH56DF 适配法兰 + inspire 右手的装配 URDF,MuJoCo 验证加载(nq=19)。链路 `link7 → link8 → rh56df_adapter_flange → base → hand_base_link`。两段挂接变换(`FLANGE_MOUNT_*`、`MOUNT_*`)是从装配体 `nero_RH56DF.stl` 反解的,不是目视标定,三个件对装配体中位残差 0.27–0.63mm;推导脚本与结论见 `build_urdf/`。脚本还负责把臂的视觉网格由 `.dae` 换成同名 `.STL`(缺 pycollada 的查看器会整条臂不显示),并在源头补臂关节限位 effort=100/velocity=5(臂 URDF 原文是 0/0,ros2_control 推不动)。

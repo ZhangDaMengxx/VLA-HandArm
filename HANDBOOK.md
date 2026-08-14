@@ -24,6 +24,7 @@ ros2_ws/
 | `sim/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
 | `sim/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
 | `sim/hand_console.py` | 灵巧手调试和动作播放 |
+| `sim/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
 | `sim/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
 | `sim/arm_console.py` | 机械臂调试，默认 mock 和低速 |
 | `sim/app_web.py` | Web 工作台和 WebSocket 后端 |
@@ -99,12 +100,18 @@ retarget 与 3D 预览，不驱动真手。
 `hand_console` ACK 在途，新帧覆盖待发旧帧，WebSocket 断开清理控制权。不要重新增加
 “WebSocket 返回关节角后再逐帧 POST `/api/hand/command`”的第二条硬件链。
 
+retarget 后的六关节真手目标先经过 `OneEuroJointFilter`。现行参数为
+`min_cutoff=1.5Hz`、`beta=2.5`、导数截止 `1.0Hz`，最小命令变化量为
+`0.0005rad`。不要把该门限放大成普通位置死区：首轮 `0.015-0.02rad` 死区会积累
+滤波尾差并在保持姿态时释放成可见台阶。3D 预览保持原始 retarget 结果。
+
 修改后至少运行：
 
 ```bash
 node sim/web/tests/hand_tracker_tasks.test.mjs
 node sim/web/tests/hand_mimic_transport.test.mjs
 python3 sim/test_hand_target_mailbox.py
+python3 sim/test_hand_target_filter.py
 python3 sim/test_hand_console_ack.py
 python3 sim/test_stdin_lines.py
 ```

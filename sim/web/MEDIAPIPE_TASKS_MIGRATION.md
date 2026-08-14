@@ -20,7 +20,8 @@ latest-target mailbox:
 
 ```text
 MediaPipe -> /ws/hand/mimic -> retarget -> browser 3D preview
-                                      \-> latest target -> ACK -> ANGLE_SET
+                                      \-> One Euro + resolution gate
+                                            -> latest target -> ACK -> ANGLE_SET
 ```
 
 The mailbox keeps at most one pending target and one command awaiting a real
@@ -30,12 +31,27 @@ WebSocket owns hardware control at a time; disconnecting or stopping the camera
 discards its pending target. HTTP fallback still provides retargeted 3D preview,
 but hardware driving pauses until WebSocket reconnects.
 
+Hardware targets use a per-WebSocket six-joint One Euro filter after retargeting
+(`min_cutoff=1.5 Hz`, `beta=2.5`, derivative cutoff `1.0 Hz`). All joints use a
+`0.0005 rad` minimum command delta, approximately one hardware raw count or
+less. If all joints remain below that resolution gate, no `ANGLE_SET` is queued.
+A target gap over 200 ms, disabled/offline hardware, ownership rejection, or
+WebSocket teardown
+discards the filter history. The immediate 3D preview remains unfiltered so the
+filter changes neither the MediaPipe payload nor the retargeting result.
+
+Do not increase this gate into a conventional position deadband. A
+`0.015-0.02 rad` gate was tested and removed because the filter tail accumulated
+behind the last emitted target, then released as visible `0.02 rad` steps near a
+held pose.
+
 During continuous camera control, `ANGLE_ACT` remains at 30 Hz, `FORCE_ACT` is
 read at 10 Hz, and expensive full telemetry waits until targets have been idle
 for 500 ms. These logs remain available for validation:
 
 ```text
 [perf-hand/frontend] id=42 WS_RTT=18.3ms hardware=queued
+[perf-hand/filter] id=42 reset=0 raw_delta=0.0310rad filtered_delta=0.0182rad suppressed=4/6 cost=0.025ms
 [perf-hand/mailbox] id=42 replaced=1 wait=12.4ms age=18.1ms ack=ok
 [perf-hand/enqueue] id=42 FastAPI到stdin=0.1ms
 [perf-hand/serial] id=42 stdin_queue=0.2ms RS485=5.1ms enqueue_to_serial=5.3ms
@@ -83,6 +99,7 @@ Automated adapter and backpressure tests:
 node web/tests/hand_tracker_tasks.test.mjs
 node web/tests/hand_mimic_transport.test.mjs
 python3 test_hand_target_mailbox.py
+python3 test_hand_target_filter.py
 python3 test_hand_console_ack.py
 ```
 
