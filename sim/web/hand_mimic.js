@@ -132,7 +132,7 @@ export class HandMimicController {
         facingMode: "user",
         width: { ideal: 480 },
         height: { ideal: 360 },
-        frameRate: { ideal: 60, min: 30 }
+        frameRate: { ideal: 60 }
       }
     });
     if (!this._isCurrent(generation)) {
