@@ -7,6 +7,51 @@
 什么时候需要重跑:换适配法兰、换手、换臂,或怀疑挂接位姿不对。
 平时改 URDF 不需要动这里 —— 直接跑 `../build_nero_inspire.py` 就行。
 
+## 调整装配位置
+
+当前装配参数定义在 `src/build_nero_inspire.py`，不要依赖历史报告中的行号：
+
+```python
+FLANGE_MOUNT_XYZ = "0 0 0.016489"
+FLANGE_MOUNT_RPY = "0 0 1.570796"
+MOUNT_XYZ = "0.000042 0. 0.002158"
+MOUNT_RPY = "0 0 1.570796"
+```
+
+`MOUNT_*` 是适配法兰到手根的变换，XYZ 单位为米，RPY 单位为弧度。平移分量在父关节
+坐标系表达，经过法兰旋转后不一定等于 world 方向。
+
+调整流程：
+
+1. 记录当前值和希望修正的实测偏差。
+2. 在父坐标系中只修改一个平移轴，首次不超过 1 mm。
+3. 重新生成装配并检查 mesh、关节轴和坐标系。
+4. 平移确认后再单独调整旋转，首次不超过 1 度。
+5. 用装配体或测量数据验证，不能只凭单一视角判断。
+
+例如父坐标系 Y 增加 1 mm：
+
+```python
+MOUNT_XYZ = "0.000042 0.001 0.002158"
+```
+
+例如 yaw 增加 1 度：
+
+```python
+MOUNT_RPY = "0 0 1.588249"
+```
+
+重新生成与验证：
+
+```bash
+python3 src/build_nero_inspire.py
+python3 src/build_combo_viz.py
+```
+
+至少确认生成脚本校验通过、法兰和手根没有穿插或悬空、关节轴与 mesh 一致、q=0
+坐标系符合根目录 `HARDWARE.md`。大幅旋转或平移会同时影响碰撞、工具中心点和
+VLA/retargeting 映射，不应只更新可视化。
+
 **数据源**(都在 `assets/nero_description/meshes/`,毫米制)
 
 - `nero_RH56DF.stl` — 装配体,245 万三角面,含臂 + link8 + 适配法兰 + 手。

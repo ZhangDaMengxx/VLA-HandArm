@@ -9,6 +9,9 @@
 
 真机到位后，决定采用厂商2025-04-18新URDF作为项目标准，替换之前的旧版本URDF。
 
+本文现已合并当时的迁移 README、资产重组方案、装配成功报告、Web Combo 更新报告和
+快速验证说明。以下内容记录当时事实，不代表当前命令或路径。
+
 ## 迁移内容
 
 ### 1. 文件结构变更
@@ -84,6 +87,50 @@ assets/inspire_hand/
 - ✅ 更新"当前项目手部顺序"为新关节名
 - ✅ 更新标准URDF路径引用
 
+### 6. 资产目录重组结果
+
+当时分散在源码目录和根目录的资源最终统一到顶层 `assets/`，按用途分为：
+
+```text
+assets/
+├── arm/          机械臂源 URDF、mesh、config 和 launch
+├── hand/         灵巧手源 URDF、mesh、config 和 launch
+├── arm_legacy/   旧机械臂资产
+├── hand_legacy/  旧灵巧手资产
+├── assembled/    Pinocchio/MuJoCo 使用的装配 URDF
+└── viz/          浏览器使用的相对路径 URDF 和 GLB
+```
+
+路径常量集中在现行 `src/paths.py`。第三方源码和厂商 SDK 后来进一步迁入
+`third_party/`，不属于本次历史迁移的原始结果。
+
+### 7. 装配体生成结果
+
+当次通过 `build_nero_inspire.py` 生成了
+`assets/assembled/nero_inspire_right.urdf`，结构为 7 个机械臂关节、适配法兰和
+12 个手指关节（6 驱动、6 mimic）。当时 MuJoCo 可加载该文件，并识别 19 个关节、
+20 个 body 和 23 个 mesh。
+
+当时装配参数为：
+
+```text
+link8 -> flange  xyz="0 0 0.016489" rpy="0 0 1.570796"
+flange -> hand   xyz="0.000042 0.005962 0.002158" rpy="0 0 1.570796"
+```
+
+参数随后发生过调整，当前值必须以 `src/build_nero_inspire.py` 和 `HARDWARE.md` 为准。
+
+### 8. Web Combo 可视化同步
+
+装配 URDF 更新后，浏览器模型一度仍使用旧关节名。修复包括：
+
+- 更新 `build_combo_viz.py` 的 mesh 查找逻辑。
+- 重新生成 `assets/viz/combo/nero_inspire_right_viz.urdf`。
+- 确认驱动关节使用 `right_*_joint` 新命名。
+- 将机械臂、Link8、适配法兰和灵巧手 GLB 汇总到自包含的 Combo 资产目录。
+
+浏览器缓存可能继续显示旧模型，当前排查方法见 `src/COMBO_DEBUG.md`。
+
 ## 关键技术点
 
 ### 厂商通道映射（保持不变）
@@ -137,19 +184,10 @@ PROJECT_TO_VENDOR = [5, 4, 3, 2, 1, 0]
 - [ ] 测试已录制手势包回放（观察限位夹取效果）
 - [ ] 更新COMBO装配URDF（如果引用了手部）
 
-## 工具脚本
+## 一次性工具
 
-### `migrate_hand_joints.py`
-自动替换代码中的旧关节名为新关节名。
-
-用法：
-```bash
-# 检查模式（不修改）
-python3 migrate_hand_joints.py --check
-
-# 应用模式（实际修改）
-python3 migrate_hand_joints.py --apply
-```
+当时使用迁移、验证、总结和 Git 提示脚本完成批量修改。这些脚本在迁移完成、路径再次
+调整后已经失效，并于 2026-08-18 删除。
 
 ## 回滚方案
 

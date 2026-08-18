@@ -24,6 +24,10 @@
 
 - 按 `README_DOCS.md` 的现行、专题和历史分层更新入口文档
 - 新增 `third_party/README.md`，记录第三方目录边界和 Git 策略
+- 合并 Web/Windows/WSL/HTTPS 文档为 `WEB_ACCESS.md`
+- 合并 2026-08-10 资产、URDF、装配和 Combo 迁移报告为 `MIGRATION_2026_08_10.md`
+- 将装配位置调整流程并入 `src/build_urdf/README.md`
+- 新增 `AGENTS.md`，将 AI 明确引导到 `README_DOCS.md`
 
 ### Verification (验证)
 
@@ -149,11 +153,8 @@
 ### Added (新增)
 - 采用厂商2025-04-18新URDF作为项目标准 (`assets/hand/urdf/inspire_hand_right.urdf`)
 - 新的assets目录结构：`hand/`, `arm/`, `assembled/`, `viz/`
-- 路径集中管理：`sim/paths.py` 作为唯一真源
-- 迁移工具：`migrate_hand_joints.py`, `verify_migration.py`, `final_summary.py`
-- 迁移文档：`MIGRATION_2026_08_10.md`, `MIGRATION_README.md`, `QUICKSTART.md`
-- 装配成功报告：`ASSEMBLY_SUCCESS.md`
-- Web更新报告：`WEB_COMBO_UPDATE.md`
+- 路径集中管理：当时由 `sim/paths.py` 管理，现为 `src/paths.py`
+- 一次性迁移工具与报告后来合并到 `MIGRATION_2026_08_10.md`，工具已删除
 
 ### Changed (变更)
 - **关节命名**（6个驱动关节）：

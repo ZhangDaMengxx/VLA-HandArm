@@ -1,7 +1,13 @@
-# 项目文档导航
+<!-- AI_DOCUMENTATION_ENTRYPOINT: READ_THIS_FIRST -->
+
+# AI / 项目文档导航
 
 本文是 `lerobotTest` 文档清单和时效性入口。文档分为“现行”“专题参考”“历史归档”
 三类；历史文档保留当时事实，不作为当前命令、路径或接口依据。
+
+> **AI 必读入口。** 在分析或修改本仓库前，先完整阅读本页；判断冲突时，现行文档
+> 优先于专题参考，专题参考优先于历史归档。根目录 `AGENTS.md` 会把支持该约定的
+> AI 工具直接引导到本页。
 
 ## 现行文档
 
@@ -15,8 +21,7 @@
 | [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
 | [GIT_GUIDE.md](GIT_GUIDE.md) | 三个仓库的 Git 约定 | 2026-08-14 |
 | [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
-| [HTTPS_SETUP.md](HTTPS_SETUP.md) | Web 摄像头 HTTPS 和证书安全 | 2026-08-14 |
-| [WSL_CAMERA_SETUP.md](WSL_CAMERA_SETUP.md) | WSL + Windows 浏览器摄像头验证 | 2026-08-14 |
+| [WEB_ACCESS.md](WEB_ACCESS.md) | Web、Windows、WSL、摄像头与 HTTPS | 2026-08-18 |
 
 ## MCP 与 Bridge
 
@@ -55,8 +60,6 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 | [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
 | [VISUALIZER_SPEC.md](VISUALIZER_SPEC.md) | 可视化约定 |
 | [src/build_urdf/README.md](src/build_urdf/README.md) | URDF 装配分析工具 |
-| [adjust_hand_mount_example.md](adjust_hand_mount_example.md) | 当前装配参数调整流程 |
-| [WINDOWS_DEPLOY.md](WINDOWS_DEPLOY.md) | 本仓库 Windows 开发参考；MCP 部署看独立仓库 |
 | [src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md) | MediaPipe Tasks、引擎降级、latest-target 和验收契约 |
 | [src/web/vendor/mediapipe-tasks/README.md](src/web/vendor/mediapipe-tasks/README.md) | 本地模型/WASM 来源和校验值 |
 | [third_party/README.md](third_party/README.md) | 第三方资产边界、目录和 Git 策略 |
@@ -68,21 +71,15 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 旧目录、代码行号、通过结论和接口不保证仍有效：
 
 - [MIGRATION_2026_08_10.md](MIGRATION_2026_08_10.md)
-- [MIGRATION_README.md](MIGRATION_README.md)
-- [ASSET_MIGRATION_PLAN.md](ASSET_MIGRATION_PLAN.md)
-- [ASSEMBLY_SUCCESS.md](ASSEMBLY_SUCCESS.md)
-- [WEB_COMBO_UPDATE.md](WEB_COMBO_UPDATE.md)
-- [src/URDF_FIX_2026-08-10.md](src/URDF_FIX_2026-08-10.md)
-- [DOC_SUMMARY.md](DOC_SUMMARY.md)
-- [DYNAMIC_SCAN_SUMMARY.md](DYNAMIC_SCAN_SUMMARY.md)
 - [mcp_server/TEST_REPORT.md](mcp_server/TEST_REPORT.md)
 - [更新日志.md](更新日志.md)（旧日志，后续记录看 `CHANGELOG.md`）
 - [assets/nero_official/README.md](assets/nero_official/README.md)（厂商资产来源记录）
 - [assets/arm_legacy/nero_official/README.md](assets/arm_legacy/nero_official/README.md)（重复的旧资产来源记录）
 - `user-package/README.md`、`user-package/USER_GUIDE.md`（拆仓前用户包）
 
-`FILE_LIST.md`、`PROJECT_PLAN.md` 和 `QUICKSTART.md` 是阶段性清单/方案，顶部已标出
-时效性；使用其中命令前先对照本页和当前代码。
+`MIGRATION_2026_08_10.md` 已合并同日资产方案、装配报告、Web Combo 更新和快速入口。
+`mcp_server/DYNAMIC_COMBO.md` 保留已撤回的动态 Combo 实验详情。`PROJECT_PLAN.md` 是
+阶段性方案，使用其中结论前先对照本页和当前代码。
 
 ## 审查范围
 

@@ -1,5 +1,8 @@
 # VLA-HandArm
 
+> AI 与自动化工具首先阅读 [README_DOCS.md](README_DOCS.md)；根目录
+> [AGENTS.md](AGENTS.md) 定义文档优先级和仓库边界。
+
 NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 VLA 数据管线。
 
 本仓库用于本体开发、仿真、标定、数据处理和 Web 调试。对外部署的 MCP Server
