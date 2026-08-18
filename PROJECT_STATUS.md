@@ -79,12 +79,10 @@
 
 ### Major
 
-3. `verify_migration.py` 仍引用 `assets/inspire_hand/`，当前为 `assets/hand/`。
-4. `final_summary.py` 在路径失效时仍可能输出“全部完成”并退出 0。
-5. Web 摄像头已有真手延迟样本，但仍缺 Chrome/Edge、GPU/CPU、拒绝权限和断线恢复的完整验收矩阵。
-6. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
-7. One Euro 滤波自动测试和 mock 链路已通过，0.0005rad 门限的张手末端与静止姿态仍需真机复测。
-8. 两个保留轨迹 NPZ 使用旧 12 关节名，当前技能后端要求 6 个项目驱动关节名，轨迹安全闸测试不能通过。
+3. Web 摄像头已有真手延迟样本，但仍缺 Chrome/Edge、GPU/CPU、拒绝权限和断线恢复的完整验收矩阵。
+4. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
+5. One Euro 滤波自动测试和 mock 链路已通过，0.0005rad 门限的张手末端与静止姿态仍需真机复测。
+6. 两个保留轨迹 NPZ 使用旧 12 关节名，当前技能后端要求 6 个项目驱动关节名，轨迹安全闸测试不能通过。
 
 ## 验证记录
 
@@ -105,7 +103,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ```bash
 python3 src/skills/hand_pose.py --verify
-python3 verify_migration.py
 /usr/bin/python3 src/test/skills/test_runner_gates.py  # 旧轨迹 NPZ 关节名不兼容
 ```
 

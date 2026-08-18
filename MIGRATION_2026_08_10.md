@@ -3,6 +3,7 @@
 > **历史归档。** 本文记录 2026-08-10 当时的迁移过程，目录随后从
 > `assets/inspire_hand/` 调整为 `assets/hand/`，部分验证脚本现已失效。当前路径和
 > 验证状态见 [README_DOCS.md](README_DOCS.md) 与 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
+> 文中提到的一次性迁移和验证脚本已于 2026-08-18 删除。
 
 ## 背景
 

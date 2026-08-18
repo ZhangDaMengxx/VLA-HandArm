@@ -107,9 +107,8 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 ## 当前未闭环文档风险
 
 1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
-2. `verify_migration.py` 和 `final_summary.py` 仍引用旧资产路径，不能作为当前验收工具。
-3. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
-4. 摄像头真机链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
+2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
+3. 摄像头真机链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
 
 ---
 

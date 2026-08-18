@@ -1,7 +1,7 @@
 # 快速开始 - 灵巧手URDF迁移后
 
-> **历史迁移快速参考。** `verify_migration.py` 和 `final_summary.py` 当前引用旧路径，
-> 不要按本文执行验收。现行启动与验证见 [README.md](README.md)、
+> **历史迁移快速参考。** 文中提到的迁移、验证、总结和提交脚本已于 2026-08-18
+> 删除，下列命令仅保留当时记录，不能执行。现行启动与验证见 [README.md](README.md)、
 > [HANDBOOK.md](HANDBOOK.md) 和 [PROJECT_STATUS.md](PROJECT_STATUS.md)。
 
 ## 迁移已完成 ✅

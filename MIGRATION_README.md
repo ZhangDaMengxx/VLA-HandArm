@@ -1,7 +1,7 @@
 # 灵巧手URDF迁移 README
 
-> **历史归档。** `verify_migration.py` 和 `final_summary.py` 当前仍引用旧资产路径，
-> 不能作为现行验收入口。当前开发流程见 [HANDBOOK.md](HANDBOOK.md)。
+> **历史归档。** 文中提到的迁移、验证、总结和提交脚本已于 2026-08-18 删除，
+> 下列命令仅保留当时记录，不可执行。当前开发流程见 [HANDBOOK.md](HANDBOOK.md)。
 
 ## 概述
 

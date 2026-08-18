@@ -16,6 +16,10 @@
 - 将项目维护的 dex-retargeting 适配层迁到 `third_party/overlays/` 并继续进入 Git
 - 修正 Web、回放、轨迹和 RGB-D 默认路径，以及测试迁移后的 Python/JavaScript 相对导入
 
+### Removed (移除)
+
+- 删除迁移完成后不再使用的 `migrate_*.py`、`verify_migration.py`、`final_summary.py` 和 `git_commit_migration.sh`
+
 ### Documentation (文档)
 
 - 按 `README_DOCS.md` 的现行、专题和历史分层更新入口文档
