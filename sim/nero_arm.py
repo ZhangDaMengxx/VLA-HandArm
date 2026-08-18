@@ -165,6 +165,9 @@ class NeroArm:
     def connect(self) -> bool:
         if self.mock:
             self.connect_pose = self.read_angles()
+            # mock 用来直接跑通控制链路，没有真实电机需要单独使能。连接成功后
+            # 状态必须与可执行的 move_j 一致，否则上层看到 enabled=false 会拒绝下发。
+            self._enabled = True
             # mock 下没有可探的固件。显式标成 "mock" 而不是留 None ——
             # 留 None 时 arm_console 会退回报 args.firmware,页面上就显示 "auto",
             # 那是**没有信息**的输出(auto 是意图,不是结果)。
