@@ -6,6 +6,27 @@
 
 ---
 
+## [2026-08-18] - 源码、测试与第三方资产归整
+
+### Changed (变更)
+
+- 将 `sim/` 迁移为 `src/`，同步代码、部署脚本和现行文档中的运行路径
+- 将测试集中到 `src/test/`，真机测试单独放入 `src/test/hardware/` 并从默认 pytest 收集中排除
+- 将上游源码、厂商 SDK 和 RGB-D 资产集中到 `third_party/`，保留上游内部目录结构
+- 将项目维护的 dex-retargeting 适配层迁到 `third_party/overlays/` 并继续进入 Git
+- 修正 Web、回放、轨迹和 RGB-D 默认路径，以及测试迁移后的 Python/JavaScript 相对导入
+
+### Documentation (文档)
+
+- 按 `README_DOCS.md` 的现行、专题和历史分层更新入口文档
+- 新增 `third_party/README.md`，记录第三方目录边界和 Git 策略
+
+### Verification (验证)
+
+- `src/` Python 语法编译和两个 Web Node 测试通过
+- 合体页静态测试通过；系统 Python 的其余离线集合有 157 项通过
+- 已知失败来自缺少 FastAPI/uvicorn/pinocchio 的解释器差异、既有 10 项手势限位不一致，以及旧轨迹 NPZ 的 12 关节命名契约
+
 ## [2026-08-14] - MediaPipe Tasks 与 latest-target 真机控制
 
 ### Added (新增)

@@ -35,7 +35,7 @@ NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 V
 
 ```bash
 conda activate lerobot
-python sim/app_web.py
+python src/app_web.py
 ```
 
 服务监听 `0.0.0.0:7860`。若本机存在 `ssl/key.pem` 和 `ssl/cert.pem` 会启用 HTTPS，
@@ -54,40 +54,46 @@ python sim/app_web.py
 WebSocket 返回后逐帧追加硬件 HTTP 请求；后端以 30Hz 投递最新目标并等待
 `hand_console` 的真实 RS485 ACK。滤波状态按 WebSocket 隔离，超过 200ms 无有效目标、
 硬件离线或连接断开时重置。实现与验收说明见
-[sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md)。
+[src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md)。
 
 ## VLA 数据管线
 
 ```bash
 pip install -r requirements.txt
-python sim/build_nero_inspire.py
-python sim/build_canonical.py
-python sim/derive_embodiment.py --emit-traj
-python sim/replay_rerun.py --serve
+python src/build_nero_inspire.py
+python src/build_canonical.py
+python src/derive_embodiment.py --emit-traj
+python src/replay_rerun.py --serve
 ```
 
 管线将人手视频转换为规范层，再映射到 NERO + Inspire 的关节轨迹和
-LeRobotDataset。具体约定见 [sim/CANONICAL_SPEC.md](sim/CANONICAL_SPEC.md)。
+LeRobotDataset。具体约定见 [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)。
 
 ## 目录
 
 ```text
 bridge.py              拆仓前的硬件代理快照，不是部署基准
 mcp_server/            拆仓前的 MCP 快照和历史文档
-sim/                   驱动、Web、技能、标定、仿真和数据管线
+src/                   驱动、Web、技能、标定、仿真和数据管线
+src/test/              离线测试；hardware/ 为需显式运行的真机脚本
 assets/                URDF、mesh 和浏览器模型
 data/                  动作包、标定和数据集
+third_party/            上游源码、厂商 SDK、外部数据和项目 overlay
 deploy/                完整 Web/ROS2 真机主机部署
 ```
+
+第三方内容的来源边界和 Git 策略见
+[third_party/README.md](third_party/README.md)。上游资产保留原始内部目录结构；只有
+`third_party/overlays/` 由本项目维护并进入 Git。
 
 ## 当前安全约束
 
 - 真机运动前必须确认工作区、低速、使能状态和急停可达。
-- `sim/skills/hand_pose.py --verify` 当前有 10 项与 `sim/inspire_hand.py` 不一致，
+- `src/skills/hand_pose.py --verify` 当前有 10 项与 `src/inspire_hand.py` 不一致，
   在修复并完成真机验证前，不得把手势可行域表视为已对齐。
 - Web 的 7860 端口没有应用层鉴权，不应直接暴露到公网。
 - `ssl/key.pem` 曾被 Git 跟踪。现有私钥不得继续作为共享或生产凭据使用。
 
 ---
 
-**最后核对**：2026-08-14
+**最后核对**：2026-08-18

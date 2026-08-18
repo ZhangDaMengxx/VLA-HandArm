@@ -163,24 +163,24 @@ do_check_repo_assets() {
   echo "  --- 仓库资产 ---"
 
   # pyAgxArm 是厂商 SDK,.gitignore 里明确排除(第三方不入库),所以 clone 拿不到
-  if [[ -d "$REPO/pyAgxArm-master/pyAgxArm-master" ]]; then
+  if [[ -d "$REPO/third_party/pyAgxArm/pyAgxArm-master" ]]; then
     ok "pyAgxArm SDK 就位"
   else
     err "缺 pyAgxArm SDK — 真机 --no-mock 必需,git 里没有(第三方不入库)"
-    echo "      从开发机拷: rsync -av <dev>:~/ros2_ws/lerobotTest/pyAgxArm-master/ $REPO/pyAgxArm-master/"
+    echo "      从开发机拷: rsync -av <dev>:~/ros2_ws/lerobotTest/third_party/pyAgxArm/ $REPO/third_party/pyAgxArm/"
     FAILED=1
   fi
 
-  # 技能表引用的轨迹:已用 !sim/out/*.npz 破例入库,理应存在
+  # 技能表引用的轨迹:已用 !src/out/*.npz 破例入库,理应存在
   local miss=0
   for f in robot_traj_nero_inspire_rgbd.npz robot_traj_nero_inspire_rgb.npz; do
-    [[ -f "$REPO/sim/out/$f" ]] || { warn "缺 sim/out/$f — trajectory 类技能会报错"; miss=1; }
+    [[ -f "$REPO/src/out/$f" ]] || { warn "缺 src/out/$f — trajectory 类技能会报错"; miss=1; }
   done
   [[ $miss -eq 0 ]] && ok "技能轨迹 npz 就位"
 
   # 装配 URDF 含绝对路径,故不入库,必须在本机重建
-  if [[ -f "$REPO/sim/assets/nero_inspire_right.urdf" ]]; then
-    if grep -q "$REPO" "$REPO/sim/assets/nero_inspire_right.urdf" 2>/dev/null; then
+  if [[ -f "$REPO/assets/assembled/nero_inspire_right.urdf" ]]; then
+    if grep -q "$REPO" "$REPO/assets/assembled/nero_inspire_right.urdf" 2>/dev/null; then
       ok "装配 URDF 已重建(路径匹配本机)"
     else
       warn "装配 URDF 里的绝对路径不是本机的 → --env 会重建"
@@ -268,10 +268,10 @@ do_env_venv() {
 # 好消息:这脚本只用 stdlib(xml.etree + pathlib),系统 python3 就能跑。
 do_env_urdf() {
   echo "  重建装配 URDF(mesh 用绝对路径,换机必须重建)"
-  if run "$SYS_PY" "$REPO/sim/build_nero_inspire.py" >/dev/null 2>&1; then
-    ok "URDF 重建完成: sim/assets/nero_inspire_right.urdf"
+  if run "$SYS_PY" "$REPO/src/build_nero_inspire.py" >/dev/null 2>&1; then
+    ok "URDF 重建完成: assets/assembled/nero_inspire_right.urdf"
   else
-    warn "URDF 重建失败 —— 单独跑看报错: python3 sim/build_nero_inspire.py"
+    warn "URDF 重建失败 —— 单独跑看报错: python3 src/build_nero_inspire.py"
   fi
 }
 
@@ -454,7 +454,7 @@ if [ -e /dev/$HAND_SYMLINK ]; then export INSPIRE_HAND_PORT=/dev/$HAND_SYMLINK
 else export INSPIRE_HAND_PORT=/dev/ttyUSB0; fi
 export CAN_IFACE=$CAN_IFACE
 
-# 启动 web:  \$GRADIO_VENV/bin/python \$LEROBOT_REPO/sim/app_web.py
+# 启动 web:  \$GRADIO_VENV/bin/python \$LEROBOT_REPO/src/app_web.py
 export GRADIO_VENV=$GRADIO_VENV
 EOF
   ok "环境变量文件: $f"
@@ -475,7 +475,7 @@ do_verify() {
   # 注意别写成 `run ... | tail -3 || fail=1`:管道的退出码是 tail 的(几乎总是 0),
   # 真正的失败会被吞掉。先把输出收进变量,再判 $? ,才拿得到 python 的退出码。
   local gate_fail=0 gate_out
-  for t in sim/skills/test_schema.py sim/skills/test_runner_gates.py; do
+  for t in src/test/skills/test_schema.py src/test/skills/test_runner_gates.py; do
     if gate_out="$(ros_bash "cd '$REPO' && $SYS_PY '$t'" 2>&1)"; then
       echo "$gate_out" | tail -2
     else
@@ -490,7 +490,7 @@ do_verify() {
   fi
 
   echo "  2) runner 干跑(展开技能但不发 ROS)"
-  run ros_bash "source '$envf' && $SYS_PY '$REPO/sim/skills/runner.py' --dry-run --once '{\"skill_id\":\"go_home\",\"confirmed\":true,\"assume_enabled\":true}'" 2>&1 | tail -4 \
+  run ros_bash "source '$envf' && $SYS_PY '$REPO/src/skills/runner.py' --dry-run --once '{\"skill_id\":\"go_home\",\"confirmed\":true,\"assume_enabled\":true}'" 2>&1 | tail -4 \
     && ok "干跑通过" || warn "干跑失败,看上面报错"
 
   do_verify_bridge
@@ -500,7 +500,7 @@ do_verify_bridge() {
   local envf="$WS/robot_host_env.sh"
   echo "  3) bridge mock 模式(臂发正弦、手回读占位,不碰 CAN/串口)"
   local log; log="$(mktemp)"
-  ros_bash "source '$envf' && timeout 6 $SYS_PY '$REPO/sim/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && timeout 6 $SYS_PY '$REPO/src/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
   if grep -q '桥接启动' "$log"; then
     ok "bridge mock 启动成功"
     echo "      $(grep -m1 '桥接启动' "$log" | sed 's/^.*\]: //')"
@@ -509,7 +509,7 @@ do_verify_bridge() {
   fi
 
   echo "  4) mock 下 /joint_states 有没有真在发(13 个关节)"
-  ros_bash "source '$envf' && (timeout 8 $SYS_PY '$REPO/sim/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && (timeout 8 $SYS_PY '$REPO/src/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
   if grep -q 'name:' "$log"; then
     ok "/joint_states 正常发布($(grep -c '^- ' "$log" || echo '?') 个关节名)"
   else
@@ -522,7 +522,7 @@ do_verify_bridge() {
     ok "mock 链路通了。真机步骤(按顺序,别跳):"
     echo "      a) source $WS/robot_host_env.sh"
     echo "      b) candump \$CAN_IFACE          # 确认臂在 CAN 上有回包"
-    echo "      c) python3 sim/nero_arm_bridge.py --no-mock   # 只读,先不控制"
+    echo "      c) python3 src/nero_arm_bridge.py --no-mock   # 只读,先不控制"
     echo "      d) 确认 /joint_states 是真实角度后,再加 --enable-control"
   else
     err "有失败项,先解决再上真机"
@@ -536,10 +536,10 @@ do_hint_run() {
   source $WS/robot_host_env.sh
 
   # 终端 1:真机桥(先 --mock 验,再 --no-mock)
-  python3 $REPO/sim/nero_arm_bridge.py --mock --enable-control
+  python3 $REPO/src/nero_arm_bridge.py --mock --enable-control
 
   # 终端 2:Web 工作台
-  \$GRADIO_VENV/bin/python $REPO/sim/app_web.py
+  \$GRADIO_VENV/bin/python $REPO/src/app_web.py
 
   开发机浏览器打开: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$WEB_PORT
 

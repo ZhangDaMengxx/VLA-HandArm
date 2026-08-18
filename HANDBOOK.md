@@ -19,21 +19,24 @@ ros2_ws/
 
 | 文件 | 职责 |
 |------|------|
-| `sim/paths.py` | 本仓资产路径常量 |
-| `sim/inspire_hand.py` | RH56DFX RS485 驱动和运行时限位 |
-| `sim/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
-| `sim/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
-| `sim/hand_console.py` | 灵巧手调试和动作播放 |
-| `sim/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
-| `sim/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
-| `sim/arm_console.py` | 机械臂调试，默认 mock 和低速 |
-| `sim/app_web.py` | Web 工作台和 WebSocket 后端 |
-| `sim/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
-| `sim/skills/` | 技能清单、执行后端和安全闸 |
-| `sim/build_nero_inspire.py` | 生成臂、法兰、手装配 URDF |
-| `sim/build_combo_viz.py` | 生成本地 Web 合体模型 |
-| `sim/build_canonical.py` | 视频到规范层 |
-| `sim/derive_embodiment.py` | 规范层到本体轨迹/数据集 |
+| `src/paths.py` | 本仓资产路径常量 |
+| `src/inspire_hand.py` | RH56DFX RS485 驱动和运行时限位 |
+| `src/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
+| `src/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
+| `src/hand_console.py` | 灵巧手调试和动作播放 |
+| `src/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
+| `src/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
+| `src/arm_console.py` | 机械臂调试，默认 mock 和低速 |
+| `src/app_web.py` | Web 工作台和 WebSocket 后端 |
+| `src/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
+| `src/skills/` | 技能清单、执行后端和安全闸 |
+| `src/build_nero_inspire.py` | 生成臂、法兰、手装配 URDF |
+| `src/build_combo_viz.py` | 生成本地 Web 合体模型 |
+| `src/build_canonical.py` | 视频到规范层 |
+| `src/derive_embodiment.py` | 规范层到本体轨迹/数据集 |
+| `src/test/` | 离线单元与结构测试 |
+| `src/test/hardware/` | 需要真机、CAN 或串口的显式测试，不自动收集 |
+| `third_party/` | 上游源码、厂商 SDK、外部数据和项目 overlay |
 
 ## 开发环境
 
@@ -42,7 +45,7 @@ Web、retargeting 与 ROS Python ABI 依赖当前 `lerobot` Python 3.10 环境�
 ```bash
 conda activate lerobot
 python --version
-python sim/app_web.py
+python src/app_web.py
 ```
 
 仅做纯 Python mock 单测时，可按测试文件要求使用系统 Python。不要用是否能 import
@@ -54,8 +57,8 @@ python sim/app_web.py
 
 同步检查：
 
-1. `sim/inspire_hand.py` 的 `HAND_JOINTS`、`HAND_LIMITS`、`RAW_MAP`
-2. `sim/skills/hand_pose.py` 的复制表
+1. `src/inspire_hand.py` 的 `HAND_JOINTS`、`HAND_LIMITS`、`RAW_MAP`
+2. `src/skills/hand_pose.py` 的复制表
 3. `assets/hand/urdf/inspire_hand_right.urdf`
 4. 浏览器模型和 retargeting 配置
 5. `HARDWARE.md`
@@ -63,7 +66,7 @@ python sim/app_web.py
 当前基线校验会失败，不得忽略：
 
 ```bash
-python3 sim/skills/hand_pose.py --verify
+python3 src/skills/hand_pose.py --verify
 ```
 
 已知差异是拇指弯曲 `0.48` 对 `0.69813/0.6`，以及四指 `1.333` 对
@@ -72,7 +75,7 @@ python3 sim/skills/hand_pose.py --verify
 
 ### 修改装配位置
 
-当前参数定义在 `sim/build_nero_inspire.py`：
+当前参数定义在 `src/build_nero_inspire.py`：
 
 ```python
 FLANGE_MOUNT_XYZ = "0 0 0.016489"
@@ -84,8 +87,8 @@ MOUNT_RPY = "0 0 1.570796"
 修改后执行：
 
 ```bash
-python3 sim/build_nero_inspire.py
-python3 sim/build_combo_viz.py
+python3 src/build_nero_inspire.py
+python3 src/build_combo_viz.py
 ```
 
 不要依赖旧迁移报告里的代码行号或 `MOUNT_XYZ/MOUNT_RPY`；那些文档保留的是当时状态。
@@ -108,12 +111,12 @@ retarget 后的六关节真手目标先经过 `OneEuroJointFilter`。现行参�
 修改后至少运行：
 
 ```bash
-node sim/web/tests/hand_tracker_tasks.test.mjs
-node sim/web/tests/hand_mimic_transport.test.mjs
-python3 sim/test_hand_target_mailbox.py
-python3 sim/test_hand_target_filter.py
-python3 sim/test_hand_console_ack.py
-python3 sim/test_stdin_lines.py
+node src/test/web/hand_tracker_tasks.test.mjs
+node src/test/web/hand_mimic_transport.test.mjs
+python3 -m pytest src/test/test_hand_target_mailbox.py
+python3 -m pytest src/test/test_hand_target_filter.py
+python3 -m pytest src/test/test_hand_console_ack.py
+python3 -m pytest src/test/test_stdin_lines.py
 ```
 
 浏览器实测还应覆盖：启动、停止、重复启动、权限拒绝、WebSocket 断线恢复和页面切换。
@@ -127,7 +130,7 @@ cd /home/zhang123/ros2_ws/robot-mcp-server
 ```
 
 现行 MCP 入口为 `/mcp`，能力为手和臂，不包含 combo、视觉 mimic 或通用 `/execute`。
-共享驱动变更应分别核对 `robot-bridge/sim/` 与本仓 `sim/`，不要假定它们自动同步。
+共享驱动变更应分别核对独立仓库 `robot-bridge/` 与本仓 `src/`，不要假定它们自动同步。
 
 ## 验证层级
 
@@ -135,13 +138,16 @@ cd /home/zhang123/ros2_ws/robot-mcp-server
 
 ```bash
 # 只读/静态
-python3 sim/skills/hand_pose.py --verify
+python3 src/skills/hand_pose.py --verify
 
 # Web 前端
-node sim/web/tests/hand_tracker_tasks.test.mjs
-node sim/web/tests/hand_mimic_transport.test.mjs
-python3 sim/test_hand_target_mailbox.py
-python3 sim/test_hand_console_ack.py
+node src/test/web/hand_tracker_tasks.test.mjs
+node src/test/web/hand_mimic_transport.test.mjs
+python3 -m pytest src/test/test_hand_target_mailbox.py
+python3 -m pytest src/test/test_hand_console_ack.py
+
+# 全部默认离线测试；pytest.ini 排除 src/test/hardware/
+python3 -m pytest
 
 # 独立 MCP 仓库
 cd /home/zhang123/ros2_ws/robot-mcp-server
@@ -162,4 +168,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ---
 
-**最后核对**：2026-08-14
+**最后核对**：2026-08-18

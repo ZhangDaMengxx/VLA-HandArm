@@ -1,7 +1,7 @@
 # 项目状态
 
-**核对日期**：2026-08-14
-**阶段**：Web 实时遥操作收尾、真机安全对齐、MCP 拆仓后的文档治理
+**核对日期**：2026-08-18
+**阶段**：源码与第三方资产归整、真机安全对齐、MCP 拆仓后的文档治理
 
 ## 当前结论
 
@@ -13,7 +13,7 @@
 | VLA 数据管线 | 可开发 | 规范层、映射和回放工具已存在，训练闭环未完成 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
 | ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
-| 文档 | 已全面审查 | 现行与历史文档已分层，仍有代码级风险待处理 |
+| 目录与文档 | 已归整 | 源码迁到 `src/`，测试集中到 `src/test/`，第三方资产集中到 `third_party/` |
 
 ## MCP 现行基准
 
@@ -33,6 +33,14 @@
 内嵌实验快照或 Web 工作台，不应出现在部署能力清单中。
 
 ## 最近完成
+
+### 2026-08-18
+
+- 将原 `sim/` 迁移为 `src/`，同步运行时、部署脚本和现行文档路径
+- 将离线测试集中到 `src/test/`，真机测试隔离到 `src/test/hardware/`
+- 将第三方源码、厂商 SDK、RGB-D 数据和 overlay 集中到 `third_party/`
+- 保留上游内部目录结构，仅 `third_party/overlays/` 作为本项目代码进入 Git
+- 修正合体页测试对旧 `src/assets` 生成目录的假设，改用顶层 `assets/`
 
 ### 2026-08-14
 
@@ -61,7 +69,7 @@
 
 1. **手势安全表与驱动不一致**
 
-   `python3 sim/skills/hand_pose.py --verify` 报 10 项不一致。Bridge 在执行手势和角度
+   `python3 src/skills/hand_pose.py --verify` 报 10 项不一致。Bridge 在执行手势和角度
    可行域检查时依赖该表，因此在完成参数决策和真机验证前，不能宣称安全表已对齐。
 
 2. **仓库中存在已跟踪 TLS 私钥**
@@ -76,18 +84,17 @@
 5. Web 摄像头已有真手延迟样本，但仍缺 Chrome/Edge、GPU/CPU、拒绝权限和断线恢复的完整验收矩阵。
 6. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
 7. One Euro 滤波自动测试和 mock 链路已通过，0.0005rad 门限的张手末端与静止姿态仍需真机复测。
+8. 两个保留轨迹 NPZ 使用旧 12 关节名，当前技能后端要求 6 个项目驱动关节名，轨迹安全闸测试不能通过。
 
 ## 验证记录
 
 已通过：
 
 ```bash
-node sim/web/tests/hand_tracker_tasks.test.mjs
-node sim/web/tests/hand_mimic_transport.test.mjs
-python3 sim/test_hand_target_mailbox.py
-python3 sim/test_hand_target_filter.py
-python3 sim/test_hand_console_ack.py
-python3 sim/test_stdin_lines.py
+node src/test/web/hand_tracker_tasks.test.mjs
+node src/test/web/hand_mimic_transport.test.mjs
+/usr/bin/python3 -m pytest src/test/test_combo_page.py -q
+/usr/bin/python3 -m pytest src/test/test_hand_target_mailbox.py src/test/test_hand_target_filter.py
 
 cd /home/zhang123/ros2_ws/robot-mcp-server
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mcp_server/tests -v
@@ -97,8 +104,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 当前预期失败：
 
 ```bash
-python3 sim/skills/hand_pose.py --verify
+python3 src/skills/hand_pose.py --verify
 python3 verify_migration.py
+/usr/bin/python3 src/test/skills/test_runner_gates.py  # 旧轨迹 NPZ 关节名不兼容
 ```
 
 2026-08-14 摄像头真机样本中，retarget 通常 1-5ms、RS485 通常 4.6-8.0ms、

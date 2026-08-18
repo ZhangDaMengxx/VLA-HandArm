@@ -7,11 +7,11 @@
 
 | 文档 | 内容 | 当前基准 |
 |------|------|----------|
-| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-14 |
-| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-14 |
-| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-14 |
-| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-14 |
-| [TODO.md](TODO.md) | 可执行待办 | 2026-08-14 |
+| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-18 |
+| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-18 |
+| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-18 |
+| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-18 |
+| [TODO.md](TODO.md) | 可执行待办 | 2026-08-18 |
 | [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
 | [GIT_GUIDE.md](GIT_GUIDE.md) | 三个仓库的 Git 约定 | 2026-08-14 |
 | [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
@@ -47,19 +47,20 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 | 文档 | 主题 |
 |------|------|
-| [sim/README.md](sim/README.md) | Web/技能/回放模块总览 |
-| [sim/ARM_DEBUG.md](sim/ARM_DEBUG.md) | 机械臂调试记录与现状 |
-| [sim/HAND_DEBUG.md](sim/HAND_DEBUG.md) | 灵巧手调试、实时摄像头控制和真机性能记录 |
-| [sim/COMBO_DEBUG.md](sim/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
-| [sim/HAND_SAFETY_PLAN.md](sim/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
-| [sim/CANONICAL_SPEC.md](sim/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
+| [src/README.md](src/README.md) | Web/技能/回放模块总览 |
+| [src/ARM_DEBUG.md](src/ARM_DEBUG.md) | 机械臂调试记录与现状 |
+| [src/HAND_DEBUG.md](src/HAND_DEBUG.md) | 灵巧手调试、实时摄像头控制和真机性能记录 |
+| [src/COMBO_DEBUG.md](src/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
+| [src/HAND_SAFETY_PLAN.md](src/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
+| [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
 | [VISUALIZER_SPEC.md](VISUALIZER_SPEC.md) | 可视化约定 |
-| [sim/build_urdf/README.md](sim/build_urdf/README.md) | URDF 装配分析工具 |
+| [src/build_urdf/README.md](src/build_urdf/README.md) | URDF 装配分析工具 |
 | [adjust_hand_mount_example.md](adjust_hand_mount_example.md) | 当前装配参数调整流程 |
 | [WINDOWS_DEPLOY.md](WINDOWS_DEPLOY.md) | 本仓库 Windows 开发参考；MCP 部署看独立仓库 |
-| [sim/web/MEDIAPIPE_TASKS_MIGRATION.md](sim/web/MEDIAPIPE_TASKS_MIGRATION.md) | MediaPipe Tasks、引擎降级、latest-target 和验收契约 |
-| [sim/web/vendor/mediapipe-tasks/README.md](sim/web/vendor/mediapipe-tasks/README.md) | 本地模型/WASM 来源和校验值 |
-| [overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md](overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md) | overlay 可视化结构参考 |
+| [src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md) | MediaPipe Tasks、引擎降级、latest-target 和验收契约 |
+| [src/web/vendor/mediapipe-tasks/README.md](src/web/vendor/mediapipe-tasks/README.md) | 本地模型/WASM 来源和校验值 |
+| [third_party/README.md](third_party/README.md) | 第三方资产边界、目录和 Git 策略 |
+| [third_party/overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md](third_party/overlays/dex-retargeting/example/vector_retargeting/VISUALIZER_ARCH.md) | overlay 可视化结构参考 |
 
 ## 历史归档
 
@@ -71,7 +72,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 - [ASSET_MIGRATION_PLAN.md](ASSET_MIGRATION_PLAN.md)
 - [ASSEMBLY_SUCCESS.md](ASSEMBLY_SUCCESS.md)
 - [WEB_COMBO_UPDATE.md](WEB_COMBO_UPDATE.md)
-- [sim/URDF_FIX_2026-08-10.md](sim/URDF_FIX_2026-08-10.md)
+- [src/URDF_FIX_2026-08-10.md](src/URDF_FIX_2026-08-10.md)
 - [DOC_SUMMARY.md](DOC_SUMMARY.md)
 - [DYNAMIC_SCAN_SUMMARY.md](DYNAMIC_SCAN_SUMMARY.md)
 - [mcp_server/TEST_REPORT.md](mcp_server/TEST_REPORT.md)
@@ -88,8 +89,9 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 本次审查覆盖项目团队维护的入口、硬件、Web、MCP、部署、迁移和调试文档。以下内容按
 上游或生成物处理，不改写其技术正文：
 
-- `dex-retargeting-main/`、`dex-urdf-main/`、`egozero-main/`
-- `pinocchio-kinematics-lite-main/`、`pyAgxArm-master/`、`unitree_sdk2-main/`
+- `third_party/dex-retargeting/`、`third_party/dex-urdf/`、`third_party/egozero/`
+- `third_party/pinocchio-kinematics-lite/`、`third_party/pyAgxArm/`、`third_party/unitree-sdk2/`
+- `third_party/kinect2-middle/`（第三方 RGB-D 数据和工具）
 - `.pytest_cache/` 与各测试缓存中的 README
 
 引用这些文档时应同时记录上游版本；它们不能替代本项目的当前状态和安全约束。
@@ -104,11 +106,11 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 ## 当前未闭环文档风险
 
-1. `sim/skills/hand_pose.py --verify` 有 10 项参数不一致。
+1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
 2. `verify_migration.py` 和 `final_summary.py` 仍引用旧资产路径，不能作为当前验收工具。
 3. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 4. 摄像头真机链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
 
 ---
 
-**最后全面审查**：2026-08-14
+**最后全面审查**：2026-08-18

@@ -19,11 +19,11 @@ import sys
 import time
 from pathlib import Path
 
-# sim: inspire_hand 在那里。sim/skills: schema / hand_pose 在那里。
+# src: inspire_hand 在那里。src/skills: schema / hand_pose 在那里。
 # 注意 skills 必须排在 sim 前面 —— console_exec:350 提到过反过来会让
-# sim/ 下的同名模块遮蔽 skills/schema.py。
+# src/ 下的同名模块遮蔽 skills/schema.py。
 sys.path.insert(0, str(Path(__file__).parent / "sim"))
-sys.path.insert(0, str(Path(__file__).parent / "sim/skills"))
+sys.path.insert(0, str(Path(__file__).parent / "src/skills"))
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse

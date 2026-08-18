@@ -5,8 +5,8 @@
 
 ## P0 安全与一致性
 
-- [ ] 统一 `sim/inspire_hand.py` 与 `sim/skills/hand_pose.py` 的手指 span/limit
-  - 当前 `python3 sim/skills/hand_pose.py --verify` 报 10 项不一致
+- [ ] 统一 `src/inspire_hand.py` 与 `src/skills/hand_pose.py` 的手指 span/limit
+  - 当前 `python3 src/skills/hand_pose.py --verify` 报 10 项不一致
   - 先确认真机安全范围、URDF 表达和已录动作影响，再修改代码
   - 同步独立仓库 `robot-mcp-server/robot-bridge/sim/`
 - [ ] 轮换已经进入 Git 的 `ssl/key.pem`
@@ -48,6 +48,7 @@
 - [ ] 验证 `ros2_control`、JointTrajectoryController 和 RViz2
 - [ ] 完成灵巧手路径碰撞检查，并接入 retargeting 约束
 - [ ] 按确认后的限位重新评估或录制手势包
+- [ ] 将保留轨迹 NPZ 重导出为当前 6 驱动关节命名，并重新跑安全闸测试
 
 ## P2 后续能力
 
@@ -58,4 +59,4 @@
 
 ---
 
-**最后整理**：2026-08-14
+**最后整理**：2026-08-18

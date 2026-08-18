@@ -34,7 +34,8 @@ git clone git@github.com:ZhangDaMengxx/VLA-HandArm.git lerobotTest
 git clone git@github.com:ZhangDaMengxx/VLA-HandArm-Ros.git src/nero_inspire_ros2
 
 # 2. git 给不了的:厂商 SDK(.gitignore 排除第三方)
-rsync -av <开发机>:~/ros2_ws/lerobotTest/pyAgxArm-master/ ~/ros2_ws/lerobotTest/pyAgxArm-master/
+mkdir -p ~/ros2_ws/lerobotTest/third_party
+rsync -av <开发机>:~/ros2_ws/lerobotTest/third_party/pyAgxArm/ ~/ros2_ws/lerobotTest/third_party/pyAgxArm/
 
 # 3. 分步部署(出错好定位)
 cd ~/ros2_ws/lerobotTest
@@ -49,7 +50,7 @@ bash deploy/deploy_robot_host.sh --verify   # mock 链路 + 安全闸
 
 ## 几个必须知道的坑
 
-**conda 必须 python 3.10。** sim 的 ROS 脚本用 conda 解释器跑,靠 `source humble` 注入的
+**conda 必须 python 3.10。** `src/` 的 ROS 脚本用 conda 解释器跑,靠 `source humble` 注入的
 `PYTHONPATH` 找 rclpy。rclpy 的 .so 是给 cp310 编的,3.11/3.12 直接 import 失败,报错还指向别处。
 
 **`install/` 不能从开发机拷**,里面是编译产物加绝对路径,必须本机 `colcon build`。
@@ -61,8 +62,8 @@ bash deploy/deploy_robot_host.sh --verify   # mock 链路 + 安全闸
 `--hw` 会按 VID/PID 生成 udev 规则做成 `/dev/inspire_hand`;若臂的 USB-CAN 同款芯片会撞,
 按规则文件里的注释改用 `ATTRS{serial}` 区分。
 
-**技能轨迹 npz** 虽在 `sim/out/`(生成物目录)里,但已用 `!sim/out/robot_traj_*.npz` 破例入库,
-clone 就能跑 trajectory 类技能。其余 `sim/out/` 产物仍不入库。
+**技能轨迹 npz** 虽在 `src/out/`(生成物目录)里,但已用 `!src/out/robot_traj_*.npz` 破例入库,
+clone 就能跑 trajectory 类技能。其余 `src/out/` 产物仍不入库。
 
 ## 上真机顺序
 
@@ -70,11 +71,11 @@ clone 就能跑 trajectory 类技能。其余 `sim/out/` 产物仍不入库。
 
 ```bash
 source ~/ros2_ws/robot_host_env.sh
-python3 sim/skills/runner.py --dry-run --once '{"skill_id":"go_home","confirmed":true,"assume_enabled":true}'
-python3 sim/nero_arm_bridge.py --mock --enable-control   # 假数据,不碰硬件
+python3 src/skills/runner.py --dry-run --once '{"skill_id":"go_home","confirmed":true,"assume_enabled":true}'
+python3 src/nero_arm_bridge.py --mock --enable-control   # 假数据,不碰硬件
 candump $CAN_IFACE                                       # 确认臂在 CAN 上有回包
-python3 sim/nero_arm_bridge.py --no-mock                 # 只读真机
-python3 sim/nero_arm_bridge.py --no-mock --enable-control # 确认角度对了再放开控制
+python3 src/nero_arm_bridge.py --no-mock                 # 只读真机
+python3 src/nero_arm_bridge.py --no-mock --enable-control # 确认角度对了再放开控制
 ```
 
 ## 安全

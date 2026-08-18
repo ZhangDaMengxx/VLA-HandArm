@@ -2,8 +2,8 @@
 
 本文说明松灵 NERO 七自由度机械臂与因时 RH56DFX-2R 右手在本项目中的硬件规格、通信接口、运行时约束和装配参数。
 
-> 对齐基准：2026-08-14 本地项目。运行时参数以 `sim/nero_arm.py` 和
-> `sim/inspire_hand.py` 为准；装配参数以 `sim/build_nero_inspire.py` 为准。
+> 对齐基准：2026-08-14 本地项目。运行时参数以 `src/nero_arm.py` 和
+> `src/inspire_hand.py` 为准；装配参数以 `src/build_nero_inspire.py` 为准。
 
 ---
 
@@ -20,7 +20,7 @@
 #### 运行时关节限位
 
 下表是项目控制代码实际采用的安全夹取范围，定义在
-`sim/nero_arm.py::NERO_ARM_LIMITS`。它比源 URDF 中的近似小数更精确。
+`src/nero_arm.py::NERO_ARM_LIMITS`。它比源 URDF 中的近似小数更精确。
 
 | 关节 | 下限 (rad) | 上限 (rad) | 下限 (deg) | 上限 (deg) |
 |------|-----------:|-----------:|-----------:|-----------:|
@@ -42,13 +42,13 @@ ROS/MuJoCo 控制链可运行，**不能把这两个值当作机械臂额定力�
 
 #### 通信
 
-- SDK：`pyAgxArm`，本地源码位于 `pyAgxArm-master/pyAgxArm-master/`
+- SDK：`pyAgxArm`，本地源码位于 `third_party/pyAgxArm/pyAgxArm-master/`
 - 总线：CAN，波特率 1 Mbit/s
 - Linux：`socketcan`，默认通道 `can0`
 - Windows：松灵 CAN 适配器，`agx_cando`，默认通道索引 `0`
-- 底层封装：`sim/nero_arm.py`
-- ROS2 桥：`sim/nero_arm_bridge.py`
-- 单臂调试入口：`sim/arm_console.py`
+- 底层封装：`src/nero_arm.py`
+- ROS2 桥：`src/nero_arm_bridge.py`
+- 单臂调试入口：`src/arm_console.py`
 
 #### 直接调用
 
@@ -109,8 +109,8 @@ finally:
 - Linux 默认串口：`/dev/ttyUSB0`
 - 可用环境变量 `INSPIRE_HAND_PORT` 覆盖串口
 - Windows 可通过 `--hand-port COM5` 一类参数指定 COM 口
-- 底层驱动：`sim/inspire_hand.py`
-- 单手调试入口：`sim/hand_console.py`
+- 底层驱动：`src/inspire_hand.py`
+- 单手调试入口：`src/hand_console.py`
 
 #### 直接调用
 
@@ -255,7 +255,7 @@ MOUNT_XYZ = "0.000042 0.0 0.002158"
 MOUNT_RPY = "0 0 1.570796"
 ```
 
-参数定义在 `sim/build_nero_inspire.py`，生成结果为
+参数定义在 `src/build_nero_inspire.py`，生成结果为
 `assets/assembled/nero_inspire_right.urdf`。安装量来自装配体
 `nero_RH56DF.stl` 反解；手掌网格 ICP 残差约 0.36 mm。
 
@@ -292,13 +292,13 @@ MOUNT_RPY = "0 0 1.570796"
 
 | 层级 | 文件 | 职责 |
 |------|------|------|
-| 灵巧手驱动 | `sim/inspire_hand.py` | RS485 包帧、寄存器、角度/通道转换 |
-| 机械臂驱动 | `sim/nero_arm.py` | pyAgxArm、CAN、使能、运动和遥测 |
+| 灵巧手驱动 | `src/inspire_hand.py` | RS485 包帧、寄存器、角度/通道转换 |
+| 机械臂驱动 | `src/nero_arm.py` | pyAgxArm、CAN、使能、运动和遥测 |
 | HTTP 硬件代理 | `bridge.py` | MCP 服务使用的本机 HTTP 接口 |
-| ROS2 桥 | `sim/nero_arm_bridge.py` | ROS2 轨迹话题与 `/joint_states` |
-| 灵巧手控制台 | `sim/hand_console.py` | 单独调试灵巧手 |
-| 机械臂控制台 | `sim/arm_console.py` | 单独调试机械臂，默认 mock 和 20% 速度 |
-| 装配体生成 | `sim/build_nero_inspire.py` | 生成并验证臂、法兰、手装配 URDF |
+| ROS2 桥 | `src/nero_arm_bridge.py` | ROS2 轨迹话题与 `/joint_states` |
+| 灵巧手控制台 | `src/hand_console.py` | 单独调试灵巧手 |
+| 机械臂控制台 | `src/arm_console.py` | 单独调试机械臂，默认 mock 和 20% 速度 |
+| 装配体生成 | `src/build_nero_inspire.py` | 生成并验证臂、法兰、手装配 URDF |
 
 ### 5.1 HTTP bridge 启动语义
 
@@ -320,22 +320,22 @@ python bridge.py --hand-port COM5 --host 127.0.0.1 --port 9000
 
 ### 5.2 ROS2 bridge 启动语义
 
-`sim/nero_arm_bridge.py` 默认臂和手都使用 mock。真机必须显式传
+`src/nero_arm_bridge.py` 默认臂和手都使用 mock。真机必须显式传
 `--no-mock`，且真机默认只监控；只有再传 `--enable-control` 才订阅控制话题。
 
 ```bash
 # 无硬件空跑，默认允许控制话题
-python3 sim/nero_arm_bridge.py --mock
+python3 src/nero_arm_bridge.py --mock
 
 # 真机，只监控
-python3 sim/nero_arm_bridge.py --no-mock
+python3 src/nero_arm_bridge.py --no-mock
 
 # 真机并显式允许控制
-python3 sim/nero_arm_bridge.py --no-mock --enable-control --firmware v120
+python3 src/nero_arm_bridge.py --no-mock --enable-control --firmware v120
 ```
 
 注意：ROS2 bridge 当前固件选项不含 `auto`；需要自动探测时优先使用
-`sim/arm_console.py` 或直接调用 `NeroArm(firmware="auto")`。
+`src/arm_console.py` 或直接调用 `NeroArm(firmware="auto")`。
 
 ---
 
@@ -355,7 +355,7 @@ python3 sim/nero_arm_bridge.py --no-mock --enable-control --firmware v120
 ```bash
 ls -l /dev/ttyUSB*
 id -nG
-python3 sim/hand_console.py --no-mock --port /dev/ttyUSB0
+python3 src/hand_console.py --no-mock --port /dev/ttyUSB0
 ```
 
 `connect()` 会先读取 `HAND_ID`。串口能打开但无回复时会明确报错，不会自动进入 mock。
@@ -381,7 +381,7 @@ Linux 先检查 CAN：
 ip -details link show can0
 sudo ip link set can0 up type can bitrate 1000000
 candump can0
-python3 sim/arm_console.py --no-mock --channel can0 --firmware auto --speed 20
+python3 src/arm_console.py --no-mock --channel can0 --firmware auto --speed 20
 ```
 
 重点检查：
@@ -399,7 +399,7 @@ python3 sim/arm_console.py --no-mock --channel can0 --firmware auto --speed 20
 ### 6.4 MuJoCo 加载装配 URDF 失败
 
 ```bash
-python3 sim/build_nero_inspire.py
+python3 src/build_nero_inspire.py
 ```
 
 脚本会统一 mesh 路径、补齐仿真所需的关节 effort/velocity，并验证生成模型。
@@ -435,14 +435,14 @@ udevadm info -a -n /dev/ttyUSB0 | grep -i serial
 
 ### 8.1 当前已知参数不一致
 
-`sim/skills/hand_pose.py` 复制了一份用于可行域换算的 `RAW_MAP` 和 `LIMIT_HI`，但它
-目前没有与 `sim/inspire_hand.py` 的运行时表同步：
+`src/skills/hand_pose.py` 复制了一份用于可行域换算的 `RAW_MAP` 和 `LIMIT_HI`，但它
+目前没有与 `src/inspire_hand.py` 的运行时表同步：
 
 - 拇指弯曲：驱动 span/limit 为 `0.48`，安全表仍为 `0.69813/0.6`
 - 四指：驱动 span/limit 为 `1.333`，安全表仍为 `1.39626/1.47`
 
 ```bash
-python3 sim/skills/hand_pose.py --verify
+python3 src/skills/hand_pose.py --verify
 ```
 
 当前会报告 10 项不一致。独立 `robot-mcp-server/robot-bridge` 复制了相同的两份文件，

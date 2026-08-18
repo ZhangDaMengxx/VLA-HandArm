@@ -1,26 +1,29 @@
-# ---- 第三方依赖(单独下载,不入库)----
-/dex-retargeting-main/
-/dex-urdf-main/
-/pinocchio-kinematics-lite-main/
-/pyAgxArm-master/
-/egozero-main/
-/xr_teleoperate-main/
-/unitree_sdk2-main/
+# ---- 第三方依赖(统一归档到 third_party/,单独下载,不入库)----
+/third_party/dex-retargeting/
+/third_party/dex-urdf/
+/third_party/pinocchio-kinematics-lite/
+/third_party/pyAgxArm/
+/third_party/egozero/
+/third_party/kinect2-middle/
+/third_party/xr-teleoperate/
+/third_party/unitree-sdk2/
+# 项目维护的上游适配层需要入库。
+!/third_party/overlays/
 *.zip
 *:Zone.Identifier
 
 # ---- 生成物 / 训练输出(可重建,不入库)----
 /outputs/
-# 注意用 sim/out/* 而非 sim/out/:目录级忽略会让下面的 ! 例外失效。
-sim/out/*
+# 注意用 src/out/* 而非 src/out/:目录级忽略会让下面的 ! 例外失效。
+src/out/*
 # 例外:技能表 registry.yaml 的 trajectory 技能直接引用这两个 npz(各 ~100K)。
 # 它们虽是生成物,但不入库的话新机器 clone 下来技能就跑不了,所以破例带上。
-!sim/out/robot_traj_nero_inspire_rgbd.npz
-!sim/out/robot_traj_nero_inspire_rgb.npz
+!src/out/robot_traj_nero_inspire_rgbd.npz
+!src/out/robot_traj_nero_inspire_rgb.npz
 # Rerun 可视化录制(诊断用,可重建,体积大)
 *.rrd
 # build_nero_inspire.py 生成(含绝对路径,换机需重建)
-sim/assets/nero_inspire_right.urdf
+src/assets/nero_inspire_right.urdf
 
 # ---- Python ----
 __pycache__/
@@ -33,7 +36,6 @@ __pycache__/
 .DS_Store
 .claude/
 20200709-subject-01/
-kinect2_middle/
 
 # ---- 大文件(超 GitHub 单文件 100M 上限,git 装不下)----
 # 数据集压缩包 12G,解出来就是上面已忽略的 20200709-subject-01/
@@ -46,7 +48,7 @@ assets/nero_description/meshes/nero_RH56DF.stl
 # 117M 完整手部mesh，URDF已用适配法兰版(1M)
 assets/arm/meshes/nero_RH56DF.stl
 # 构建缓存，可重建
-sim/build_urdf/_cache/
+src/build_urdf/_cache/
 
 # MCP Server 部署相关
 mcp_server/.env

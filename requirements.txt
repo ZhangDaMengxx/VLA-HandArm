@@ -2,11 +2,11 @@
 # 装法示例:pip install -r requirements.txt
 #   pinocchio 的 PyPI 包名是 pin;也可用 conda install -c conda-forge pinocchio
 mujoco>=3.8          # 3.8.1  仿真/URDF 加载
-pin>=3.0             # 4.0.0   pinocchio,FK/IK(sim/nero_kin.py)+ MeshCat 可视化
-dex_retargeting      #         手部重定向(RetargetingConfig);SingleHandDetector 已 vendored 进 sim/
+pin>=3.0             # 4.0.0   pinocchio,FK/IK(src/nero_kin.py)+ MeshCat 可视化
+dex_retargeting      #         手部重定向(RetargetingConfig);SingleHandDetector 已 vendored 进 src/
 # 必须钉死 ==0.10.14,不能写 >=。实测三段边界(2026-07 复现):
 #   0.10.30+ / 1.0.0 : 删掉 legacy solutions API(只剩 mediapipe.tasks),
-#                      sim/single_hand_detector.py 的 mediapipe.framework /
+#                      src/single_hand_detector.py 的 mediapipe.framework /
 #                      solutions.hands 直接 ModuleNotFoundError,连带打断
 #                      build_canonical* / hand_estimators / estimate_wrist 整条规范层入口。
 #   0.10.21          : 还有 solutions,但元数据硬写 numpy<2,会把 numpy 降到 1.26.4,
@@ -20,11 +20,11 @@ lerobot>=0.4         # 0.4.4   LeRobotDataset(数据集读写)
 scipy                #         Savitzky-Golay 平滑 + 旋转四元数
 opencv-python        #         读视频
 meshcat              #         浏览器 3D 查看器(replay_full.py)
-rerun-sdk>=0.26      #         同步多面板可视化(sim/replay_rerun.py:视频+3D+关节曲线)
+rerun-sdk>=0.26      #         同步多面板可视化(src/replay_rerun.py:视频+3D+关节曲线)
 trimesh              #         replay_rerun.py 加载网格喂 rerun Mesh3D
 numpy>=2             # 2.2.6
 torch                #         lerobot dataloader
 
 # 说明:
 # - assets/(URDF+网格)、configs/(重定向配置)、data/(示例视频)已内置在仓库里,无需第三方仓库。
-# - 第三方仓库(dex-retargeting/pinocchio-kinematics-lite 等)只有 overlays/ 里的可视化器和真机部署(pyAgxArm)才用到。
+# - 第三方仓库统一在 third_party/；只有其中 overlays/ 的可视化器和真机部署(pyAgxArm)用到本地源码。
