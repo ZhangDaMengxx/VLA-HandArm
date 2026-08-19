@@ -16,8 +16,11 @@ export class HandMimicController {
     this.onJointAngles = onJointAnglesCallback;
     this.onServerResponse = options.onServerResponse || null;
     this.getTrackingPayload = options.getTrackingPayload || (() => ({}));
+    this.getRuntimeMode = options.getRuntimeMode || (() => "auto");
+    this.onRuntimeReady = options.onRuntimeReady || null;
     this.tracker = null;
     this.engine = null;
+    this.requestedRuntimeMode = "auto";
     this.fallbackReason = null;
 
     this.videoElement = null;
@@ -76,7 +79,11 @@ export class HandMimicController {
 
     try {
       this._setStatus("加载 MediaPipe...");
-      const initialized = await initializeHandTracker({ engine: requestedHandEngine() });
+      this.requestedRuntimeMode = this.getRuntimeMode();
+      const initialized = await initializeHandTracker({
+        engine: requestedHandEngine(),
+        delegate: this.requestedRuntimeMode,
+      });
       if (!this._isCurrent(generation)) {
         await initialized.tracker.close();
         return;
@@ -84,6 +91,12 @@ export class HandMimicController {
       this.tracker = initialized.tracker;
       this.engine = initialized.engine;
       this.fallbackReason = initialized.fallbackReason;
+      this.onRuntimeReady?.({
+        requestedMode: this.requestedRuntimeMode,
+        engine: this.engine,
+        delegate: this.tracker.delegate,
+        fallbackReason: this.fallbackReason,
+      });
 
       this._setStatus("连接服务器...");
       await this._connectWebSocket(generation);
@@ -477,7 +490,7 @@ export class HandMimicController {
   }
 
   _readyStatus() {
-    const fallback = this.fallbackReason ? " (Tasks 已降级)" : "";
+    const fallback = this.fallbackReason ? " (自动模式已降级)" : "";
     return `就绪 ${this.engine}/${this.tracker.delegate}${fallback}`;
   }
 
@@ -488,6 +501,7 @@ export class HandMimicController {
   getMetrics() {
     return {
       requestedEngine: requestedHandEngine(),
+      requestedRuntimeMode: this.requestedRuntimeMode,
       engine: this.engine,
       delegate: this.tracker?.delegate || null,
       fps: this.currentFps,

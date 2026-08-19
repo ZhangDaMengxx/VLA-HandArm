@@ -105,7 +105,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
-3. 摄像头真手链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
+3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
 4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；单目位置不是绝对米制真值，真实机械臂尚未验证。
 
 ---

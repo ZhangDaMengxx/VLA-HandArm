@@ -4,11 +4,15 @@
 
 - Default: `?hand_engine=tasks`
 - Force old engine: `?hand_engine=legacy`
-- Tasks tries GPU first, then CPU. If Tasks still cannot initialize, it loads Legacy.
+- The combo camera page detects client-side WASM/WebGL capabilities and builds a runtime selector.
+- CPU selects the Tasks `CPU`/WASM delegate. GPU selects the Tasks `GPU`/WebGL delegate.
+- On macOS the same GPU delegate is labelled Apple GPU (WebGL/Metal), because the browser maps
+  WebGL to Metal. Tasks Vision does not expose a separate MPS delegate in this web runtime.
+- Explicit CPU/GPU selection is strict. Only Auto tries GPU, then CPU, then Legacy.
 - Both engines run entirely in the browser and send the existing `mediapipe` 21-point payload to `/ws/hand/mimic` or `/api/hand/mimic`.
 
-The status overlay shows the actual engine/delegate, FPS, and inference P95. The
-same values are available from `HandCameraControl.getMetrics()`.
+The selector status and camera overlay show the actual engine/delegate, FPS, and inference P95.
+The same values are available from `HandMimicController.getMetrics()`.
 
 ## Real-time hardware control
 

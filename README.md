@@ -47,7 +47,8 @@ python src/app_web.py
 主要能力：
 
 - 机械臂、灵巧手和合体 3D 状态与调试；实时视频跟随只在“实时 Live · 合体”页提供
-- 浏览器 MediaPipe Tasks Hand Landmarker；GPU 失败转 CPU，Tasks 失败转 Legacy
+- 浏览器 MediaPipe Tasks Hand Landmarker；页面按本机能力选择自动、CPU/WASM 或 GPU/WebGL，macOS 显示 Apple GPU（WebGL/Metal）
+- 切换功能页或关闭浏览器时，灵巧手张开、机械臂按安全条件回伸直位，随后释放串口和 CAN
 - `/ws/hand/mimic` 同时输出 7 轴机械臂与 6 轴灵巧手目标；Mock 和真机共用协议与 IK 链
 - 单一按钮完成当前手腕位置/姿态的联合锚定、冻结和重新锚定；首个有效手帧即可点击，随后固定采集 12 帧并做离群点剔除
 - 锚点使用机械臂当前关节 FK，页面显示采样进度与位置/姿态抖动，避免启动跳变或无限等待稳定

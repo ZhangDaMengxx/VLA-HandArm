@@ -2,15 +2,19 @@ import { HandMimicController } from "./hand_mimic.js";
 
 export class ComboCameraControl {
   constructor({ container, toggleBtn, followBtn, stateEl, getConfig,
-                onBeforeStart, onResponse, onStop }) {
+                runtimeSelect, onBeforeStart, onResponse, onStop,
+                onRuntimeReady, onRuntimeStopped }) {
     this.container = container;
     this.toggleBtn = toggleBtn;
     this.followBtn = followBtn;
     this.stateEl = stateEl;
     this.getConfig = getConfig;
+    this.runtimeSelect = runtimeSelect;
     this.onBeforeStart = onBeforeStart;
     this.onResponse = onResponse;
     this.onStop = onStop;
+    this.onRuntimeReady = onRuntimeReady;
+    this.onRuntimeStopped = onRuntimeStopped;
     this.mimic = null;
     this.active = false;
     this.trackingState = "waiting";
@@ -34,6 +38,7 @@ export class ComboCameraControl {
   async toggleCamera() {
     if (this.active) return this.stop();
     this.toggleBtn.disabled = true;
+    if (this.runtimeSelect) this.runtimeSelect.disabled = true;
     this.toggleBtn.textContent = "启动中...";
     try {
       await this.onBeforeStart?.();
@@ -46,6 +51,8 @@ export class ComboCameraControl {
           drive_arm: Boolean(this.getConfig()?.driveArm),
           allow_real_arm_tracking: Boolean(this.getConfig()?.allowRealArmTracking),
         }),
+        getRuntimeMode: () => this.getConfig()?.runtimeMode || "auto",
+        onRuntimeReady: (runtime) => this.onRuntimeReady?.(runtime),
         onServerResponse: (result) => this._handleResponse(result),
       });
       await this.mimic.start();
@@ -67,12 +74,14 @@ export class ComboCameraControl {
         `摄像头启动失败: ${error.message}`
         + (rollbackError ? ` · 设备回安全位失败: ${rollbackError.message}` : "")
       );
+      this.onRuntimeStopped?.();
     } finally {
       this.toggleBtn.disabled = false;
+      if (this.runtimeSelect && !this.active) this.runtimeSelect.disabled = false;
     }
   }
 
-  async stop() {
+  async stop({ returnDevices = true } = {}) {
     this.toggleBtn.disabled = true;
     this.toggleBtn.textContent = "关闭中...";
     this._trackingControl = "freeze";
@@ -88,14 +97,16 @@ export class ComboCameraControl {
     this.orientationLimitedAxes = null;
     let stopError = null;
     try {
-      await this.onStop?.({ startFailed: false });
+      if (returnDevices) await this.onStop?.({ startFailed: false });
     } catch (error) {
       stopError = error;
     } finally {
       this.toggleBtn.textContent = "启动摄像头";
       this.toggleBtn.classList.remove("active");
       this.toggleBtn.disabled = false;
+      if (this.runtimeSelect) this.runtimeSelect.disabled = false;
       this._trackingControl = "none";
+      this.onRuntimeStopped?.();
       this._renderState();
       if (stopError) this._setState(`摄像头已关闭 · ${stopError.message}`);
     }

@@ -3135,16 +3135,89 @@ async def arm_start(mock: bool = True, speed: int = 20) -> JSONResponse:
                          "enabled": (arm.latest or {}).get("enabled", False)})
 
 
+async def _stop_arm_session(*, home: bool) -> dict:
+    """Optionally return to zero, then always release the CAN session."""
+    arm = _arm
+    if arm is None:
+        return {
+            "ok": True, "online": False, "home_requested": home,
+            "home_ok": not home, "released": True,
+        }
+    alive = bool(arm.ready and arm.console and arm.console.poll() is None)
+    result = {
+        "ok": True,
+        "online": alive,
+        "home_requested": home,
+        "home_ok": not home,
+    }
+    try:
+        if home and alive:
+            latest = arm.latest or {}
+            if not latest.get("enabled"):
+                result["home_reason"] = "disabled"
+            elif latest.get("frozen"):
+                result["home_reason"] = "frozen"
+            else:
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.reset()
+                    drain_deadline = time.monotonic() + 0.5
+                    while (_arm_target_mailbox.in_flight_count
+                           and time.monotonic() < drain_deadline):
+                        await asyncio.sleep(0.01)
+                arm.end_tracking()
+                sent = arm.command({"cmd": "home"})
+                if sent.get("ok"):
+                    deadline = time.monotonic() + 15.0
+                    while time.monotonic() < deadline:
+                        current = (arm.latest or {}).get("rad")
+                        if (isinstance(current, list) and len(current) == 7
+                                and max(abs(float(value) - target) for value, target
+                                        in zip(current, NERO_HOME_POSE)) <= 0.03):
+                            result["home_ok"] = True
+                            break
+                        if not (arm.console and arm.console.poll() is None):
+                            result["home_reason"] = "disconnected"
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        result["home_reason"] = "timeout"
+                else:
+                    result["home_reason"] = sent.get("msg") or "command_failed"
+    finally:
+        await asyncio.get_event_loop().run_in_executor(_executor, arm.stop)
+        result["released"] = True
+    return result
+
+
 @app.post("/api/arm/stop")
-async def arm_stop() -> JSONResponse:
-    """断开:只断 CAN,**什么都不改** —— 不回零、不去使能。
+async def arm_stop(home: bool = False) -> JSONResponse:
+    """断开 CAN；页面离开时可先回全零位，手动断开默认维持原语义。
 
     原样把臂交回给原来的控制方(常态是松灵客户端)。想回接入位姿走
     {cmd:"goto_connect_pose"},那是显式动作。理由见 ARM_DEBUG.md。
     """
-    if _arm is not None:
-        await asyncio.get_event_loop().run_in_executor(_executor, _arm.stop)
-    return JSONResponse({"ok": True})
+    return JSONResponse(await _stop_arm_session(home=home))
+
+
+@app.post("/api/hardware/release")
+async def hardware_release() -> JSONResponse:
+    """页面关闭兜底：手张开、臂回零，随后释放串口和 CAN。
+
+    回位条件不满足或超时也必须继续断开，避免浏览器退出后长期占用设备通道。
+    """
+    if _hand_target_mailbox is not None:
+        _hand_target_mailbox.reset()
+    hand_result = {"online": False, "released": True}
+    try:
+        if _hand is not None:
+            alive = bool(_hand.ready and _hand.console and _hand.console.poll() is None)
+            hand_result["online"] = alive
+            await asyncio.get_event_loop().run_in_executor(_executor, _hand.stop)
+    except Exception as error:  # noqa: BLE001
+        hand_result.update(ok=False, error=str(error), released=False)
+    # 手侧异常不能阻止 CAN 释放；两条硬件通道必须独立收尾。
+    arm_result = await _stop_arm_session(home=True)
+    return JSONResponse({"ok": True, "hand": hand_result, "arm": arm_result})
 
 
 @app.get("/api/arm/status")

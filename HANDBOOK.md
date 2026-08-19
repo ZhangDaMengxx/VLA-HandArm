@@ -98,8 +98,11 @@ python3 src/build_combo_viz.py
 
 ### 修改 Web 摄像头链路
 
-现行前端使用本地 vendored MediaPipe Tasks。追踪器按 Tasks GPU → CPU → Legacy
-降级。浏览器传输采用单帧在途和 latest-frame-wins；WebSocket 失败时 HTTP 只维持
+现行前端使用本地 vendored MediaPipe Tasks。合体页按客户端浏览器实际能力生成推理设备
+清单：CPU 对应 WASM，GPU 对应 WebGL；macOS 的 Apple GPU 仍是 MediaPipe GPU delegate，
+由浏览器把 WebGL 映射到 Metal，不是独立 MPS delegate。显式选择 CPU/GPU 时初始化失败会
+直接报错，只有“自动选择”按 Tasks GPU → CPU → Legacy 降级。浏览器传输采用单帧在途和
+latest-frame-wins；WebSocket 失败时 HTTP 只维持
 retarget 与 3D 预览，不驱动真手。
 
 后端硬件路径由 30Hz `LatestTargetMailbox` 调度：最多一个待发目标、一个
@@ -123,6 +126,9 @@ python3 -m pytest src/test/test_stdin_lines.py
 ```
 
 浏览器实测还应覆盖：启动、停止、重复启动、权限拒绝、WebSocket 断线恢复和页面切换。
+切换顶层功能页时必须先等待旧页完成释放：手张开后断串口；臂在线、已使能且未冻结时回
+七关节全零位，再断 CAN。回位失败或超时也必须释放通道。浏览器关闭/刷新走
+`pagehide -> sendBeacon('/api/hardware/release')`，不要改成无法保证送达的普通异步请求。
 
 ### 修改合体实时跟随
 

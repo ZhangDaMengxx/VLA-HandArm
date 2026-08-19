@@ -46,6 +46,19 @@ def test_video_tracking_has_one_combo_entrypoint():
     assert 'id="hp_camera"' not in _INDEX and "HandCameraControl" not in _INDEX
     assert "tracking_control" in _COMBO_CAMERA
     assert "arm_joint_targets" in _INDEX and "hand_joint_targets" in _INDEX
+    assert 'id="comboRuntimeMode"' in _INDEX
+    assert "detectHandRuntimeCapabilities" in _INDEX
+    assert 'runtimeMode: $("comboRuntimeMode")?.value || "auto"' in _INDEX
+
+
+def test_page_navigation_and_close_release_hardware_channels():
+    assert "async function switchMode(view)" in _INDEX
+    assert 'await stopArmDebug({ silent: true, home: true })' in _INDEX
+    assert 'await cbStopArm({ silent: true, home: true })' in _INDEX
+    assert 'window.addEventListener("pagehide"' in _INDEX
+    assert 'navigator.sendBeacon?.("/api/hardware/release")' in _INDEX
+    assert '@app.post("/api/hardware/release")' in _APP
+    assert "await _stop_arm_session(home=True)" in _APP
 
 
 def test_combo_camera_exclusively_owns_threejs_while_active():

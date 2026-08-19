@@ -62,12 +62,14 @@ assert.equal(control._trackingControl, "none", "freeze must be sent for one fram
 assert.equal(followBtn.textContent, "重新锚定并跟随");
 
 const lifecycle = [];
+const runtimeSelect = { disabled: false };
 const lifecycleControl = new ComboCameraControl({
   container: { style: {} },
   toggleBtn: button(),
   followBtn: button(),
   stateEl: { textContent: "" },
   getConfig: () => ({}),
+  runtimeSelect,
   onBeforeStart: async () => lifecycle.push("prepare-arm"),
   onStop: async () => lifecycle.push("home-arm"),
 });
@@ -78,7 +80,9 @@ lifecycleControl.mimic = {
 };
 await lifecycleControl.toggleCamera();
 assert.deepEqual(lifecycle, ["prepare-arm", "camera-start"]);
+assert.equal(runtimeSelect.disabled, true);
 await lifecycleControl.stop();
 assert.deepEqual(lifecycle, ["prepare-arm", "camera-start", "camera-stop", "home-arm"]);
+assert.equal(runtimeSelect.disabled, false);
 
 console.log("combo_camera state tests passed");

@@ -4,6 +4,83 @@ const TASKS_WASM_PATH = `${TASKS_ROOT}/wasm`;
 const TASKS_MODEL_PATH = `${TASKS_ROOT}/models/hand_landmarker_full.task`;
 const LEGACY_ROOT = "/vendor/mediapipe";
 
+const RUNTIME_MODES = new Set(["auto", "gpu", "cpu", "apple_gpu"]);
+
+export function normalizeHandRuntimeMode(mode) {
+  const normalized = String(mode || "auto").toLowerCase();
+  return RUNTIME_MODES.has(normalized) ? normalized : "auto";
+}
+
+function delegateForRuntimeMode(mode) {
+  const normalized = normalizeHandRuntimeMode(mode);
+  if (normalized === "cpu") return "CPU";
+  if (normalized === "gpu" || normalized === "apple_gpu") return "GPU";
+  return "AUTO";
+}
+
+function detectWebGL(documentObject) {
+  if (!documentObject?.createElement) return { available: false, renderer: null };
+  const canvas = documentObject.createElement("canvas");
+  for (const contextName of ["webgl2", "webgl", "experimental-webgl"]) {
+    try {
+      const gl = canvas.getContext(contextName, { powerPreference: "high-performance" });
+      if (!gl) continue;
+      const debug = gl.getExtension?.("WEBGL_debug_renderer_info");
+      const renderer = debug
+        ? gl.getParameter?.(debug.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter?.(gl.RENDERER);
+      gl.getExtension?.("WEBGL_lose_context")?.loseContext?.();
+      return { available: true, renderer: renderer || contextName };
+    } catch (_) {
+      // Try the next WebGL context name.
+    }
+  }
+  return { available: false, renderer: null };
+}
+
+export function detectHandRuntimeCapabilities({
+  navigatorObject = globalThis.navigator,
+  documentObject = globalThis.document,
+  webAssembly = globalThis.WebAssembly,
+} = {}) {
+  const platform = String(
+    navigatorObject?.userAgentData?.platform
+      || navigatorObject?.platform
+      || navigatorObject?.userAgent
+      || ""
+  );
+  const isMac = /mac/i.test(platform)
+    && !(navigatorObject?.platform === "MacIntel" && navigatorObject?.maxTouchPoints > 1);
+  const cpuAvailable = typeof webAssembly === "object"
+    && typeof webAssembly?.instantiate === "function";
+  const webgl = detectWebGL(documentObject);
+  // Tasks GPU still needs its WASM runtime; WebGL alone is not sufficient.
+  const gpuAvailable = cpuAvailable && webgl.available;
+  const modes = [];
+  if (cpuAvailable || gpuAvailable) {
+    modes.push({
+      value: "auto",
+      label: "自动选择",
+      detail: gpuAvailable ? "GPU 优先，失败转 CPU" : "CPU",
+    });
+  }
+  if (gpuAvailable) {
+    modes.push(isMac
+      ? { value: "apple_gpu", label: "Apple GPU", detail: "WebGL / Metal" }
+      : { value: "gpu", label: "GPU", detail: "WebGL" });
+  }
+  if (cpuAvailable) {
+    modes.push({ value: "cpu", label: "CPU", detail: "WASM" });
+  }
+  return {
+    isMac,
+    cpuAvailable,
+    gpuAvailable,
+    renderer: webgl.renderer,
+    modes,
+  };
+}
+
 function copyPoints(points) {
   if (!points) return null;
   return points.map(({ x, y, z, visibility, presence }) => ({
@@ -50,11 +127,16 @@ export function normalizeLegacyResult(result) {
 }
 
 export class TasksHandTracker {
-  constructor({ moduleLoader = (url) => import(url), logger = console } = {}) {
+  constructor({
+    moduleLoader = (url) => import(url), logger = console, delegate = "auto"
+  } = {}) {
     this.moduleLoader = moduleLoader;
     this.logger = logger;
+    this.runtimeMode = normalizeHandRuntimeMode(delegate);
+    this.requestedDelegate = delegateForRuntimeMode(this.runtimeMode);
     this.landmarker = null;
     this.delegate = null;
+    this.fallbackReason = null;
     this.lastTimestamp = -1;
   }
 
@@ -69,20 +151,27 @@ export class TasksHandTracker {
       minTrackingConfidence: 0.5
     };
 
-    try {
-      this.landmarker = await HandLandmarker.createFromOptions(vision, {
-        ...commonOptions,
-        baseOptions: { modelAssetPath: TASKS_MODEL_PATH, delegate: "GPU" }
-      });
-      this.delegate = "GPU";
-    } catch (gpuError) {
-      this.logger.warn("[HandTracker] Tasks GPU 初始化失败，回退 CPU:", gpuError);
-      this.landmarker = await HandLandmarker.createFromOptions(vision, {
-        ...commonOptions,
-        baseOptions: { modelAssetPath: TASKS_MODEL_PATH, delegate: "CPU" }
-      });
-      this.delegate = "CPU";
+    const candidates = this.requestedDelegate === "AUTO"
+      ? ["GPU", "CPU"]
+      : [this.requestedDelegate];
+    let lastError = null;
+    for (const delegate of candidates) {
+      try {
+        this.landmarker = await HandLandmarker.createFromOptions(vision, {
+          ...commonOptions,
+          baseOptions: { modelAssetPath: TASKS_MODEL_PATH, delegate }
+        });
+        this.delegate = delegate;
+        return;
+      } catch (error) {
+        lastError = error;
+        if (this.requestedDelegate === "AUTO" && delegate === "GPU") {
+          this.fallbackReason = error;
+          this.logger.warn("[HandTracker] Tasks GPU 初始化失败，回退 CPU:", error);
+        }
+      }
     }
+    throw lastError || new Error(`MediaPipe ${this.requestedDelegate} 初始化失败`);
   }
 
   detect(video, timestamp) {
@@ -169,6 +258,7 @@ export function requestedHandEngine(search = window.location.search) {
 
 export async function initializeHandTracker({
   engine = requestedHandEngine(),
+  delegate = "auto",
   logger = console,
   tasksOptions = {},
   legacyOptions = {}
@@ -179,15 +269,27 @@ export async function initializeHandTracker({
     return { tracker, engine: "legacy", fallbackReason: null };
   }
 
-  const tasksTracker = new TasksHandTracker({ logger, ...tasksOptions });
+  const runtimeMode = normalizeHandRuntimeMode(delegate);
+  const tasksTracker = new TasksHandTracker({ logger, ...tasksOptions, delegate: runtimeMode });
   try {
     await tasksTracker.initialize();
-    return { tracker: tasksTracker, engine: "tasks", fallbackReason: null };
+    return {
+      tracker: tasksTracker,
+      engine: "tasks",
+      runtimeMode,
+      fallbackReason: tasksTracker.fallbackReason,
+    };
   } catch (tasksError) {
     await Promise.resolve(tasksTracker.close()).catch(() => {});
+    if (runtimeMode !== "auto") throw tasksError;
     logger.warn("[HandTracker] Tasks 初始化失败，回退 Legacy:", tasksError);
     const legacyTracker = new LegacyHandTracker({ logger, ...legacyOptions });
     await legacyTracker.initialize();
-    return { tracker: legacyTracker, engine: "legacy", fallbackReason: tasksError };
+    return {
+      tracker: legacyTracker,
+      engine: "legacy",
+      runtimeMode,
+      fallbackReason: tasksError,
+    };
   }
 }

@@ -1171,6 +1171,16 @@ body {
     <div style="margin-top:10px;font-size:10.5px;color:var(--text-3);">
       腕部姿态：回放一致
     </div>
+    <label style="display:block;margin-top:10px;font-size:10.5px;color:var(--text-3);">
+      推理设备
+      <select id="comboRuntimeMode" disabled style="width:100%;box-sizing:border-box;margin-top:5px;
+        background:var(--surface);border:1px solid var(--line);border-radius:6px;color:var(--text);
+        padding:7px 8px;font-family:inherit;">
+        <option value="">检测中…</option>
+      </select>
+    </label>
+    <div id="comboRuntimeStatus" style="margin-top:6px;font-family:var(--mono);font-size:10px;
+      color:var(--text-3);line-height:1.45;">正在检测浏览器运行方式…</div>
     <button class="btn-small" id="comboFollowToggle" disabled
       style="width:100%;margin-top:12px;background:var(--accent);color:#fff;border-color:var(--accent);">
       启动摄像头后可锚定
@@ -1709,11 +1719,13 @@ body {
   import { ComboViewer } from "/static/combo3d.js";
   import { ReplayViewer } from "/static/replay3d.js";
   import { ComboCameraControl } from "/static/combo_camera.js";
+  import { detectHandRuntimeCapabilities } from "/static/hand_tracker_tasks.js";
   window.HandViewer = HandViewer;
   window.ArmViewer = ArmViewer;
   window.ComboViewer = ComboViewer;
   window.ReplayViewer = ReplayViewer;
   window.ComboCameraControl = ComboCameraControl;
+  window.detectHandRuntimeCapabilities = detectHandRuntimeCapabilities;
   window.dispatchEvent(new Event("hand3d-ready"));
   window.dispatchEvent(new Event("arm3d-ready"));
   window.dispatchEvent(new Event("combo3d-ready"));
@@ -2215,16 +2227,33 @@ $("vCopy").onclick = () => {
 
 // ===== 顶栏分段导航:回放 / 实时 真正切换模式 =====
 document.querySelectorAll(".seg-btn").forEach(b => {
-  b.onclick = () => {
-    document.querySelectorAll(".seg-btn").forEach(x => x.classList.remove("active"));
-    b.classList.add("active");
-    switchMode(b.dataset.view);
+  b.onclick = async () => {
+    if (b.dataset.view === S.mode || b.dataset.switching === "1") return;
+    document.querySelectorAll(".seg-btn").forEach(x => { x.disabled = true; x.dataset.switching = "1"; });
+    try {
+      await switchMode(b.dataset.view);
+      document.querySelectorAll(".seg-btn").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+    } finally {
+      document.querySelectorAll(".seg-btn").forEach(x => { x.disabled = false; delete x.dataset.switching; });
+    }
   };
 });
 
-function switchMode(view) {
+async function switchMode(view) {
   if (view === S.mode) return;
   const prev = S.mode;
+  // 先完成安全回位和通道释放，再进入新页面，避免新页面接入时仍占串口/CAN。
+  if (prev === "live") await leaveCombo();
+  if (prev === "hand") await stopHandDebug();
+  if (prev === "arm") await stopArmDebug({ silent: true, home: true });
+  if (prev === "replay" || prev == null) {
+    await stopLive();
+    if (_rv && _rv.destroy) {
+      _rv.destroy();
+      _rv = null;
+    }
+  }
   S.mode = view;
   const live = view === "live", hand = view === "hand", arm = view === "arm";
   const bare = live || hand || arm;          // 非回放页:左右面板和命令胶囊都收起来
@@ -2249,22 +2278,6 @@ function switchMode(view) {
   if (!hand) hideHand3d();
   if (!arm) hideArm3d();
   if (!live) hideCombo3d();
-
-  // ---- 先**拆掉上一个模式**,再装新的 ----
-  // ⚠ 三个页面共用同一批后端会话(_hand / _arm 是 app_web 里的单例)。原来这里只在
-  // 切回「回放」时才清理,于是臂页→手页会把 CAN 会话**留着**:手页显示"离线",
-  // 而臂其实还被我们占着,松灵客户端也接不回去。所以拆解按"从哪来"显式做一遍。
-  if (prev === "live") leaveCombo();          // 合体页:两台都断(silent)
-  if (prev === "hand") stopHandDebug();
-  if (prev === "arm")  stopArmDebug({ silent: true });
-  if (prev === "replay" || prev == null) {
-    stopLive();   // 老 Live 的 ROS 会话
-    // 清理回放页资源（3D模型 + 摄像头）
-    if (_rv && _rv.destroy) {
-      _rv.destroy();
-      _rv = null;
-    }
-  }
 
   if (live) {
     enterCombo();
@@ -2308,9 +2321,7 @@ function switchMode(view) {
     }
   }
   // 回放页什么都不用装 —— 上面那段拆解已经把会话都断了。
-  // 切页断开的语义各页一致:手先复位到张开位再断串口,臂只断 CAN 不改状态
-  // (不弹确认、不回位姿 —— 切页是顺手动作,不该阻塞页面切换,更不该触发一次
-  //  数秒的自主运动。要回位姿在页内点那个按钮)。
+  // 切页已等待手张开、臂回全零并释放串口/CAN；回位失败也由后端强制释放通道。
 }
 
 // ===== 实时模式 =====
@@ -2385,7 +2396,6 @@ async function startHandDebug() {
 async function stopHandDebug() {
   if (_handWs) { try { _handWs.close(); } catch(e){} _handWs = null; }
   _handActive = false;
-  // 后端收到 stop 会先让手复位到张开位再断串口,所以这里的等待是必要的
   $("handStatus").innerHTML = '<span class="dot busy"></span>复位并断开…';
   try { await fetch("/api/hand/stop", { method: "POST" }); } catch(e){}
   $("handToggle").textContent = "接入灵巧手";
@@ -3916,6 +3926,7 @@ async function startArmDebug() {
 // opts.silent=true:切页触发的,不弹确认(切页不该被对话框卡住)
 async function stopArmDebug(opts) {
   const silent = !!(opts && opts.silent);
+  const home = !!(opts && opts.home);
   // 偏离接入位姿较多时提醒一次 —— 断开后臂会以当前姿态交回原控制方(松灵客户端)
   if (!silent && _armActive && _armDrift != null && _armDrift > ARM_DRIFT_WARN) {
     const deg = (_armDrift * R2D).toFixed(1);
@@ -3927,9 +3938,9 @@ async function stopArmDebug(opts) {
   if (_armWs) { try { _armWs.onclose = null; _armWs.close(); } catch(e){} _armWs = null; }
   if (!_armActive) return;
   _armActive = false;
-  // 后端只断 CAN:**不回零、不去使能**,原样交回原控制方
-  $("armStatus").innerHTML = '<span class="dot busy"></span>断开 CAN…';
-  try { await fetch("/api/arm/stop", { method: "POST" }); } catch(e){}
+  $("armStatus").innerHTML = '<span class="dot busy"></span>'
+    + (home ? '回伸直位并断开…' : '断开 CAN…');
+  try { await fetch(`/api/arm/stop?home=${home}`, { method: "POST" }); } catch(e){}
   $("armToggle").textContent = "接入机械臂";
   $("armToggle").classList.remove("active");
   $("armStatus").innerHTML = '<span class="dot"></span>离线';
@@ -4057,6 +4068,7 @@ $("armSpeed").onchange = async () => {
 // ⚠ 三个查看器(hand/arm/combo)各有独立的 WebGL context 和自己的 mesh 副本。
 // 切页只 display:none,不 dispose —— 回来时不用重新下载 9.3MB。
 const CB_TAB_KEY = "comboTab";
+const CB_RUNTIME_KEY = "comboHandRuntime";
 let _cbArmWs = null, _cbHandWs = null;
 let _cbArmOn = false, _cbHandOn = false;      // 本页认为的在线状态
 let _cbDirty = false;
@@ -4068,6 +4080,53 @@ let _cv = null, _cvLoading = null, _cbShow3d = true;
 let _comboCamera = null;
 let _comboCameraArmSession = null;
 let _comboCameraHandSession = false;
+let _comboRuntimeCapabilities = null;
+
+function comboRuntimeAvailableText() {
+  const modes = _comboRuntimeCapabilities?.modes || [];
+  const names = modes.filter(mode => mode.value !== 'auto').map(mode => mode.label);
+  return names.length ? `浏览器支持：${names.join(' · ')}` : '未检测到可用推理设备';
+}
+
+function initComboRuntimeSelector() {
+  const select = $('comboRuntimeMode');
+  const status = $('comboRuntimeStatus');
+  if (!select || select.dataset.ready === '1') return;
+  if (!window.detectHandRuntimeCapabilities) {
+    window.addEventListener('combo3d-ready', initComboRuntimeSelector, { once: true });
+    return;
+  }
+  _comboRuntimeCapabilities = window.detectHandRuntimeCapabilities();
+  const modes = _comboRuntimeCapabilities.modes || [];
+  select.replaceChildren(...modes.map(mode => {
+    const option = document.createElement('option');
+    option.value = mode.value;
+    option.textContent = `${mode.label} (${mode.detail})`;
+    return option;
+  }));
+  let saved = 'auto';
+  try { saved = localStorage.getItem(CB_RUNTIME_KEY) || 'auto'; } catch (_) {}
+  select.value = modes.some(mode => mode.value === saved) ? saved : (modes[0]?.value || '');
+  select.disabled = modes.length === 0;
+  select.dataset.ready = '1';
+  status.textContent = comboRuntimeAvailableText();
+  select.onchange = () => {
+    try { localStorage.setItem(CB_RUNTIME_KEY, select.value); } catch (_) {}
+    status.textContent = comboRuntimeAvailableText();
+  };
+}
+
+function showComboRuntime(runtime) {
+  const status = $('comboRuntimeStatus');
+  if (!status) return;
+  const selected = [...$('comboRuntimeMode').options]
+    .find(option => option.value === runtime.requestedMode)?.textContent
+    || runtime.requestedMode;
+  const actual = runtime.engine === 'legacy'
+    ? 'Legacy / WASM'
+    : `${selected} → ${runtime.delegate}`;
+  status.textContent = `当前运行：${actual}${runtime.fallbackReason ? '（已降级）' : ''}`;
+}
 
 // 同一个 ComboViewer 有滑块、硬件遥测和摄像头三类数据源。摄像头开启时必须独占
 // 3D 写入，否则 /ws/arm、/ws/hand 的实际值会和 MediaPipe 目标交替覆盖同一组关节，
@@ -4247,6 +4306,7 @@ async function ensureCombo3d() {
 function hideCombo3d() { hideEl("combo3dHost"); }
 
 function initComboCamera() {
+  initComboRuntimeSelector();
   if (_comboCamera) return _comboCamera;
   if (!window.ComboCameraControl) {
     window.addEventListener("combo3d-ready", () => initComboCamera(), { once: true });
@@ -4257,10 +4317,12 @@ function initComboCamera() {
     toggleBtn: $("comboCameraToggle"),
     followBtn: $("comboFollowToggle"),
     stateEl: $("comboTrackingState"),
+    runtimeSelect: $("comboRuntimeMode"),
     getConfig: () => ({
       driveHand: $("cbTrackHand")?.checked && _cbHandOn,
       driveArm: $("cbTrackArm")?.checked && _cbArmOn,
       allowRealArmTracking: $("cbAllowRealTracking")?.checked,
+      runtimeMode: $("comboRuntimeMode")?.value || "auto",
     }),
     onBeforeStart: async () => {
       await prepareComboTrackingArm();
@@ -4279,6 +4341,11 @@ function initComboCamera() {
       }
     },
     onStop: () => finishComboTrackingDevices(),
+    onRuntimeReady: (runtime) => showComboRuntime(runtime),
+    onRuntimeStopped: () => {
+      const status = $('comboRuntimeStatus');
+      if (status) status.textContent = comboRuntimeAvailableText();
+    },
   });
   return _comboCamera;
 }
@@ -5111,6 +5178,7 @@ async function cbStartHand() {
 // 偏离接入位姿较多时提醒一次(silent=切页触发的,不弹)。
 async function cbStopArm(opts) {
   const silent = !!(opts && opts.silent);
+  const home = !!(opts && opts.home);
   if (!_cbArmOn) return;
   if (!silent && _cbDrift != null && _cbDrift > ARM_DRIFT_WARN) {
     const deg = (_cbDrift * R2D).toFixed(1);
@@ -5122,8 +5190,8 @@ async function cbStopArm(opts) {
   // 先摘 onclose 再 close —— 不摘会被刷成"连接断开",而这是我们主动断的
   if (_cbArmWs) { try { _cbArmWs.onclose = null; _cbArmWs.close(); } catch (e) {} _cbArmWs = null; }
   _cbArmOn = false;
-  cbDot("cbArmStatus", "busy", "断开 CAN…");
-  try { await fetch("/api/arm/stop", { method: "POST" }); } catch (e) {}
+  cbDot("cbArmStatus", "busy", home ? "回伸直位并断开…" : "断开 CAN…");
+  try { await fetch(`/api/arm/stop?home=${home}`, { method: "POST" }); } catch (e) {}
   $("cbArmToggle").textContent = "接入";
   $("cbArmToggle").classList.remove("active");
   cbDot("cbArmStatus", "", "离线");
@@ -5138,7 +5206,6 @@ async function cbStopArm(opts) {
   cbRefreshFlags();
   cbUpdateBoth();
 }
-// 断手:console 会先复位手到安全张开位再断串口(手能安全张开,臂不行)
 async function cbStopHand() {
   if (!_cbHandOn) return;
   if (_cbHandWs) { try { _cbHandWs.onclose = null; _cbHandWs.close(); } catch (e) {} _cbHandWs = null; }
@@ -5951,12 +6018,16 @@ async function cbSyncFromBackend() {
   cbRefreshFlags();
   cbUpdateBoth();
 }
-// 离开合体页:两台都断。和调试页切页同语义 —— 走 silent,不弹确认
-// (切 tab 是顺手动作,不该被对话框卡住,更不该触发一次数秒的自主运动)。
+// 离开合体页:先停摄像头投递，再统一执行手张开、臂回零和通道释放。
 async function leaveCombo() {
   hideCombo3d();
+  if (_comboCamera?.active || _comboCamera?.mimic?.active) {
+    await _comboCamera.stop({ returnDevices: false });
+  }
+  _comboCameraArmSession = null;
+  _comboCameraHandSession = false;
   await cbStopHand();
-  await cbStopArm({ silent: true });
+  await cbStopArm({ silent: true, home: true });
 }
 
 const JOG_STEP = { arm: 0.05, hand: 0.10 };   // 点动步长(rad)
@@ -6046,6 +6117,15 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") closeUpload();
   if (e.key === " " && e.target === document.body) { e.preventDefault(); $("btnRgbd").click(); }
   if (e.key === "Enter" && e.ctrlKey) $("cmdGo").click();
+});
+
+let _hardwareReleaseBeaconSent = false;
+window.addEventListener("pagehide", () => {
+  if (_hardwareReleaseBeaconSent) return;
+  if (!(_handActive || _cbHandOn || _armActive || _cbArmOn)) return;
+  _hardwareReleaseBeaconSent = true;
+  if (navigator.sendBeacon?.("/api/hardware/release")) return;
+  fetch("/api/hardware/release", { method: "POST", keepalive: true }).catch(() => {});
 });
 </script>
 

@@ -6,6 +6,7 @@ const source = await readFile(sourceUrl, "utf8");
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const {
   TasksHandTracker,
+  detectHandRuntimeCapabilities,
   initializeHandTracker,
   normalizeLegacyResult,
   normalizeTasksResult,
@@ -56,10 +57,66 @@ const tasksTracker = new TasksHandTracker({
 });
 await tasksTracker.initialize();
 assert.equal(tasksTracker.delegate, "CPU");
+assert.match(tasksTracker.fallbackReason.message, /no webgl/);
 assert.deepEqual(createOptions.map((options) => options.baseOptions.delegate), ["GPU", "CPU"]);
 assert.equal(tasksTracker.detect({}, 10).worldLandmarks.length, 21);
 assert.equal(warnings.length, 1);
 tasksTracker.close();
+
+const cpuCreateOptions = [];
+const cpuTracker = new TasksHandTracker({
+  delegate: "cpu",
+  moduleLoader: async () => ({
+    FilesetResolver: fakeModule.FilesetResolver,
+    HandLandmarker: {
+      createFromOptions: async (_vision, options) => {
+        cpuCreateOptions.push(options);
+        return { detectForVideo() {}, close() {} };
+      }
+    }
+  })
+});
+await cpuTracker.initialize();
+assert.equal(cpuTracker.delegate, "CPU");
+assert.deepEqual(cpuCreateOptions.map(o => o.baseOptions.delegate), ["CPU"]);
+cpuTracker.close();
+
+const strictGpuOptions = [];
+const strictGpu = new TasksHandTracker({
+  delegate: "gpu",
+  moduleLoader: async () => ({
+    FilesetResolver: fakeModule.FilesetResolver,
+    HandLandmarker: {
+      createFromOptions: async (_vision, options) => {
+        strictGpuOptions.push(options);
+        throw new Error("gpu unavailable");
+      }
+    }
+  })
+});
+await assert.rejects(() => strictGpu.initialize(), /gpu unavailable/);
+assert.deepEqual(strictGpuOptions.map(o => o.baseOptions.delegate), ["GPU"]);
+
+const fakeGl = {
+  RENDERER: 0x1F01,
+  getExtension: () => null,
+  getParameter: () => "Apple M2",
+};
+const macCapabilities = detectHandRuntimeCapabilities({
+  navigatorObject: { platform: "MacIntel", maxTouchPoints: 0 },
+  documentObject: { createElement: () => ({ getContext: name => name === "webgl2" ? fakeGl : null }) },
+  webAssembly: { instantiate() {} },
+});
+assert.equal(macCapabilities.isMac, true);
+assert.equal(macCapabilities.renderer, "Apple M2");
+assert.deepEqual(macCapabilities.modes.map(mode => mode.value), ["auto", "apple_gpu", "cpu"]);
+
+const cpuOnlyCapabilities = detectHandRuntimeCapabilities({
+  navigatorObject: { platform: "Linux x86_64" },
+  documentObject: { createElement: () => ({ getContext: () => null }) },
+  webAssembly: { instantiate() {} },
+});
+assert.deepEqual(cpuOnlyCapabilities.modes.map(mode => mode.value), ["auto", "cpu"]);
 
 class FakeHands {
   setOptions() {}
@@ -76,5 +133,12 @@ const fallback = await initializeHandTracker({
 assert.equal(fallback.engine, "legacy");
 assert.match(fallback.fallbackReason.message, /missing tasks/);
 fallback.tracker.close();
+
+await assert.rejects(() => initializeHandTracker({
+  engine: "tasks",
+  delegate: "gpu",
+  tasksOptions: { moduleLoader: async () => { throw new Error("strict gpu missing"); } },
+  logger: { warn: (...args) => warnings.push(args) }
+}), /strict gpu missing/);
 
 console.log("hand_tracker_tasks tests passed");
