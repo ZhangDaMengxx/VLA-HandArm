@@ -56,7 +56,7 @@ ROS/MuJoCo 控制链可运行，**不能把这两个值当作机械臂额定力�
 首次测试应清空工作区、准备急停，并使用低速度。
 
 ```python
-from sim.nero_arm import NeroArm
+from src.nero_arm import NeroArm
 
 arm = NeroArm(mock=False, channel="can0", firmware="auto")
 arm.connect()
@@ -118,6 +118,11 @@ latest-target、退出 CPV，再回到伸直位。Mock 会同步更新 Three.js�
 机械臂掉线、失能、冻结或 15 秒未到位时，不继续等待，仍必须关闭 CAN，避免后台占用通道。
 自动回零仍是关节空间插值，工作区沿途必须无障碍。
 
+顶层页面切换会等待上述流程结束。关闭或刷新浏览器时由 `pagehide/sendBeacon` 尽力调用
+`POST /api/hardware/release`；浏览器被强制结束、主机断电或断网时无法保证请求送达。
+因此当前机制不能替代物理急停，也不能作为无人值守运行时唯一的通道释放保障；严格保障
+仍需服务端 heartbeat/lease watchdog。
+
 ---
 
 ### 1.2 灵巧手：因时 RH56DFX
@@ -160,7 +165,7 @@ latest-target、退出 CPV，再回到伸直位。Mock 会同步更新 Three.js�
 #### 直接调用
 
 ```python
-from sim.inspire_hand import InspireHand, InspireHandConfig
+from src.inspire_hand import InspireHand, InspireHandConfig
 
 cfg = InspireHandConfig(port="/dev/ttyUSB0", mock=False)
 hand = InspireHand(cfg)

@@ -129,6 +129,9 @@ python3 -m pytest src/test/test_stdin_lines.py
 切换顶层功能页时必须先等待旧页完成释放：手张开后断串口；臂在线、已使能且未冻结时回
 七关节全零位，再断 CAN。回位失败或超时也必须释放通道。浏览器关闭/刷新走
 `pagehide -> sendBeacon('/api/hardware/release')`，不要改成无法保证送达的普通异步请求。
+`sendBeacon` 仍只是浏览器尽力通知：进程强杀、主机断电和断网可能使请求无法到达后端。
+需要严格通道所有权时，应在服务端增加按页面会话续租的 heartbeat/lease watchdog，并处理
+多标签页所有权；该能力完成前，不得把 `pagehide` 当作绝对释放保证。
 
 ### 修改合体实时跟随
 
