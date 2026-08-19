@@ -40,12 +40,14 @@ class LatestTargetMailbox:
         rate_hz: float = 30.0,
         max_age_ms: float = 250.0,
         ack_timeout_ms: float = 100.0,
+        angle_count: int = 6,
         reporter: Callable[[dict], object] | None = None,
     ) -> None:
         self._sender = sender
         self._interval = 1.0 / max(1.0, rate_hz)
         self._max_age = max_age_ms / 1000.0
         self._ack_timeout = ack_timeout_ms / 1000.0
+        self._angle_count = max(1, int(angle_count))
         self._reporter = reporter
         self._owner: str | None = None
         self._pending: HandTarget | None = None
@@ -79,7 +81,7 @@ class LatestTargetMailbox:
             return SubmitResult(False, reason="closed")
         if self._owner not in (None, owner):
             return SubmitResult(False, reason="owner_busy")
-        if len(angles) != 6:
+        if len(angles) != self._angle_count:
             return SubmitResult(False, reason="invalid_angles")
         try:
             normalized = tuple(float(value) for value in angles)

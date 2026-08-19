@@ -55,9 +55,14 @@ Object.assign(controller, {
   shouldDriveHardware: () => true
 });
 const points = Array.from({ length: 21 }, (_, i) => ({ x: i, y: i + 1, z: i + 2 }));
-const mimicPayload = controller._makePayload(points);
+const imagePoints = points.map((point) => ({ ...point }));
+const mimicPayload = controller._makePayload(
+  points, imagePoints, { label: "Right", score: 0.9 }
+);
 assert.equal(mimicPayload.frame_id, 1);
 assert.equal(mimicPayload.drive_hardware, true);
 assert.equal(mimicPayload.landmarks.length, 21);
+assert.equal(mimicPayload.image_landmarks.length, 21);
+assert.equal(mimicPayload.handedness.label, "Right");
 
 console.log("hand_mimic transport tests passed");

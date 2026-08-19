@@ -11,8 +11,7 @@ arm_console.py 要能在**没有 ROS** 的环境里跑(和 hand_console.py 同�
 接口刻意和 InspireHand 对齐(read_angles / connect / disconnect),这样
 app_web 的会话管理和前端协议能两边共用一套。
 
-mock=True 时不碰 CAN:在目标位附近做小幅正弦摆动,让"活着"和"收到指令"在
-3D 和数值里都看得见。真机需要 can0 + pyAgxArm。
+mock=True 时不碰 CAN，关节角保持在最后下发目标；真机需要 can0 + pyAgxArm。
 
 ⚠ 安全:臂是 7 自由度工业臂,伤害量级和手不同。默认 mock=True;真机运动要上层
 显式开启。move_j 前一律按 NERO_ARM_LIMITS 夹取。
@@ -52,6 +51,13 @@ NERO_ARM_LIMITS = [
     (math.radians(-42.0), math.radians(55.0)),     # joint6  不对称
     (math.radians(-90.0), math.radians(90.0)),     # joint7
 ]
+
+# 标称伸直位：URDF 和 SDK 均以七关节全 0 为零位。
+NERO_HOME_POSE = [0.0] * 7
+
+# 跟随准备位：肘部保持弯曲，并远离伸直位和关节限位。
+# 该姿态在当前 URDF 下的 Jacobian 条件数约 12.6，锚点附近正负 50mm 三轴平移均可解。
+NERO_TRACKING_READY_POSE = [0.0, -0.7, 0.002, 1.298, 0.002, -0.008, -0.591]
 
 # 关节**额定**最大速度(deg/s),**手册**给的(2026-08-03)。
 # ⚠ 注意 joint4:手册写 225,但**臂里实际设的是 180**(见 NERO_JOINT_MAX_SPD_DEG)。
@@ -120,7 +126,7 @@ def _prepare_pyagx_imports() -> None:
 
 
 class NeroArm:
-    """NERO 臂封装:mock=正弦摆动;真机=pyAgxArm CAN。接口对齐 InspireHand。"""
+    """NERO 臂封装:mock=静态目标;真机=pyAgxArm CAN。接口对齐 InspireHand。"""
 
     # 接入时等第一帧关节角的上限。臂按 **222Hz** 推送(candump 实测,不是协议标称的
     # 25Hz —— 那个数错了一个量级),正常几毫秒就到;
@@ -143,11 +149,9 @@ class NeroArm:
         # 固件 ≥1.12 上电自动推送,我们不需要开(见 _enable_can_push)
         self.can_push_auto = False
         self.robot = None
-        self._t = 0.0
-        # mock 起始"就绪位"(非零)—— 这样点『归零』能看到臂真的回到 0
-        self._target = [0.3, -0.5, 0.2, -0.8, 0.1, 0.4, 0.0]
-        self._frozen = False          # mock 急停:冻结摆动,停在当前位
-        self._frozen_pose = None
+        # Mock 从远离奇异位形和关节限位的弯肘姿态开始。
+        self._target = list(NERO_TRACKING_READY_POSE)
+        self._frozen = False
         # 100 只是"还没设过"时的占位。speed_percent 属性在 _speed_confirmed 之前
         # 返回 None 而不是这个值 —— 理由见该属性的注释(速度只写,读不回来)。
         self._speed = 100
@@ -358,12 +362,7 @@ class NeroArm:
         """7 关节角(rad)。读失败回退上次目标,**不抛** —— 上层在定时循环里调它,
         偶发丢帧不该把进程搞挂(和 InspireHand.read_angles 同约定)。"""
         if self.mock:
-            if self._frozen:
-                return list(self._frozen_pose)     # 急停:定住不动
-            self._t += 1.0 / 30.0
-            freqs = [0.30, 0.40, 0.35, 0.50, 0.45, 0.60, 0.55]
-            return [self._target[i] + 0.12 * math.sin(freqs[i] * self._t + i)
-                    for i in range(7)]
+            return list(self._target)
         try:
             ret = self.robot.get_joint_angles()
         except Exception as e:                     # noqa: BLE001
@@ -579,10 +578,8 @@ class NeroArm:
 
     def estop(self) -> None:
         if self.mock:
-            # 定格当前摆动位置,停住 —— 给可见反馈(真机是 SDK 硬急停)。
-            # mock 不能真的"下落",但**必须**同样置 _enabled=False,否则 mock 下
+            # Mock 本来就保持目标位，但仍必须置 _enabled=False，否则 mock 下
             # 走不到"复位要重新使能"这条路径,真机上才第一次撞见。
-            self._frozen_pose = self.read_angles()
             self._frozen = True
             self._enabled = False
         elif self.robot is not None:

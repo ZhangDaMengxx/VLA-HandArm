@@ -104,6 +104,22 @@ class LatestTargetMailboxTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent, [])
         self.assertEqual(reports[0]["status"], "stale")
 
+    async def test_configurable_angle_count_supports_arm_targets(self) -> None:
+        sent = []
+
+        async def sender(target):
+            sent.append(target.angles)
+            return {"ok": True}
+
+        self.mailbox = LatestTargetMailbox(sender, rate_hz=1000, angle_count=7)
+        rejected = self.mailbox.submit("arm", 1, [0.0] * 6)
+        accepted = self.mailbox.submit("arm", 2, [0.1] * 7)
+        self.assertFalse(rejected.accepted)
+        self.assertEqual(rejected.reason, "invalid_angles")
+        self.assertTrue(accepted.accepted)
+        await self._wait_until(lambda: len(sent) == 1)
+        self.assertEqual(len(sent[0]), 7)
+
     async def test_ack_timeout_does_not_block_newest_target(self) -> None:
         sent = []
         reports = []

@@ -29,11 +29,72 @@ _URDF_VIEW = (WEB / "urdf_view.js").read_text("utf-8")
 _COMBO3D = (WEB / "combo3d.js").read_text("utf-8")
 _HAND3D = (WEB / "hand3d.js").read_text("utf-8")
 _APP = (SIM / "app_web.py").read_text("utf-8")
+_COMBO_CAMERA = (WEB / "combo_camera.js").read_text("utf-8")
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
 HAND_DRIVEN = ["right_thumb_1_joint", "right_thumb_2_joint",
                "right_index_1_joint", "right_middle_1_joint",
                "right_ring_1_joint", "right_little_1_joint"]
+
+
+def test_video_tracking_has_one_combo_entrypoint():
+    assert 'data-tab="camera"' in _INDEX and 'id="cp_camera"' in _INDEX
+    assert 'id="comboFollowToggle"' in _INDEX
+    assert '腕部姿态：回放一致' in _INDEX
+    assert 'id="cbWristMode"' not in _INDEX
+    assert 'data-mode="local_right"' not in _INDEX
+    assert 'id="hp_camera"' not in _INDEX and "HandCameraControl" not in _INDEX
+    assert "tracking_control" in _COMBO_CAMERA
+    assert "arm_joint_targets" in _INDEX and "hand_joint_targets" in _INDEX
+
+
+def test_combo_camera_exclusively_owns_threejs_while_active():
+    assert "function comboCameraOwns3d()" in _INDEX
+    assert "!comboCameraOwns3d()) _cv.setArm(rad)" in _INDEX
+    assert "!comboCameraOwns3d()) _cv.setHand(rad)" in _INDEX
+    assert "onStop: () => finishComboTrackingDevices()" in _INDEX
+
+
+def test_combo_camera_homes_tracked_hand_on_stop():
+    assert "function prepareComboTrackingHand()" in _INDEX
+    assert "function finishComboTrackingHand()" in _INDEX
+    assert "body: JSON.stringify({ cmd: 'home' })" in _INDEX
+    assert "viewer.setHand([0, 0, 0, 0, 0, 0])" in _INDEX
+    assert "restoreComboTelemetryPose({ arm: !controlledArm, hand: !controlledHand })" in _INDEX
+    assert "_hand_target_mailbox.in_flight_count" in _APP
+
+
+def test_combo_live_hand_speed_defaults_to_1000_and_is_applied_on_connect():
+    start = _INDEX.index('id="cbHandSpeed"')
+    assert 'value="1000"' in _INDEX[start:start + 160]
+    assert 'body: JSON.stringify({ cmd: "speed", value: speed })' in _INDEX
+    assert 'const speed = +$("cbHandSpeed").value || 1000' in _INDEX
+    assert "onBeforeStart: async () =>" in _INDEX
+    assert "await this.onBeforeStart?.()" in _COMBO_CAMERA
+
+
+def test_combo_tracking_backend_has_anchor_and_real_arm_gate():
+    assert "LiveWristMapper" in _APP
+    assert 'tracking_control = data.get("tracking_control")' in _APP
+    assert 'tracking_control == "anchor"' in _APP
+    assert '"tracking_control_applied": tracking_control_applied' in _APP
+    assert "allow_real_arm_tracking" in _APP
+    assert "arm.mock or allow_real_arm" in _APP
+    assert "track_orientation=True" in _APP
+    assert "OneEuroVectorFilter" in _APP
+    assert "OneEuroRotationFilter" in _APP
+    assert "wrist_orientation_filter" in _APP
+    assert "mapper.set_orientation_limits_deg" in _APP
+    assert '"orientation_delta_deg"' in _APP
+    assert 'data.get("orientation_mode"' not in _APP
+    assert "local_right" not in _APP
+    assert "orientation_mode: this.orientationMode" not in _COMBO_CAMERA
+    assert '"wrist_position_filter": last_position_filter' in _APP
+    assert "RetargetingConfig.set_default_urdf_dir(str(config_path.parent))" in _APP
+    assert "'/api/arm/camera_pose'" in _INDEX
+    assert "'tracking_ready'" in _INDEX and "'home'" in _INDEX
+    assert "prepareComboTrackingArm" in _INDEX
+    assert '"home_pose": list(NERO_HOME_POSE)' in _APP
 
 
 def _gltf_json(p: Path) -> dict:

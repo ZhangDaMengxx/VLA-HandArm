@@ -11,9 +11,11 @@ const HAND_CONNECTIONS = [
 ];
 
 export class HandMimicController {
-  constructor(container, onJointAnglesCallback = null) {
+  constructor(container, onJointAnglesCallback = null, options = {}) {
     this.container = container;
     this.onJointAngles = onJointAnglesCallback;
+    this.onServerResponse = options.onServerResponse || null;
+    this.getTrackingPayload = options.getTrackingPayload || (() => ({}));
     this.tracker = null;
     this.engine = null;
     this.fallbackReason = null;
@@ -222,7 +224,7 @@ export class HandMimicController {
   }
 
   _onTrackerResult(result) {
-    const { landmarks, worldLandmarks } = result;
+    const { landmarks, worldLandmarks, handedness } = result;
 
     if (landmarks?.length === 21) {
       this._drawConnectors(landmarks);
@@ -231,8 +233,10 @@ export class HandMimicController {
     this._drawFps();
 
     if (worldLandmarks) {
-      const payload = this._makePayload(worldLandmarks);
+      const payload = this._makePayload(worldLandmarks, landmarks, handedness);
       if (payload) this._queuePayload(payload);
+    } else {
+      this._queuePayload(this._makeMissingPayload());
     }
   }
 
@@ -243,7 +247,7 @@ export class HandMimicController {
     this.canvasCtx.drawImage(this.videoElement, 0, 0, width, height);
   }
 
-  _makePayload(landmarks) {
+  _makePayload(landmarks, imageLandmarks = null, handedness = null) {
     if (landmarks.length !== 21) {
       console.warn(`[HandMimic] 忽略非 21 点结果: ${landmarks.length}`);
       return null;
@@ -258,8 +262,26 @@ export class HandMimicController {
     return {
       format: "mediapipe",
       landmarks: points,
+      image_landmarks: imageLandmarks?.length === 21
+        ? imageLandmarks.map(({ x, y, z }) => ({ x, y, z })) : [],
+      handedness: handedness || null,
       drive_hardware: Boolean(this.shouldDriveHardware()),
-      frame_id: frameId
+      frame_id: frameId,
+      ...(this.getTrackingPayload?.() || {})
+    };
+  }
+
+  _makeMissingPayload() {
+    const frameId = ++this.frameSequence;
+    this.frameTimings.set(frameId, performance.now());
+    return {
+      format: "mediapipe",
+      landmarks: [],
+      image_landmarks: [],
+      hand_present: false,
+      drive_hardware: Boolean(this.shouldDriveHardware()),
+      frame_id: frameId,
+      ...(this.getTrackingPayload?.() || {})
     };
   }
 
@@ -451,6 +473,7 @@ export class HandMimicController {
     } else {
       this._setStatus(`${this._metricsStatus()} | ${result?.msg || "未识别"}`);
     }
+    this.onServerResponse?.(result);
   }
 
   _readyStatus() {

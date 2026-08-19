@@ -13,11 +13,11 @@
 
 | 文档 | 内容 | 当前基准 |
 |------|------|----------|
-| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-18 |
-| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-18 |
-| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-18 |
-| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-18 |
-| [TODO.md](TODO.md) | 可执行待办 | 2026-08-18 |
+| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-19 |
+| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-19 |
+| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-19 |
+| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-19 |
+| [TODO.md](TODO.md) | 可执行待办 | 2026-08-19 |
 | [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
 | [GIT_GUIDE.md](GIT_GUIDE.md) | 三个仓库的 Git 约定 | 2026-08-14 |
 | [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
@@ -105,8 +105,9 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
-3. 摄像头真机链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
+3. 摄像头真手链已有延迟样本，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器、GPU/CPU 和同幅度速度对照仍未闭环。
+4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；单目位置不是绝对米制真值，真实机械臂尚未验证。
 
 ---
 
-**最后全面审查**：2026-08-18
+**最后全面审查**：2026-08-19

@@ -1,7 +1,7 @@
 # 项目状态
 
-**核对日期**：2026-08-18
-**阶段**：源码与第三方资产归整、真机安全对齐、MCP 拆仓后的文档治理
+**核对日期**：2026-08-19
+**阶段**：实时人手合体跟随 Mock 闭环、真机安全验证待开展
 
 ## 当前结论
 
@@ -10,6 +10,7 @@
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
 | Web 手部追踪 | 真机主链已通 | Tasks GPU/CPU、Legacy 降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
+| 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿相对映射、NERO IK、7+6 目标和 Three.js 已闭环；真臂未验证 |
 | VLA 数据管线 | 可开发 | 规范层、映射和回放工具已存在，训练闭环未完成 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
 | ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
@@ -33,6 +34,16 @@
 内嵌实验快照或 Web 工作台，不应出现在部署能力清单中。
 
 ## 最近完成
+
+### 2026-08-19
+
+- 将实时视频跟随收敛到“实时 Live · 合体”页，移除灵巧手页重复摄像头入口
+- 同时传输 world/image landmarks，分别用于手型/手掌姿态与单目腕部相对位置
+- 增加位置和姿态联合锚定；机器人锚点取当前关节 FK，避免锚定时跳到预设位姿；腕部姿态经滤波和限幅后驱动末端有限旋转
+- 单一按钮按状态完成锚定、冻结和重新锚定，Mock/真机共用 WebSocket、IK 与 7+6 目标协议
+- 增加机械臂 CPV latest-target 路径及真臂显式授权、使能、冻结和在线安全门
+- 在腕部相对位置和姿态进入 IK 前分别加入 One Euro 滤波；200ms 采样间隔和跟随生命周期边界会重置滤波状态
+- 完成 Mock WebSocket 全链路及 Three.js 桌面/移动端验收，真实机械臂尚未运动验证
 
 ### 2026-08-18
 
@@ -83,6 +94,8 @@
 4. 真机运动、急停、复位、限位和 MCP 断线行为尚未形成完整验收记录。
 5. One Euro 滤波自动测试和 mock 链路已通过，0.0005rad 门限的张手末端与静止姿态仍需真机复测。
 6. 两个保留轨迹 NPZ 使用旧 12 关节名，当前技能后端要求 6 个项目驱动关节名，轨迹安全闸测试不能通过。
+7. 合体腕部位置当前是 `monocular_scale` 单目相对估计，姿态也受单目关键点噪声和限幅影响；真手+Mock 臂、
+   真臂+Mock 手和双真机低速矩阵尚未验收。
 
 ## 验证记录
 
@@ -91,8 +104,8 @@
 ```bash
 node src/test/web/hand_tracker_tasks.test.mjs
 node src/test/web/hand_mimic_transport.test.mjs
-/usr/bin/python3 -m pytest src/test/test_combo_page.py -q
-/usr/bin/python3 -m pytest src/test/test_hand_target_mailbox.py src/test/test_hand_target_filter.py
+node src/test/web/combo_camera.test.mjs
+/usr/bin/python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_wrist_tracking.py -q
 
 cd /home/zhang123/ros2_ws/robot-mcp-server
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mcp_server/tests -v
@@ -122,5 +135,6 @@ python3 src/skills/hand_pose.py --verify
 3. 修复迁移验收脚本的路径及退出码。
 4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
+6. 按真手+Mock 臂、真臂+Mock 手、双真机低速顺序验收合体跟随，再接入 RGB-D 米制位置。
 
 详细行动项见 [TODO.md](TODO.md)。

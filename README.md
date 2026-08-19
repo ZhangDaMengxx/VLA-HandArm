@@ -46,9 +46,12 @@ python src/app_web.py
 
 主要能力：
 
-- 机械臂、灵巧手和合体 3D 状态与调试
+- 机械臂、灵巧手和合体 3D 状态与调试；实时视频跟随只在“实时 Live · 合体”页提供
 - 浏览器 MediaPipe Tasks Hand Landmarker；GPU 失败转 CPU，Tasks 失败转 Legacy
-- `/ws/hand/mimic` 低延迟重定向和 latest-target 真机控制；最多一个待发目标和一个 ACK 在途
+- `/ws/hand/mimic` 同时输出 7 轴机械臂与 6 轴灵巧手目标；Mock 和真机共用协议与 IK 链
+- 单一按钮完成当前手腕位置/姿态的联合锚定、冻结和重新锚定；首个有效手帧即可点击，随后固定采集 12 帧并做离群点剔除
+- 锚点使用机械臂当前关节 FK，页面显示采样进度与位置/姿态抖动，避免启动跳变或无限等待稳定
+- latest-target 真机控制最多一个待发目标和一个 ACK 在途；真臂实时跟随默认不授权
 - retarget 后的真手目标使用六关节 One Euro 自适应滤波和 0.0005rad 分辨率门限；3D 预览不滤波
 - HTTP 为断线时的 retarget/3D 预览降级路径，WebSocket 恢复前不驱动真手
 - 联合动作录制和回放（这是 Web 工作台能力，不等于现行 MCP combo 工具）
@@ -58,6 +61,12 @@ WebSocket 返回后逐帧追加硬件 HTTP 请求；后端以 30Hz 投递最新�
 `hand_console` 的真实 RS485 ACK。滤波状态按 WebSocket 隔离，超过 200ms 无有效目标、
 硬件离线或连接断开时重置。实现与验收说明见
 [src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md)。
+
+合体跟随同时传输 MediaPipe world landmarks 和 image landmarks：前者用于手型重定向与
+手掌姿态，后者通过手掌表观尺度估计腕部相对位置。该单目位置明确标记为
+`monocular_scale`，只适合锚定后的有限范围相对控制，不是绝对米制真值。Mock 模式已完成
+WebSocket、IK 和 Three.js 臂手联动验收；真实机械臂尚未验证。丢手、左右手变化、连续
+IK 失败、急停/冻结、未使能或断线都会停止机械臂目标投递并冻结跟随。
 
 ## VLA 数据管线
 
@@ -99,4 +108,4 @@ deploy/                完整 Web/ROS2 真机主机部署
 
 ---
 
-**最后核对**：2026-08-18
+**最后核对**：2026-08-19

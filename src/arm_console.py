@@ -12,6 +12,7 @@
 
 stdin 指令(每行一个 JSON):
   {"cmd":"angles","rad":[7]}    move_j 到目标角
+  {"cmd":"goto_tracking_ready"}   move_j 到实时跟随准备位
   {"cmd":"speed","value":30}    速度百分比 1-100
   {"cmd":"enable"} / {"cmd":"disable"}
   {"cmd":"home"}                回零位(全 0)
@@ -36,10 +37,11 @@ from pathlib import Path
 SIM = Path(__file__).resolve().parent
 if str(SIM) not in sys.path:
     sys.path.insert(0, str(SIM))
-from nero_arm import NeroArm, NERO_ARM_LIMITS, ARM_JOINTS            # noqa: E402
+from nero_arm import (NeroArm, NERO_ARM_LIMITS, NERO_HOME_POSE,
+                      NERO_TRACKING_READY_POSE, ARM_JOINTS)             # noqa: E402
 from stdin_lines import StdinLines                                   # noqa: E402
 
-HOME_RAD = [0.0] * 7          # 零位:URDF 和 SDK 都以全 0 为标称姿态
+HOME_RAD = list(NERO_HOME_POSE)
 _player = None                # ComboPlayer 实例,主循环 tick 它
 
 
@@ -58,7 +60,8 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
     接入时臂未使能 → 初始速度没能设,挂在这里,等 enable 成功后补发。
     """
     c = cmd.get("cmd")
-    moving = c in ("angles", "home", "goto_connect_pose", "combo_play")
+    moving = c in ("angles", "home", "goto_connect_pose", "goto_tracking_ready", "combo_play",
+                   "tracking_begin", "tracking_angles")
     if moving and require_enable and not arm.enabled:
         return {"type": "error", "cmd": c,
                 "msg": "臂未使能,运动指令被拒。先发 {\"cmd\":\"enable\"}"}
@@ -83,6 +86,12 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
         if arm.connect_pose is None:
             return {"type": "error", "cmd": c, "msg": "没有记录接入位姿"}
         ok = arm.move_j(list(arm.connect_pose))
+        return {"type": "ack", "cmd": c, "ok": ok,
+                "target": [round(v, 4) for v in arm.target]}
+    if c == "goto_tracking_ready":
+        # 摄像头真机跟随前的安全准备位。move_j 仍是关节空间插值，调用方必须
+        # 先确认沿途无障碍，并等待实际关节到位后再开始锚定。
+        ok = arm.move_j(list(NERO_TRACKING_READY_POSE))
         return {"type": "ack", "cmd": c, "ok": ok,
                 "target": [round(v, 4) for v in arm.target]}
     if c == "speed":
@@ -112,6 +121,29 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
         return {"type": "ack", "cmd": c, "ok": True, "frozen": arm.frozen,
                 "enabled": arm.enabled,
                 "note": "已退出阻尼并重发使能(急停后 0x471 必须重发)"}
+
+    # ---- 实时腕部跟随:latest-target CPV 位置伺服 ----
+    if c == "tracking_begin":
+        ok = arm.cpv_begin()
+        return {"type": "ack", "cmd": c, "ok": ok,
+                "msg": None if ok else arm.last_error}
+    if c == "tracking_angles":
+        rad = cmd.get("rad") or []
+        if len(rad) != 7:
+            return {"type": "error", "cmd": c,
+                    "msg": f"tracking_angles 需要 7 个值,收到 {len(rad)}"}
+        if not arm.cpv_active:
+            return {"type": "error", "cmd": c,
+                    "msg": "tracking_angles 前必须成功进入 tracking_begin/CPV"}
+        ok = arm.move_cpv_pos([float(x) for x in rad])
+        return {"type": "ack", "cmd": c, "ok": ok,
+                "target": [round(v, 4) for v in arm.target],
+                "tracking_token": cmd.get("tracking_token"),
+                "frame_id": cmd.get("frame_id"),
+                "msg": None if ok else arm.last_error}
+    if c == "tracking_end":
+        arm.cpv_end()
+        return {"type": "ack", "cmd": c, "ok": True}
 
     # ---- 联合回放的臂侧:CPV 逐关节位置伺服 ----
     # ⚠ 为什么在 console 里跑而不在 web 层:CPV 要 `arm.move_cpv_pos()`,

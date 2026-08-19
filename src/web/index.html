@@ -533,7 +533,16 @@ body {
   .center { left: 50%; }
   .bottom-bar { left: 50%; }
   .toast { left: 50%; }
-  .right-panel { display: none; }
+  /* Page-mode JS sets inline display:block. Important keeps telemetry from
+     covering the primary control panel on narrow screens. */
+  .right-panel { display: none !important; }
+}
+@media (max-width: 600px) {
+  .top-nav { padding: 0 10px; justify-content: center; }
+  .brand, .nav-right { display: none; }
+  .seg-nav { width: 100%; justify-content: space-between; overflow-x: auto;
+    border-radius: 8px; }
+  .seg-btn { flex: 0 0 auto; padding: 6px 10px; font-size: 11px; }
 }
 </style>
 </head>
@@ -663,8 +672,6 @@ body {
     aria-controls="hp_sf"><span class="ic">◐</span><span class="lb">速度力控</span></button>
   <button class="tab-btn" role="tab" data-tab="preset" aria-selected="false"
     aria-controls="hp_preset"><span class="ic">☰</span><span class="lb">预设</span></button>
-  <button class="tab-btn" role="tab" data-tab="camera" aria-selected="false"
-    aria-controls="hp_camera"><span class="ic">📷</span><span class="lb">摄像头</span></button>
   <button class="tab-btn" role="tab" data-tab="rec"    aria-selected="false"
     aria-controls="hp_rec"><span class="ic">⏺</span><span class="lb">录制</span>
     <span class="badge"></span></button>
@@ -767,25 +774,6 @@ body {
     <div class="jgroup" style="margin-top:10px;line-height:1.5;">
       厂商 DefaultAction.txt 的快照。名字是<b>按索引号猜的</b>,实机跑一遍才能对准。
     </div>
-  </div>
-  </section>
-
-  <!-- ── 摄像头实时控制 ── -->
-  <section class="tab-pane" id="hp_camera" role="tabpanel" aria-labelledby="摄像头">
-  <div class="card">
-    <div class="card-head"><span>实时摄像头手势控制</span>
-      <button class="btn-inline" id="handCameraToggle">启动摄像头</button>
-    </div>
-    <div class="jgroup" style="margin-top:8px;line-height:1.5;">
-      使用 MediaPipe Tasks Hand Landmarker 实时检测手部姿态，通过 retargeting 映射到灵巧手关节。
-      <br><b>需要 HTTPS</b> 才能访问摄像头（浏览器安全策略）。
-      <br><br>
-      <b>工作模式</b>：
-      <br>• 未接入：仅 3D 预览（无硬件控制）
-      <br>• 已接入：<b>实时木偶跟随</b>（硬件同步）
-    </div>
-    <!-- 摄像头容器（由 hand_mimic.js 动态创建内容） -->
-    <div id="handCameraContainer" style="margin-top:12px;display:none;width:100%;height:360px;border-radius:8px;overflow:hidden;background:#000;"></div>
   </div>
   </section>
 
@@ -1100,6 +1088,8 @@ body {
     aria-controls="cp_safe"><span class="ic">⛨</span><span class="lb">使能安全</span></button>
   <button class="tab-btn" role="tab" data-tab="sf" aria-selected="false"
     aria-controls="cp_sf"><span class="ic">◐</span><span class="lb">速度力控</span></button>
+  <button class="tab-btn" role="tab" data-tab="camera" aria-selected="false"
+    aria-controls="cp_camera"><span class="ic">📷</span><span class="lb">视频跟随</span></button>
   <button class="tab-btn" role="tab" data-tab="rec" aria-selected="false"
     aria-controls="cp_rec"><span class="ic">⏺</span><span class="lb">录制</span></button>
   <button class="tab-btn" role="tab" data-tab="pack" aria-selected="false"
@@ -1156,6 +1146,37 @@ body {
     <label style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-3);cursor:pointer;">
       <input type="checkbox" id="cbShow3d" checked> 显示 3D(装配体 9.3MB,首次加载稍慢)
     </label>
+  </div>
+  </section>
+
+  <!-- ── 视频跟随:摄像头 + 联合锚定 + 合体 3D ── -->
+  <section class="tab-pane" id="cp_camera" role="tabpanel" aria-labelledby="视频跟随">
+  <div class="card">
+    <div class="card-head"><span>MediaPipe · 合体跟随</span>
+      <button class="btn-inline" id="comboCameraToggle">启动摄像头</button>
+    </div>
+    <div class="jgroup" style="line-height:1.55;margin-top:8px;">
+      视频、腕部姿态和手指重定向使用同一条控制链。锚定同时记录当前位置与朝向，后续只发送相对变化。
+      <br><b>需要 HTTPS</b> 才能访问浏览器摄像头。
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:10.5px;color:var(--text-3);cursor:pointer;">
+      <input type="checkbox" id="cbTrackHand" checked> 跟随灵巧手
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:10.5px;color:var(--text-3);cursor:pointer;">
+      <input type="checkbox" id="cbTrackArm" checked> 跟随机械臂
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:10.5px;color:var(--text-3);cursor:pointer;">
+      <input type="checkbox" id="cbAllowRealTracking"> 允许真臂跟随（首次验证前保持关闭）
+    </label>
+    <div style="margin-top:10px;font-size:10.5px;color:var(--text-3);">
+      腕部姿态：回放一致
+    </div>
+    <button class="btn-small" id="comboFollowToggle" disabled
+      style="width:100%;margin-top:12px;background:var(--accent);color:#fff;border-color:var(--accent);">
+      启动摄像头后可锚定
+    </button>
+    <div id="comboTrackingState" class="jgroup" style="margin-top:8px;line-height:1.5;">摄像头已关闭</div>
+    <div id="comboCameraContainer" style="margin-top:12px;display:none;width:100%;height:360px;border-radius:8px;overflow:hidden;background:#000;"></div>
   </div>
   </section>
 
@@ -1456,8 +1477,8 @@ body {
     <div style="display:flex;gap:10px;">
       <label style="flex:1;">
         <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">速度 0-1000</div>
-        <input type="range" id="cbHandSpeed" min="0" max="1000" value="500" class="slider">
-        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="cbHandSpeedVal">500</div>
+        <input type="range" id="cbHandSpeed" min="0" max="1000" value="1000" class="slider">
+        <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="cbHandSpeedVal">1000</div>
       </label>
       <label style="flex:1;">
         <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">力控 0-1000</div>
@@ -1687,12 +1708,12 @@ body {
   import { ArmViewer } from "/static/arm3d.js";
   import { ComboViewer } from "/static/combo3d.js";
   import { ReplayViewer } from "/static/replay3d.js";
-  import { HandCameraControl } from "/static/hand_camera.js";
+  import { ComboCameraControl } from "/static/combo_camera.js";
   window.HandViewer = HandViewer;
   window.ArmViewer = ArmViewer;
   window.ComboViewer = ComboViewer;
   window.ReplayViewer = ReplayViewer;
-  window.HandCameraControl = HandCameraControl;
+  window.ComboCameraControl = ComboCameraControl;
   window.dispatchEvent(new Event("hand3d-ready"));
   window.dispatchEvent(new Event("arm3d-ready"));
   window.dispatchEvent(new Event("combo3d-ready"));
@@ -2326,7 +2347,6 @@ function connectWS() {
 let _handWs = null, _handActive = false, _handLimits = [], _handNames = [];
 let _handActions = [], _playingAction = null;
 let _handMock = false, _hand3d = true;      // 默认真手 + 开 3D
-let _handCamera = null;  // 摄像头控制器（懒加载）
 
 async function startHandDebug() {
   $("center").classList.add("has-data");
@@ -2421,17 +2441,6 @@ async function ensureHand3d() {
     console.log("[hand3d] 可动关节", n);
     $("screenHint").style.display = "none";
     _hv = v;
-
-    // 初始化摄像头控制器（如果还没初始化）
-    if (!_handCamera) {
-      if (!window.HandCameraControl) {
-        await new Promise(r => window.addEventListener("hand3d-ready", r, { once: true }));
-      }
-      _handCamera = new window.HandCameraControl();
-      _handCamera.setHandViewer(_hv);
-      _handCamera.setHardwareConnectedCheck(() => _handActive);  // 传入硬件连接状态
-      console.log("[hand_camera] 已初始化（接入时实时驱动，未接入时仅预览）");
-    }
 
     return v;
   })();
@@ -4056,6 +4065,160 @@ let _cbConnectPose = null, _cbDrift = null;
 let _cbTarget = "arm";                        // 未联动时发给谁
 let _cbArmLast = null;                        // 最近一帧臂状态(使能/急停),重算按钮用
 let _cv = null, _cvLoading = null, _cbShow3d = true;
+let _comboCamera = null;
+let _comboCameraArmSession = null;
+let _comboCameraHandSession = false;
+
+// 同一个 ComboViewer 有滑块、硬件遥测和摄像头三类数据源。摄像头开启时必须独占
+// 3D 写入，否则 /ws/arm、/ws/hand 的实际值会和 MediaPipe 目标交替覆盖同一组关节，
+// 视觉上就是模型在跟随姿态与上一实际姿态之间持续闪烁。
+function comboCameraOwns3d() {
+  return Boolean(_comboCamera?.active || _comboCamera?.mimic?.active);
+}
+
+const COMBO_ARM_READY_TOLERANCE = 0.03;
+const COMBO_ARM_READY_TIMEOUT_MS = 15000;
+
+async function readComboArmStatus() {
+  const response = await fetch('/api/arm/status');
+  const status = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(status.msg || '无法读取机械臂状态');
+  return status;
+}
+
+function comboArmPoseError(current, target) {
+  if (!Array.isArray(current) || current.length !== 7) return Infinity;
+  return Math.max(...current.map((value, index) =>
+    Math.abs(Number(value) - Number(target[index]))));
+}
+
+async function waitForComboArmPose(target, label) {
+  const deadline = performance.now() + COMBO_ARM_READY_TIMEOUT_MS;
+  while (performance.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const status = await readComboArmStatus();
+    if (!status.online) throw new Error(`${label}时机械臂断线`);
+    if (status.frozen) throw new Error(`${label}时机械臂进入急停`);
+    if (!status.enabled) throw new Error(`${label}时机械臂失能`);
+    if (comboArmPoseError(status.rad, target) <= COMBO_ARM_READY_TOLERANCE) {
+      return status;
+    }
+  }
+  throw new Error(`机械臂在 15 秒内未完成${label}`);
+}
+
+async function commandComboCameraArmPose(pose, target, label) {
+  const response = await fetch('/api/arm/camera_pose', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pose }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.msg || `无法${label}`);
+  }
+  if (_cbShow3d) {
+    const viewer = _cv || await ensureCombo3d();
+    viewer.setArm(target);
+  }
+  return waitForComboArmPose(target, label);
+}
+
+async function prepareComboTrackingArm() {
+  _comboCameraArmSession = null;
+  // 未启用机械臂跟随或尚未接入时，只启动视觉/灵巧手链路，不发送臂运动指令。
+  if (!$('cbTrackArm')?.checked || !_cbArmOn) return;
+  let status = await readComboArmStatus();
+  if (!status.online) throw new Error('机械臂未在线，无法准备实时跟随');
+  if (status.frozen) throw new Error('机械臂急停中，请先复位');
+  if (!status.enabled) throw new Error('机械臂未使能，请先使能');
+  const ready = status.tracking_ready_pose;
+  const home = status.home_pose;
+  const current = status.rad || [];
+  if (!Array.isArray(ready) || ready.length !== 7) {
+    throw new Error('服务未提供机械臂跟随准备位');
+  }
+  if (!Array.isArray(home) || home.length !== 7) {
+    throw new Error('服务未提供机械臂伸直位');
+  }
+  if (status.mock) {
+    _comboCameraArmSession = { mock: true, home: home.slice() };
+    await commandComboCameraArmPose('tracking_ready', ready, '移动到跟随准备位');
+    return;
+  }
+  if (!$('cbAllowRealTracking')?.checked) return;
+  const targetText = ready.map(value => Number(value).toFixed(3)).join(', ');
+  const alreadyReady = comboArmPoseError(current, ready) <= COMBO_ARM_READY_TOLERANCE;
+  if (!confirm(`${alreadyReady ? '机械臂当前已在跟随准备位' : `启动真机跟随前，机械臂将先移动到准备位:\n[${targetText}] rad`}\n\n`
+             + '关闭摄像头时会自动回到全零伸直位。两段均为关节空间插值，'
+             + '路径不受控；请确认沿途无障碍。')) {
+    throw new Error('已取消移动到跟随准备位');
+  }
+  _comboCameraArmSession = { mock: false, home: home.slice() };
+  await commandComboCameraArmPose('tracking_ready', ready, '移动到跟随准备位');
+}
+
+async function finishComboTrackingArm() {
+  const session = _comboCameraArmSession;
+  _comboCameraArmSession = null;
+  if (!session) return;
+  await commandComboCameraArmPose('home', session.home, '回到伸直位');
+}
+
+async function prepareComboTrackingHand() {
+  _comboCameraHandSession = false;
+  if (!$('cbTrackHand')?.checked || !_cbHandOn) return;
+  // 先记录会话，再设置速度；若后者失败，摄像头启动回滚仍会把手张开。
+  _comboCameraHandSession = true;
+  const speed = +$('cbHandSpeed').value || 1000;
+  const response = await fetch('/api/hand/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: 'speed', value: speed }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.msg || `无法设置实时速度 ${speed}`);
+  }
+}
+
+async function finishComboTrackingHand() {
+  const shouldHome = _comboCameraHandSession;
+  _comboCameraHandSession = false;
+  if (!shouldHome) return;
+  const response = await fetch('/api/hand/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd: 'home' }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.msg || '无法将灵巧手恢复到张开位');
+  }
+  if (_cbShow3d) {
+    const viewer = _cv || await ensureCombo3d();
+    viewer.setHand([0, 0, 0, 0, 0, 0]);
+  }
+}
+
+async function finishComboTrackingDevices() {
+  const errors = [];
+  const controlledArm = Boolean(_comboCameraArmSession);
+  const controlledHand = _comboCameraHandSession;
+  // 先松手，再移动机械臂，避免回伸直路径中继续夹持物体。
+  try { await finishComboTrackingHand(); }
+  catch (error) { errors.push(`灵巧手回张开位失败: ${error.message}`); }
+  try { await finishComboTrackingArm(); }
+  catch (error) { errors.push(`机械臂回伸直位失败: ${error.message}`); }
+  // 未参与本次跟随的一侧恢复实际反馈；已回安全位的一侧保留刚下发的 3D 姿态。
+  restoreComboTelemetryPose({ arm: !controlledArm, hand: !controlledHand });
+  if (errors.length) throw new Error(errors.join(' · '));
+}
+
+function restoreComboTelemetryPose({ arm = true, hand = true } = {}) {
+  if (!_cv || comboCameraOwns3d()) return;
+  if (arm && _cbArmAct?.length >= 7) _cv.setArm(_cbArmAct);
+  if (hand && _cbHandAct?.length >= 6) _cv.setHand(_cbHandAct);
+}
 
 async function ensureCombo3d() {
   const host = $("combo3dHost");
@@ -4083,6 +4246,43 @@ async function ensureCombo3d() {
 }
 function hideCombo3d() { hideEl("combo3dHost"); }
 
+function initComboCamera() {
+  if (_comboCamera) return _comboCamera;
+  if (!window.ComboCameraControl) {
+    window.addEventListener("combo3d-ready", () => initComboCamera(), { once: true });
+    return null;
+  }
+  _comboCamera = new window.ComboCameraControl({
+    container: $("comboCameraContainer"),
+    toggleBtn: $("comboCameraToggle"),
+    followBtn: $("comboFollowToggle"),
+    stateEl: $("comboTrackingState"),
+    getConfig: () => ({
+      driveHand: $("cbTrackHand")?.checked && _cbHandOn,
+      driveArm: $("cbTrackArm")?.checked && _cbArmOn,
+      allowRealArmTracking: $("cbAllowRealTracking")?.checked,
+    }),
+    onBeforeStart: async () => {
+      await prepareComboTrackingArm();
+      await prepareComboTrackingHand();
+    },
+    onResponse: (result) => {
+      const update3d = async () => {
+        if (!_cbShow3d) return;
+        const viewer = _cv || await ensureCombo3d();
+        if (result.arm_joint_targets?.length >= 7) viewer.setArm(result.arm_joint_targets);
+        if (result.hand_joint_targets?.length >= 6) viewer.setHand(result.hand_joint_targets);
+      };
+      update3d().catch((error) => console.warn("[combo-camera] 3D 更新失败:", error));
+      if (result.arm?.reason && result.arm.reason !== "not_following") {
+        cbErr("cbArmErr", result.arm.reason);
+      }
+    },
+    onStop: () => finishComboTrackingDevices(),
+  });
+  return _comboCamera;
+}
+
 // ---- tab 栏(和手页同一套行为:记住上次那栏 + 方向键循环)----
 function setComboTab(key) {
   const rail = $("comboRail");
@@ -4096,6 +4296,7 @@ function setComboTab(key) {
   });
   try { localStorage.setItem(CB_TAB_KEY, key); } catch (_) {}
   mountComboSliderBox(key);
+  if (key === "camera") initComboCamera();
   // 进语音栏才绑事件 + 拉清单,不在页面启动时白发请求
   if (key === "voice") initVoice("vc");
 }
@@ -4605,7 +4806,9 @@ function cbSetDirty(on) {
 // 拖任一滑块 → 只更新数字 + 3D 预览。13 个一起送进 setAll,臂和手在同一条链上,
 // 手的位置取决于臂的姿态,不能只刷一半。
 function cbPreview() {
-  if (_cv) _cv.setAll([...cbArmVals(), ...cbHandVals()]);
+  if (_cv && !comboCameraOwns3d()) {
+    _cv.setAll([...cbArmVals(), ...cbHandVals()]);
+  }
 }
 function initComboSliders() {
   if ($("cbArmSliders").innerHTML) return;
@@ -4762,7 +4965,7 @@ function cbOnArmFrame(row) {
     // 滑块没被改过时 3D 跟实际走;正在调就显预览值(同调试页)。
     // ⚠ `!_cbDirty` 这一句同时管住了录制页 —— 录制页用的是**同一套**滑块
     // (滑块盒搬过去的),拖它一样置 _cbDirty,所以遥测不会把预览冲回去。
-    if (_cv && !_cbDirty) _cv.setArm(rad);
+    if (_cv && !_cbDirty && !comboCameraOwns3d()) _cv.setArm(rad);
     applyComboFlags(row.enabled, row.frozen);
     if (row.speed_percent != null && $("cbArmSpeed").dataset.syncing !== "1") {
       $("cbArmSpeed").value = row.speed_percent;
@@ -4796,7 +4999,7 @@ function cbOnHandFrame(row) {
       if (d2) d2.textContent = (+rad[i]).toFixed(3);
     }
     if (rad.length) _cbHandAct = rad.slice();
-    if (_cv && !_cbDirty && rad.length) _cv.setHand(rad);
+    if (_cv && !_cbDirty && rad.length && !comboCameraOwns3d()) _cv.setHand(rad);
     // 字段名和调试页那份一致(inspire_hand.telemetry() 的键):
     // temp/current/force_act/voltage/error/status。别写成 force/fault ——
     // 那样不会报错,只是整块遥测**静默空着**。
@@ -4874,6 +5077,21 @@ async function cbStartHand() {
     if (!j.ok) {
       cbDot("cbHandStatus", "", "串口打开失败");
       cbErr("cbHandErr", j.msg || "未知错误");
+      return false;
+    }
+    // 驱动连接时会先恢复全局安全默认 500；合体实时控制明确覆盖成该页选择值。
+    // 不能只把滑块写成 1000，否则 UI 显示 1000、硬件实际仍是 500。
+    const speed = +$("cbHandSpeed").value || 1000;
+    const speedResponse = await fetch("/api/hand/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: "speed", value: speed }),
+    });
+    const speedResult = await speedResponse.json().catch(() => ({}));
+    if (!speedResponse.ok || speedResult.ok === false) {
+      await fetch("/api/hand/stop", { method: "POST" }).catch(() => {});
+      cbDot("cbHandStatus", "", "速度设置失败");
+      cbErr("cbHandErr", speedResult.msg || `无法设置实时速度 ${speed}`);
       return false;
     }
     _cbHandOn = true;

@@ -28,6 +28,7 @@ from pathlib import Path
 
 import threading
 
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -52,6 +53,14 @@ from skills.runner import _log_invocation, log_parse       # noqa: E402
 from lerobot_env import lerobot_python                  # noqa: E402
 from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
 from hand_target_filter import OneEuroJointFilter  # noqa: E402
+from nero_arm import NERO_HOME_POSE, NERO_TRACKING_READY_POSE  # noqa: E402
+from live_wrist_tracking import (  # noqa: E402
+    LiveWristMapper,
+    OneEuroRotationFilter,
+    OneEuroVectorFilter,
+    WristObservation,
+    estimate_wrist_observation,
+)
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
@@ -721,6 +730,10 @@ class ArmDebugSession:
         self.limits: list[list[float]] | None = None    # console 报的 SDK 限位
         self.connect_pose: list[float] | None = None    # 接入那一刻的位姿
         self.latest: dict | None = None
+        self._stdin_lock = threading.Lock()
+        self._tracking_waiters: dict[str, asyncio.Future] = {}
+        self._tracking_seq = 0
+        self._tracking_active = False
 
     def start(self, mock: bool = True, speed: int = 20) -> None:
         """拉起 arm_console。mock=True 是默认 —— 和手页相反,理由见类注释。"""
@@ -759,11 +772,16 @@ class ArmDebugSession:
 
     def stop(self) -> None:
         self._running = False
+        try:
+            self.loop.call_soon_threadsafe(self._cancel_tracking_waiters)
+        except RuntimeError:
+            pass
         # quit 让 console 走 finally:去使能 + 断 CAN。**不回零**(见类注释)。
         if self.console and self.console.stdin and self.console.poll() is None:
             try:
-                self.console.stdin.write('{"cmd":"quit"}\n')
-                self.console.stdin.flush()
+                with self._stdin_lock:
+                    self.console.stdin.write('{"cmd":"quit"}\n')
+                    self.console.stdin.flush()
                 self.console.wait(timeout=3)
             except Exception:                           # noqa: BLE001
                 pass
@@ -777,6 +795,7 @@ class ArmDebugSession:
         self.ready = False
         self.latest = None
         self.connect_pose = None
+        self._tracking_active = False
 
     def _pump_console(self) -> None:
         assert self.console is not None and self.console.stdout is not None
@@ -806,6 +825,12 @@ class ArmDebugSession:
                 self.error = row.get("msg") or "CAN 打开失败"
             elif typ == "state":
                 self.latest = row
+            elif typ == "ack" and row.get("cmd") == "tracking_angles":
+                token = row.get("tracking_token")
+                if token:
+                    self.loop.call_soon_threadsafe(
+                        self._resolve_tracking_ack, token, row
+                    )
             if typ in ("state", "ack", "error", "closed"):
                 self.loop.call_soon_threadsafe(self._broadcast, row)
 
@@ -822,16 +847,111 @@ class ArmDebugSession:
         if not (self.console and self.console.stdin):
             return {"ok": False, "msg": "console 未启动"}
         try:
-            self.console.stdin.write(json.dumps(cmd) + "\n")
-            self.console.stdin.flush()
+            with self._stdin_lock:
+                self.console.stdin.write(json.dumps(cmd) + "\n")
+                self.console.stdin.flush()
             return {"ok": True, "sent": cmd}
         except Exception as e:                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
+
+    async def send_tracking_angles_wait_ack(
+        self, angles: tuple[float, ...], frame_id: object
+    ) -> dict:
+        if not self._tracking_active:
+            started = self.command({"cmd": "tracking_begin"})
+            if not started.get("ok"):
+                return started
+            self._tracking_active = True
+        self._tracking_seq += 1
+        token = f"arm-track-{self._tracking_seq}"
+        future = self.loop.create_future()
+        self._tracking_waiters[token] = future
+        result = self.command({
+            "cmd": "tracking_angles",
+            "rad": list(angles),
+            "frame_id": frame_id,
+            "tracking_token": token,
+        })
+        if not result.get("ok"):
+            self._tracking_waiters.pop(token, None)
+            return result
+        try:
+            return await future
+        finally:
+            self._tracking_waiters.pop(token, None)
+
+    def end_tracking(self) -> None:
+        if self._tracking_active:
+            self.command({"cmd": "tracking_end"})
+        self._tracking_active = False
+
+    def _resolve_tracking_ack(self, token: str, row: dict) -> None:
+        future = self._tracking_waiters.get(token)
+        if future is not None and not future.done():
+            future.set_result(row)
+
+    def _cancel_tracking_waiters(self) -> None:
+        for future in self._tracking_waiters.values():
+            if not future.done():
+                future.cancel()
+        self._tracking_waiters.clear()
+
+
+class LiveIKClient:
+    """Synchronous JSON-line client for the Pinocchio worker process."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.process = subprocess.Popen(
+            [LEROBOT_PY, "src/live_ik_worker.py"],
+            cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, bufsize=1,
+        )
+        ready = self._read()
+        if not ready.get("ok"):
+            self.close()
+            raise RuntimeError(ready.get("error") or "IK worker failed to start")
+        self.q_home = [float(value) for value in ready["q_home"]]
+
+    def request(self, payload: dict) -> dict:
+        with self._lock:
+            if self.process.poll() is not None or not self.process.stdin:
+                raise RuntimeError("IK worker is not running")
+            self.process.stdin.write(json.dumps(payload) + "\n")
+            self.process.stdin.flush()
+            result = self._read()
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error") or "IK worker request failed")
+            return result
+
+    def _read(self) -> dict:
+        if not self.process.stdout:
+            raise RuntimeError("IK worker stdout is unavailable")
+        line = self.process.stdout.readline()
+        if not line:
+            detail = ""
+            if self.process.stderr:
+                detail = self.process.stderr.read().strip()
+            raise RuntimeError(f"IK worker exited unexpectedly: {detail}")
+        return json.loads(line)
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            try:
+                if self.process.stdin:
+                    self.process.stdin.write('{"cmd":"close"}\n')
+                    self.process.stdin.flush()
+                self.process.wait(timeout=2)
+            except Exception:  # noqa: BLE001
+                self.process.terminate()
+        if self.process.poll() is None:
+            self.process.kill()
 
 
 _hand: HandDebugSession | None = None
 _arm: ArmDebugSession | None = None
 _hand_target_mailbox: LatestTargetMailbox | None = None
+_arm_target_mailbox: LatestTargetMailbox | None = None
 
 
 def _get_arm() -> ArmDebugSession:
@@ -876,6 +996,40 @@ def _get_hand_target_mailbox() -> LatestTargetMailbox:
             reporter=_report_mimic_target,
         )
     return _hand_target_mailbox
+
+
+async def _send_live_arm_target(target: HandTarget) -> dict:
+    arm = _get_arm()
+    if not (arm.ready and arm.console and arm.console.poll() is None):
+        return {"ok": False, "msg": "机械臂未接入"}
+    latest = arm.latest or {}
+    if not latest.get("enabled") or latest.get("frozen"):
+        return {"ok": False, "msg": "机械臂未使能或已冻结"}
+    return await arm.send_tracking_angles_wait_ack(target.angles, target.frame_id)
+
+
+def _report_live_arm_target(perf: dict) -> None:
+    print(
+        "[perf-arm/mailbox] "
+        f"id={perf.get('id')} replaced={perf.get('replaced')} "
+        f"wait={perf.get('wait_ms')}ms age={perf.get('age_ms')}ms "
+        f"ack={perf.get('status')}",
+        flush=True,
+    )
+
+
+def _get_arm_target_mailbox() -> LatestTargetMailbox:
+    global _arm_target_mailbox
+    if _arm_target_mailbox is None:
+        _arm_target_mailbox = LatestTargetMailbox(
+            _send_live_arm_target,
+            rate_hz=30.0,
+            max_age_ms=200.0,
+            ack_timeout_ms=120.0,
+            angle_count=7,
+            reporter=_report_live_arm_target,
+        )
+    return _arm_target_mailbox
 
 
 
@@ -1850,6 +2004,13 @@ async def hand_command(payload: dict) -> JSONResponse:
 
     hand = _get_hand()
     command = dict(payload)
+    if command.get("cmd") == "home" and _hand_target_mailbox is not None:
+        # 摄像头停止时可能仍有一帧 ANGLE_SET 正在等待串口 ACK。先丢弃 pending，
+        # 再等 in-flight 结束，保证张开命令一定排在最后，不被旧跟随帧覆盖。
+        _hand_target_mailbox.reset()
+        deadline = time.monotonic() + 0.5
+        while _hand_target_mailbox.in_flight_count and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
     perf_id = command.get("perf_id")
     if command.get("cmd") == "angles":
         command["_perf"] = {
@@ -2344,29 +2505,56 @@ async def hand_mimic(payload: dict) -> JSONResponse:
 
 @app.websocket("/ws/hand/mimic")
 async def ws_hand_mimic(websocket: WebSocket):
-    """WebSocket 版手部追踪 - 更低延迟的实时通信
-
-    协议：
-      客户端发送: {"format": "mediapipe", "landmarks": [{x,y,z}, ...],
-                   "drive_hardware": true, "frame_id": 123}
-      服务端返回: {"ok": true, "joint_angles": {...}, "gesture": "..."}
-    """
+    """MediaPipe hand retargeting plus anchored arm/hand combo tracking."""
     await websocket.accept()
     owner = f"mimic-ws-{id(websocket)}"
     target_filter = OneEuroJointFilter()
-    print("[ws] 客户端已连接")
+    wrist_position_filter = OneEuroVectorFilter(
+        min_cutoff_hz=1.2, beta=0.5, reset_after_ms=200.0
+    )
+    wrist_orientation_filter = OneEuroRotationFilter(
+        min_cutoff_hz=1.8, beta=0.8, reset_after_ms=200.0
+    )
+    last_position_filter = {
+        "reset": False, "raw_delta_m": 0.0, "filtered_delta_m": 0.0,
+    }
+    last_orientation_filter = {
+        "reset": False, "raw_delta_rad": 0.0, "filtered_delta_rad": 0.0,
+    }
+    mapper = LiveWristMapper(
+        position_basis=np.array([[0.0, 1.0, 0.0],
+                                 [-1.0, 0.0, 0.0],
+                                 [0.0, 0.0, 1.0]]),
+        rotation_basis=np.array([[0.0, 0.0, -1.0],
+                                 [1.0, 0.0, 0.0],
+                                 [0.0, -1.0, 0.0]]),
+        # 姿态相对锚定后再进入限幅和 IK，挥手等腕部旋转才能传到末端。
+        track_orientation=True,
+    )
+    ik_client: LiveIKClient | None = None
+    last_arm_targets: list[float] | None = None
+    consecutive_ik_failures = 0
+    joint_order = (
+        "right_thumb_1_joint",
+        "right_thumb_2_joint",
+        "right_index_1_joint",
+        "right_middle_1_joint",
+        "right_ring_1_joint",
+        "right_little_1_joint",
+    )
+    print("[ws] 合体跟随客户端已连接")
 
     try:
         while True:
-            # 接收客户端数据
             data = await websocket.receive_json()
             received_at = time.monotonic()
-
             format_type = data.get("format")
-            landmarks = data.get("landmarks", [])
+            world_landmarks = data.get("landmarks", [])
+            image_landmarks = data.get("image_landmarks", [])
             frame_id = data.get("frame_id")
+            tracking_control = data.get("tracking_control")
+            tracking_control_applied = False
 
-            # 验证数据
             if format_type != "mediapipe":
                 await websocket.send_json({
                     "ok": False,
@@ -2374,39 +2562,187 @@ async def ws_hand_mimic(websocket: WebSocket):
                 })
                 continue
 
-            if len(landmarks) != 21:
+            if tracking_control == "freeze":
+                mapper.freeze("user")
+                wrist_position_filter.reset()
+                wrist_orientation_filter.reset()
+                tracking_control_applied = True
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if _arm is not None:
+                    _arm.end_tracking()
+
+            if data.get("hand_present") is False:
+                mapper.mark_missing()
+                target_filter.reset()
+                wrist_position_filter.reset()
+                wrist_orientation_filter.reset()
+                if _hand_target_mailbox is not None:
+                    _hand_target_mailbox.release(owner)
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if _arm is not None:
+                    _arm.end_tracking()
+                await websocket.send_json({
+                    "ok": True,
+                    "frame_id": frame_id,
+                    **mapper.status(),
+                    "joint_angles": None,
+                    "arm_joint_targets": last_arm_targets,
+                    "hand_joint_targets": None,
+                    "msg": "未检测到手部",
+                    "hardware": {"queued": False, "reason": "hand_lost"},
+                    "arm": {"queued": False, "ik_ok": False,
+                            "reason": "hand_lost"},
+                    "wrist_position_filter": last_position_filter,
+                    "wrist_orientation_filter": last_orientation_filter,
+                    "tracking_control_applied": tracking_control_applied,
+                })
+                continue
+
+            if len(world_landmarks) != 21:
                 await websocket.send_json({
                     "ok": False,
-                    "msg": f"需要 21 个关键点，收到: {len(landmarks)}"
+                    "msg": f"需要 21 个世界关键点，收到: {len(world_landmarks)}"
                 })
                 continue
 
             try:
-                # 调用 retargeting 计算关节角度
-                joint_angles = await _mediapipe_to_joint_angles(landmarks)
+                joint_angles = await _mediapipe_to_joint_angles(world_landmarks)
+                gesture = _recognize_mediapipe_gesture(world_landmarks) or "未知"
+                raw_hand_target = [joint_angles[name] for name in joint_order]
 
-                # 可选：识别手势名称
-                gesture = _recognize_mediapipe_gesture(landmarks) or "未知"
+                wrist_observation = None
+                mapping = None
+                combo_mode = data.get("tracking_mode") == "combo"
+                if combo_mode and len(image_landmarks) == 21:
+                    wrist_observation = estimate_wrist_observation(
+                        image_landmarks,
+                        world_landmarks,
+                        data.get("handedness"),
+                    )
+                    if tracking_control == "anchor":
+                        wrist_position_filter.reset()
+                        wrist_orientation_filter.reset()
+                        if ik_client is None:
+                            ik_client = await asyncio.get_event_loop().run_in_executor(
+                                None, LiveIKClient
+                            )
+                        arm = _arm
+                        arm_online = bool(
+                            arm and arm.ready and arm.console
+                            and arm.console.poll() is None
+                        )
+                        latest = (arm.latest or {}) if arm else {}
+                        current_q = (
+                            latest.get("target") or latest.get("rad")
+                            or (arm.connect_pose if arm else None)
+                            or ik_client.q_home
+                        )
+                        fk_result = await asyncio.get_event_loop().run_in_executor(
+                            None, ik_client.request,
+                            {"cmd": "fk", "q": current_q},
+                        )
+                        arm_anchor = np.asarray(fk_result["pose"], dtype=float).reshape(4, 4)
+                        if arm_online and not arm.mock:
+                            mapper.position_limits[:] = 0.02
+                            mapper.set_orientation_limits_deg(
+                                (-45.0, -25.0, -35.0),
+                                (45.0, 25.0, 35.0),
+                            )
+                        else:
+                            mapper.position_limits[:] = [0.05, 0.05, 0.03]
+                            # 固定准备位、固定末端位置的 5° 步进 IK 扫描可达约
+                            # X -95/+65、Y -120/+55、Z -180/+165°。Mock 留
+                            # 5-10° 余量；真机仍保留上面的保守限幅。
+                            mapper.set_orientation_limits_deg(
+                                (-90.0, -115.0, -175.0),
+                                (60.0, 50.0, 155.0),
+                            )
+                        mapper.request_anchor(arm_anchor)
+                        tracking_control_applied = True
+                    filtered_position = wrist_position_filter.update(
+                        wrist_observation.position, received_at
+                    )
+                    last_position_filter = {
+                        "reset": filtered_position.reset,
+                        "raw_delta_m": round(filtered_position.raw_delta, 6),
+                        "filtered_delta_m": round(filtered_position.filtered_delta, 6),
+                    }
+                    filtered_orientation = wrist_orientation_filter.update(
+                        wrist_observation.rotation, received_at
+                    )
+                    last_orientation_filter = {
+                        "reset": filtered_orientation.reset,
+                        "raw_delta_rad": round(filtered_orientation.raw_delta_rad, 6),
+                        "filtered_delta_rad": round(
+                            filtered_orientation.filtered_delta_rad, 6
+                        ),
+                    }
+                    wrist_observation = WristObservation(
+                        filtered_position.value,
+                        filtered_orientation.value,
+                        wrist_observation.handedness,
+                        wrist_observation.handedness_score,
+                        wrist_observation.position_source,
+                    )
+                    mapping = mapper.observe(wrist_observation)
+
+                arm_target = None
+                arm_result = {
+                    "queued": False,
+                    "ik_ok": mapper.state != "following",
+                    "reason": "not_following",
+                    "position_limited": False,
+                    "orientation_limited": False,
+                    "orientation_delta_deg": [0.0, 0.0, 0.0],
+                    "orientation_limited_axes": [False, False, False],
+                }
+                if mapping is not None:
+                    if ik_client is None:
+                        ik_client = await asyncio.get_event_loop().run_in_executor(
+                            None, LiveIKClient
+                        )
+                    solve_started = time.perf_counter()
+                    solved = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        ik_client.request,
+                        {"cmd": "solve",
+                         "target_pose": mapping.target_pose.reshape(-1).tolist()},
+                    )
+                    ik_ms = (time.perf_counter() - solve_started) * 1000.0
+                    if solved.get("ik_ok"):
+                        consecutive_ik_failures = 0
+                        arm_target = [float(value) for value in solved["q"]]
+                        last_arm_targets = arm_target
+                    else:
+                        consecutive_ik_failures += 1
+                        if consecutive_ik_failures >= 3:
+                            mapper.freeze("ik_failed")
+                    arm_result.update({
+                        "ik_ok": bool(solved.get("ik_ok")),
+                        "ik_ms": round(ik_ms, 2),
+                        "reason": None if solved.get("ik_ok") else "ik_failed",
+                        "position_limited": mapping.position_limited,
+                        "orientation_limited": mapping.orientation_limited,
+                        "orientation_delta_deg": [
+                            round(value, 2) for value in mapping.orientation_delta_deg
+                        ],
+                        "orientation_limited_axes": list(mapping.orientation_limited_axes),
+                    })
 
                 hardware = {"queued": False, "reason": "disabled"}
-                if data.get("drive_hardware"):
+                drive_hand = bool(data.get("drive_hand", data.get("drive_hardware")))
+                hand_gate = not combo_mode or mapper.state == "following"
+                if drive_hand and hand_gate:
                     hand = _hand
                     online = bool(
                         hand and hand.ready and hand.console
                         and hand.console.poll() is None
                     )
                     if online:
-                        joint_order = (
-                            "right_thumb_1_joint",
-                            "right_thumb_2_joint",
-                            "right_index_1_joint",
-                            "right_middle_1_joint",
-                            "right_ring_1_joint",
-                            "right_little_1_joint",
-                        )
-                        raw_target = [joint_angles[name] for name in joint_order]
                         filter_started = time.perf_counter()
-                        filtered = target_filter.update(raw_target, received_at)
+                        filtered = target_filter.update(raw_hand_target, received_at)
                         filter_ms = (time.perf_counter() - filter_started) * 1000.0
                         print(
                             "[perf-hand/filter] "
@@ -2449,20 +2785,74 @@ async def ws_hand_mimic(websocket: WebSocket):
                     if _hand_target_mailbox is not None:
                         _hand_target_mailbox.release(owner)
 
-                # 立即返回结果
+                drive_arm = bool(data.get("drive_arm"))
+                allow_real_arm = bool(data.get("allow_real_arm_tracking"))
+                arm = _arm
+                arm_online = bool(
+                    arm and arm.ready and arm.console and arm.console.poll() is None
+                )
+                latest = (arm.latest or {}) if arm else {}
+                arm_safe = bool(
+                    arm_online and latest.get("enabled") and not latest.get("frozen")
+                    and (arm.mock or allow_real_arm)
+                )
+                if drive_arm and arm_target is not None and arm_safe:
+                    queued = _get_arm_target_mailbox().submit(
+                        owner, frame_id, arm_target, created_at=received_at
+                    )
+                    arm_result.update(
+                        queued=queued.accepted,
+                        replaced=queued.replaced,
+                        reason=queued.reason,
+                    )
+                elif drive_arm:
+                    arm_result["reason"] = (
+                        "offline" if not arm_online
+                        else "disabled" if not latest.get("enabled")
+                        else "frozen" if latest.get("frozen")
+                        else "real_arm_not_armed" if arm and not arm.mock and not allow_real_arm
+                        else arm_result.get("reason")
+                    )
+                elif _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if mapper.state != "following":
+                    if _arm_target_mailbox is not None:
+                        _arm_target_mailbox.release(owner)
+                    if _arm is not None:
+                        _arm.end_tracking()
+
                 await websocket.send_json({
                     "ok": True,
                     "frame_id": frame_id,
                     "joint_angles": joint_angles,
+                    "hand_joint_targets": raw_hand_target,
+                    "arm_joint_targets": arm_target or last_arm_targets,
                     "gesture": gesture,
                     "hardware": hardware,
+                    "arm": arm_result,
+                    "orientation_delta_deg": arm_result.get("orientation_delta_deg"),
+                    "orientation_limited_axes": arm_result.get("orientation_limited_axes"),
+                    "wrist_pose": (
+                        wrist_observation.protocol_pose() if wrist_observation else None
+                    ),
+                    "tracking_control_applied": tracking_control_applied,
+                    "wrist_position_filter": last_position_filter,
+                    "wrist_orientation_filter": last_orientation_filter,
+                    **mapper.status(),
                 })
 
             except Exception as e:
-                print(f"[ws] Retargeting 失败: {e}")
+                wrist_position_filter.reset()
+                wrist_orientation_filter.reset()
+                if mapper.state in ("anchoring", "following"):
+                    mapper.freeze(f"tracking_error:{type(e).__name__}")
+                print(f"[ws] 合体跟随失败: {e}")
                 await websocket.send_json({
                     "ok": False,
-                    "msg": f"Retargeting 失败: {str(e)}"
+                    "frame_id": frame_id,
+                    "msg": f"跟随处理失败: {str(e)}",
+                    "tracking_control_applied": False,
+                    **mapper.status(),
                 })
 
     except WebSocketDisconnect:
@@ -2472,6 +2862,12 @@ async def ws_hand_mimic(websocket: WebSocket):
     finally:
         if _hand_target_mailbox is not None:
             _hand_target_mailbox.release(owner)
+        if _arm_target_mailbox is not None:
+            _arm_target_mailbox.release(owner)
+        if _arm is not None:
+            _arm.end_tracking()
+        if ik_client is not None:
+            await asyncio.get_event_loop().run_in_executor(None, ik_client.close)
 
 
 
@@ -2533,6 +2929,8 @@ async def _mediapipe_to_joint_angles(landmarks: list[dict]) -> dict:
         try:
             from dex_retargeting.retargeting_config import RetargetingConfig
             config_path = REPO / "configs/inspire_hand_right_local.yml"
+            # 配置里的 ../assets 相对于 configs/，不能依赖服务从哪个 cwd 启动。
+            RetargetingConfig.set_default_urdf_dir(str(config_path.parent))
             config = RetargetingConfig.load_from_file(str(config_path))
             _RETARGETING_ADAPTER = config.build()  # 构建 SeqRetargeting 对象
             print(f"[retargeting] 已加载配置: {config_path}")
@@ -2763,6 +3161,10 @@ async def arm_status() -> JSONResponse:
         "enabled": latest.get("enabled", False),
         "frozen": latest.get("frozen", False),
         "speed_percent": latest.get("speed_percent"),
+        "rad": latest.get("rad"),
+        "target": latest.get("target"),
+        "home_pose": list(NERO_HOME_POSE),
+        "tracking_ready_pose": list(NERO_TRACKING_READY_POSE),
         "connect_pose": a.connect_pose if a else None,
         "pose_drift": latest.get("pose_drift"),
     })
@@ -2771,8 +3173,9 @@ async def arm_status() -> JSONResponse:
 @app.post("/api/arm/command")
 async def arm_command(payload: dict) -> JSONResponse:
     """臂控制指令。协议见 arm_console.py 的 handle():
-    {cmd:"angles",rad:[7]} | {cmd:"enable"} | {cmd:"disable"} | {cmd:"home"}
-    | {cmd:"speed",value:20} | {cmd:"estop"} | {cmd:"reset"}
+    {cmd:"angles",rad:[7]} | {cmd:"goto_tracking_ready"} | {cmd:"enable"}
+    | {cmd:"disable"} | {cmd:"home"} | {cmd:"speed",value:20}
+    | {cmd:"estop"} | {cmd:"reset"}
 
     运动类指令在**这一层**也先查一遍使能/急停状态。理由:command() 的 ok 只代表
     "写进了 console 的 stdin",真正的拒绝是异步经 /ws/arm 回来的 error 帧,HTTP
@@ -2780,7 +3183,9 @@ async def arm_command(payload: dict) -> JSONResponse:
     console 侧的检查保留(纵深防御),它才是最终把关的那道。
     """
     arm = _get_arm()
-    if (payload or {}).get("cmd") in ("angles", "home", "goto_connect_pose"):
+    if (payload or {}).get("cmd") in (
+        "angles", "home", "goto_connect_pose", "goto_tracking_ready"
+    ):
         st = arm.latest or {}
         if not st.get("enabled"):
             return JSONResponse({"ok": False, "msg": "臂未使能,先点『使能』"},
@@ -2789,6 +3194,50 @@ async def arm_command(payload: dict) -> JSONResponse:
             return JSONResponse({"ok": False, "msg": "急停生效中,先点『复位』解除"},
                                 status_code=409)
     return JSONResponse(arm.command(payload))
+
+
+@app.post("/api/arm/camera_pose")
+async def arm_camera_pose(payload: dict) -> JSONResponse:
+    """切换摄像头会话的机械臂准备位或伸直位。
+
+    先清空 latest-target 并退出 CPV，确保旧跟随目标不会覆盖本次姿态切换。
+    """
+    pose = str((payload or {}).get("pose") or "")
+    commands = {
+        "tracking_ready": ("goto_tracking_ready", NERO_TRACKING_READY_POSE),
+        "home": ("home", NERO_HOME_POSE),
+    }
+    if pose not in commands:
+        return JSONResponse(
+            {"ok": False, "msg": "pose 只支持 tracking_ready 或 home"},
+            status_code=400,
+        )
+
+    arm = _get_arm()
+    alive = bool(arm.ready and arm.console and arm.console.poll() is None)
+    if not alive:
+        return JSONResponse({"ok": False, "msg": "机械臂未在线"}, status_code=409)
+    latest = arm.latest or {}
+    if not latest.get("enabled"):
+        return JSONResponse({"ok": False, "msg": "臂未使能,先点『使能』"},
+                            status_code=409)
+    if latest.get("frozen"):
+        return JSONResponse({"ok": False, "msg": "急停生效中,先点『复位』解除"},
+                            status_code=409)
+
+    if _arm_target_mailbox is not None:
+        _arm_target_mailbox.reset()
+    arm.end_tracking()
+    command, target = commands[pose]
+    result = arm.command({"cmd": command})
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=503)
+    return JSONResponse({
+        "ok": True,
+        "pose": pose,
+        "target": list(target),
+        "mock": bool(arm.mock),
+    })
 
 
 @app.websocket("/ws/arm")

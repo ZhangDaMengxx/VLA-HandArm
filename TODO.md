@@ -30,10 +30,16 @@
 - [x] MediaPipe Tasks 本地资源和兼容包装层单测
 - [x] 后端 latest-target mailbox、真实 ACK 和 WebSocket 断线清理
 - [x] 六关节 One Euro 滤波、200ms 状态重置和硬件分辨率级写入门限
+- [x] 合体页联合位置/姿态锚定、NERO IK、7+6 目标协议与 Mock Three.js 联动（腕部姿态经过滤波和限幅后驱动末端有限旋转）
 - [ ] 真机复测滤波后的张手末端与静止手势
   - 静止阶段不得再出现 `raw_delta` 接近 0、`filtered_delta` 突跳约 0.02rad
   - 记录 `perf-hand/filter` 与 `perf-hand/tracking`，确认无可见台阶且跟随延迟可接受
 - [ ] 浏览器摄像头实测 FPS、端到端延迟和断线恢复
+- [ ] 覆盖真实摄像头权限拒绝、设备断开、Chrome/Edge 和页面切换恢复
+- [ ] 验证真手 + Mock 臂的联合锚定、丢手冻结和重新锚定
+- [ ] 验证真臂 + Mock 手的显式授权、使能、急停、限幅和连续 IK 失败冻结
+- [ ] 在清空工作区和低速条件下验证双真机合体跟随，记录初始关节、固件和急停条件
+- [ ] 用对齐 RGB-D 深度替换 `monocular_scale` 腕部位置，并保留同一锚定/协议契约
 - [ ] 用相同固定角度阶跃各重复 3 次，对照 `SPEED_SET=500/800/1000` 的 settled、力、电流和温度
 - [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥
 
@@ -52,6 +58,22 @@
 - [ ] 为 Web 7860 端口增加鉴权或可信反向代理边界
 - [ ] 如果需要 MCP combo，先形成新的接口、安全和执行语义设计，再在独立仓库实现
 
+## P1 Ego 数采结构迁移
+
+- [ ] 新增 `datasets/captures/` 正式 Capture Bundle 根目录，正式采集数据不再直接写入 `src/out/`
+- [ ] 为每次采集建立 `capture_<date>_<seq>_<uuid>/`，包含 `source/`、`ego/`、`robot_datasets/`、`lineage/` 和 `reports/`
+- [ ] 建立 Source 原始层：保留原生 RGB-D 录制、原始/对齐深度、硬件微秒时间戳、标定快照、校验和及留存策略
+- [ ] 将 Ego 输出迁移到 `<capture>/ego/`，确保可直接由 `LeRobotDataset()` 加载
+- [ ] 将机器人派生输出迁移到 `<capture>/robot_datasets/<target>/<asset_revision>/<retarget_revision>/`
+- [ ] 增加 Capture manifest、LeRobot v3 结构、checksum、血缘和 QA 校验器
+- [ ] 统一并版本化四元数顺序：当前代码为 `xyzw`，新规范为 `qwxyz`，禁止静默切换
+- [ ] 明确时间契约：LeRobot `timestamp` 使用秒；Source 保留 `timestamp_hw_us`，报告同步残差毫秒
+- [ ] 区分 `episode0_camera` 与 `scene_world` 坐标系，并在 `coordinate_system.json` 中声明
+- [ ] 将 RGB-D 帧率、分辨率和质量阈值配置为可版本化的 quality profile，按实际设备同步模式验收
+- [ ] 区分手腕绝对精度（需要真值）与无真值条件下的抖动、连续性和骨长稳定性
+- [ ] 建立 Python 3.12.x + `lerobot[dataset]==0.6.1` 隔离环境，完成 LeRobot v3 兼容性验证
+- [ ] 新流程稳定后再淘汰 `src/out/` 中的旧实验输出
+
 ---
 
-**最后整理**：2026-08-18
+**最后整理**：2026-08-19

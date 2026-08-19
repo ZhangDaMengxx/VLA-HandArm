@@ -27,8 +27,11 @@ ros2_ws/
 | `src/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
 | `src/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
 | `src/arm_console.py` | 机械臂调试，默认 mock 和低速 |
+| `src/live_wrist_tracking.py` | 单目腕姿、联合锚定、相对映射和末端限幅 |
+| `src/live_ik_worker.py` | 与轻量 Web 环境隔离的 NERO FK/IK 子进程 |
 | `src/app_web.py` | Web 工作台和 WebSocket 后端 |
 | `src/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
+| `src/web/combo_camera.js` | 合体页摄像头与锚定/冻结单按钮状态机 |
 | `src/skills/` | 技能清单、执行后端和安全闸 |
 | `src/build_nero_inspire.py` | 生成臂、法兰、手装配 URDF |
 | `src/build_combo_viz.py` | 生成本地 Web 合体模型 |
@@ -121,6 +124,64 @@ python3 -m pytest src/test/test_stdin_lines.py
 
 浏览器实测还应覆盖：启动、停止、重复启动、权限拒绝、WebSocket 断线恢复和页面切换。
 
+### 修改合体实时跟随
+
+实时跟随入口只在“实时 Live · 合体”页。浏览器同时发送 world landmarks 和 image
+landmarks：world landmarks 用于六关节手型与手掌姿态，image landmarks 用于标记为
+`monocular_scale` 的单目腕部相对位置；不要把后者当作绝对米制测量。
+
+单一状态按钮按当前状态执行“联合锚定并跟随”“冻结跟随”或“重新锚定并跟随”。首个有效
+手帧即可点击；后端先用机械臂当前实际/最新关节做 FK，再固定采集 12 个有效帧，并剔除位置/
+姿态综合偏差最大的 25% 样本后生成联合锚点。抖动值用于页面质量提示，不再作为无限等待的
+硬门槛，因此锚定帧本身不应产生目标跳变。腕部位置和姿态均以联合锚点为基准做相对映射；
+位置默认 Mock 限幅是 `±50/50/30mm`，真臂路径统一收紧到位置各轴 `±20mm`。真臂姿态按
+`±45/±25/±35°` 三轴限幅；Mock 根据准备位固定末端位置的 5° 步进 IK 扫描结果使用
+X `-90/+60°`、Y `-115/+50°`、Z `-175/+155°`，并在测得边界内保留 5-10° 余量。
+协议顶层的 `orientation_delta_deg` 与 `orientation_limited_axes` 可用于判断具体哪一轴触顶。
+实时腕部姿态只保留 `回放一致` 链路：复用 MediaPipe/MANO `operator2mano` frame、
+相机/world 轴增量和左乘，与 `derive_embodiment` 的 RGB 回放路径一致。相对旋转矩阵转欧拉角时
+会依据上一帧选择最近的等价分支，因此翻掌越过 90° 或 `±180°` 表示边界时不会镜像跳变；
+连续展开后仍须经过逐轴限幅和 IK。
+Mock 从远离关节限位的弯肘中间姿态启动，避免伸直位附近的小抖动放大为 IK 不稳定。
+Mock 不再自行生成正弦摆动，关节反馈只在收到目标后变化。
+腕部三轴位置在进入相对映射和 IK 前经过 One Euro 滤波，默认参数为
+`min_cutoff=1.2Hz`、`beta=0.5`、导数截止 `1.0Hz`。滤波只处理腕部位置，不替代灵巧手六关节
+滤波；联合锚定、冻结、丢手、跟随异常或采样间隔超过 `200ms` 时会清空状态，避免恢复时
+把旧帧尾差带入新跟随段。协议状态中的 `wrist_position_filter` 提供原始/滤后步长和是否重置。
+单目深度使用 MediaPipe world landmarks 的当前掌宽/掌长作为每帧尺度，并按其 3D 轴向可见度
+补偿图像投影缩短，避免翻掌时横向投影缩短被误判为手腕大幅远离。腕部姿态转换为旋转向量并使用 `min_cutoff=1.8Hz`、`beta=0.8` 的
+One Euro 滤波，
+再做姿态限幅；状态通过 `wrist_orientation_filter` 返回。这样可保留挥手/手心翻转等低频动作，
+又不会把每帧姿态噪声直接放大到机械臂。
+统一跟随准备位为 `[0, -0.7, 0.002, 1.298, 0.002, -0.008, -0.591] rad`，伸直位为
+`[0, 0, 0, 0, 0, 0, 0] rad`。每次启动摄像头都会先下发准备位，每次关闭或启动失败都会先
+清空 latest-target、退出 CPV，再回到伸直位。Mock 同步更新 Three.js 和 Mock 反馈；真臂仅在
+勾选“允许真臂跟随”后执行，并等待实际关节误差小于 `0.03 rad`。两段均使用关节空间插值，
+路径不受控，启动时必须确认沿途无障碍。
+若本次摄像头会话启用了灵巧手跟随，关闭或启动失败回滚时会先清空灵巧手 latest-target、
+等待在途帧结束并下发全张开位，然后机械臂才回伸直位；未启用灵巧手跟随时不会主动移动手。
+
+Mock 与真机使用同一个 `/ws/hand/mimic` 协议、NERO IK worker 和 7+6 目标结构。真臂必须
+在线、已使能、未冻结，并由页面显式勾选实时跟随授权；不要取消这个安全门。丢手、左右手
+变化、连续 3 次 IK 失败、急停/冻结、未使能或断线时应停止投递并冻结，恢复后必须重新锚定。
+
+这条链路不是人体上肢的完整重建：当前输入只有手部 landmarks，位置是单目表观尺度的相对量，
+末端姿态只在锚点附近有限跟随，也没有肩、肘、相机到机器人基座的真实外参。因此它适合小范围腕部平移/旋转和
+灵巧手手指映射，不能宣称完全复制人的肩肘腕轨迹。要扩大到整条手臂，需要加入肩/肘姿态跟踪、
+RGB-D 或多相机深度、外参标定、全上肢 retargeting，以及工作空间、关节限位、碰撞和奇异位形约束。
+
+修改后至少运行：
+
+```bash
+python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_wrist_tracking.py -q
+node src/test/web/hand_tracker_tasks.test.mjs
+node src/test/web/hand_mimic_transport.test.mjs
+node src/test/web/combo_camera.test.mjs
+```
+
+还要在桌面和移动端检查合体 Three.js 非空、整臂入镜、控件无重叠。当前只完成 Mock 与
+浏览器验收，任何真实机械臂运动都必须另行安排低速真机测试。
+
 ### 修改 MCP 或部署 Bridge
 
 在独立仓库工作：
@@ -168,4 +229,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ---
 
-**最后核对**：2026-08-18
+**最后核对**：2026-08-19
