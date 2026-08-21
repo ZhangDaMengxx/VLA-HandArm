@@ -18,6 +18,8 @@
 - Python 编译、`git diff --check` 和三个 Web Node 测试通过
 - 动作时间轴、播放器、视频导入和异步 IK 定向回归 `40 passed`
 - 隔离已记录的手指限位漂移、旧轨迹夹具、测试变量和 TestClient 后台线程阻断项后，离线宽回归 `191 passed`、3 个既有 `PytestReturnNotNoneWarning`
+- 使用现有 Ego 样例的真实 21 点完成 21 帧 Mock WebSocket 冒烟：联合锚定进入 `following`，6 轴手目标与 7 轴臂目标均成功入队，IK 示例耗时 `0.54ms`、结果年龄 `3.44ms`
+- Mock 统一释放接口确认灵巧手释放、机械臂请求回零并释放；开发基线通过 `--ff-only` 同步到 `deploy` 分支
 - 全量 `pytest` 仍会被 P0 手指 span/limit 不一致测试在收集阶段主动终止；未修改或掩盖该安全问题
 - 未连接或驱动真机
 
