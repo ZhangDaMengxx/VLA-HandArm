@@ -1,0 +1,15 @@
+# Python runtime: 3.12.x
+# Install CPU Torch first to avoid pulling CUDA packages into dataset-only hosts:
+#   python -m pip install torch==2.7.1+cpu torchvision==0.22.1+cpu \
+#     --index-url https://download.pytorch.org/whl/cpu
+# Then install this file:
+#   python -m pip install -r environment/lerobot-v3-dataset.txt
+
+lerobot[dataset]==0.6.1
+
+# TorchCodec 0.11 installs under the LeRobot range but is not ABI-compatible
+# with the minimum supported Torch 2.7 line used by this CPU-only environment.
+torchcodec==0.4.0
+
+# Project canonical builders import scipy for explicit matrix/quaternion input.
+scipy>=1.14,<2

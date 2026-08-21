@@ -38,7 +38,7 @@ from inspire_hand import (HAND_JOINTS, HAND_LIMITS, PROJECT_TO_VENDOR,   # noqa:
                           InspireHand, InspireHandConfig)
 from action_sequences import load_default_actions, ActionSequence          # noqa: E402
 from gesture_pack import (GestureError, GesturePack,                       # noqa: E402
-                          to_action_sequence)
+                          PLAYBACK_TIMELINE, to_action_sequence)
 
 # 安全张开位 = 六个关节全取 URDF 下限 = 完全打开的平手。
 # thumb_yaw 曾经取中位(方向未标定时的保守值)。现在方向已由 URDF 几何定死:
@@ -73,6 +73,15 @@ class ActionPlayer:
         self._paused_total = 0.0     # 累计暂停了多久 —— 绝对时轴要减掉它
         # 这个序列有没有绝对时刻。厂商的 DefaultAction.txt 没有,我们的技能包有。
         self._abs = any(s.t_ns is not None for s in seq.steps)
+        self._timeline_latest = seq.playback_mode == PLAYBACK_TIMELINE
+        self.sent_steps = 0
+        self.skipped_steps = 0
+        self.max_lag_ms = 0.0
+        self.fast_angle_writes = 0
+        self.config_writes = 0
+        self.write_failures = 0
+        self._last_speeds: tuple[int, ...] | None = None
+        self._last_forces: tuple[int, ...] | None = None
 
     def start(self, *, start_at: float | None = None) -> None:
         """开始回放。
@@ -82,9 +91,13 @@ class ActionPlayer:
         """
         self.step_idx = 0
         self.paused = self.stopped = self.done = False
-        self._wait_until = 0.0       # 0 = 立即执行第一步
         self._t0 = start_at if start_at is not None else time.monotonic()
+        self._wait_until = self._t0 if self._abs else 0.0
         self._paused_total = 0.0
+        self.sent_steps = self.skipped_steps = 0
+        self.max_lag_ms = 0.0
+        self.fast_angle_writes = self.config_writes = self.write_failures = 0
+        self._last_speeds = self._last_forces = None
 
     def pause(self) -> None:
         if self.paused or self.done:
@@ -108,8 +121,33 @@ class ActionPlayer:
     def stop(self) -> None:
         self.stopped = True
 
+    def _latest_due_index(self, now: float) -> int:
+        """返回当前墙钟时刻最新到期的步骤;严格模式始终只返回下一步。"""
+        idx = self.step_idx
+        if not self._timeline_latest or idx >= len(self.seq.steps):
+            return idx
+        elapsed_ns = int(max(0.0, now - self._t0 - self._paused_total) * 1e9)
+        while idx + 1 < len(self.seq.steps):
+            t_ns = self.seq.steps[idx + 1].t_ns
+            if t_ns is None or t_ns > elapsed_ns:
+                break
+            idx += 1
+        return idx
+
+    def _set_config(self, reg: str, vals: list[int | None], cache_name: str) -> bool:
+        vendor = tuple(self._vendor(vals))
+        if getattr(self, cache_name) == vendor:
+            return True
+        ok = True if self.hand.cfg.mock else self.hand.write_shorts(reg, list(vendor))
+        if ok:
+            setattr(self, cache_name, vendor)
+            self.config_writes += 1
+        else:
+            self.write_failures += 1
+        return ok
+
     def tick(self) -> dict | None:
-        """每帧调用。到点就下发下一步;返回进度事件或 None。"""
+        """到点下发下一目标。timeline_latest 只发当前最新到期帧。"""
         if self.stopped or self.paused or self.done:
             return None
         # ⚠ 两个检查的**顺序要紧**:必须先看驻留有没有走完,再看步骤有没有走完。
@@ -124,15 +162,36 @@ class ActionPlayer:
             self.done = True
             return None
 
-        step = self.seq.steps[self.step_idx]
-        # 速度/力控:本步给了就先设(抓握动作靠边合边降速,跳过会顶死或抓不稳)
-        if any(v is not None for v in step.speeds):
-            self.hand.write_shorts("SPEED_SET", self._vendor(step.speeds))
-        if any(v is not None for v in step.forces):
-            self.hand.write_shorts("FORCE_SET", self._vendor(step.forces))
-        ok = self._send_angles(step.angles)
+        original_idx = self.step_idx
+        chosen_idx = self._latest_due_index(time.monotonic())
+        # 配置写可能同步等待几十毫秒。写完后重新对时,避免随后发送已经过期的角度。
+        while True:
+            step = self.seq.steps[chosen_idx]
+            if any(v is not None for v in step.speeds):
+                self._set_config("SPEED_SET", step.speeds, "_last_speeds")
+            if any(v is not None for v in step.forces):
+                self._set_config("FORCE_SET", step.forces, "_last_forces")
+            newer_idx = self._latest_due_index(time.monotonic())
+            if newer_idx == chosen_idx:
+                break
+            chosen_idx = newer_idx
 
-        self.step_idx += 1
+        step = self.seq.steps[chosen_idx]
+        # 每个真正选中的时间节点都写 ANGLE_SET；只覆盖已经过期且尚未发送的目标。
+        # 去重仅适用于 SPEED/FORCE，不能让无阻塞回放少掉源视频里的重复姿态帧。
+        angle_written = True
+        fast = self._timeline_latest and step.t_ns is not None
+        ok = self._send_angles(step.angles, fast=fast)
+        if ok:
+            if fast and not self.hand.cfg.mock:
+                self.fast_angle_writes += 1
+        else:
+            self.write_failures += 1
+
+        skipped = chosen_idx - original_idx
+        self.skipped_steps += skipped
+        self.sent_steps += 1
+        self.step_idx = chosen_idx + 1
         # ⚠ 下一步的截止时刻从**上一个截止时刻**累加,不是从 now 累加。
         # 从 now 累加会把 tick 量化误差**逐步攒起来**:tick 10ms、驻留 33ms 时,
         # 实际触发在 40ms(ceil(33/10)*10),而下一步又从这个 40ms 起算 —— 每步都
@@ -159,11 +218,33 @@ class ActionPlayer:
         # 落后太多就重新对齐(比如串口卡了一下)。不这么做的话绝对时间轴会要求
         # "补课",连续几个 tick 每次都发一步 —— 手根本走不到位,姿态直接被跳过。
         # 宁可整段稍微拖长,也不能丢姿态。
-        if self._wait_until < now:
+        # timeline_latest 有下一帧时绝不平移时间轴:下轮会按墙钟覆盖过期目标。
+        # 最后一帧仍从实际发送时刻保留驻留,保证最终目标有时间到位。
+        if self._wait_until < now and (not self._timeline_latest or nxt is None):
             self._wait_until = now + step.delay_ms / 1000.0
+        lag_ms = 0.0
+        if step.t_ns is not None:
+            lag_ms = max(0.0, (now - self._t0 - self._paused_total
+                               - step.t_ns / 1e9) * 1000.0)
+            self.max_lag_ms = max(self.max_lag_ms, lag_ms)
         return {"type": "action_step", "slot": self.seq.slot, "index": self.seq.index,
                 "step": self.step_idx, "total": len(self.seq.steps),
+                "sent": self.sent_steps, "skipped": skipped,
+                "skipped_total": self.skipped_steps,
+                "lag_ms": round(lag_ms, 2), "max_lag_ms": round(self.max_lag_ms, 2),
+                "playback_mode": self.seq.playback_mode,
+                "angle_written": angle_written,
                 "delay_ms": step.delay_ms, "ok": ok}
+
+    def summary(self) -> dict:
+        elapsed_ms = max(0.0, (time.monotonic() - self._t0) * 1000.0)
+        return {"playback_mode": self.seq.playback_mode,
+                "sent": self.sent_steps, "skipped": self.skipped_steps,
+                "max_lag_ms": round(self.max_lag_ms, 2),
+                "elapsed_ms": round(elapsed_ms, 1),
+                "fast_angle_writes": self.fast_angle_writes,
+                "config_writes": self.config_writes,
+                "write_failures": self.write_failures}
 
     @staticmethod
     def _vendor(vals: list[int | None]) -> list[int]:
@@ -174,9 +255,11 @@ class ActionPlayer:
                 out[PROJECT_TO_VENDOR[i]] = int(v)
         return out
 
-    def _send_angles(self, angles: list[int | None]) -> bool:
+    def _send_angles(self, angles: list[int | None], *, fast: bool = False) -> bool:
         vendor = self._vendor(angles)
         if not self.hand.cfg.mock:
+            if fast:
+                return self.hand.write_shorts_fast("ANGLE_SET", vendor)
             return self.hand.write_shorts("ANGLE_SET", vendor)
         # mock:把 raw 折回 rad 存进目标,3D 和滑块才跟着动(否则 mock 下画面不动)。
         # -1 的通道保持上一步的值。
@@ -278,6 +361,7 @@ def handle(hand: InspireHand, cmd: dict, sequences: list[ActionSequence]) -> dic
         _player.start(start_at=start_at if start_at else None)
         return {"type": "ack", "cmd": c, "name": pack.name, "steps": len(seq.steps),
                 "frames": len(pack.frames), "gesture": True,
+                "playback_mode": pack.playback_mode,
                 "duration_ms": pack.duration_ms}
     if c == "list_actions":
         return {"type": "actions", "sequences": [
@@ -301,9 +385,9 @@ def main() -> None:
     # tick。而且 hold_ms 和 tick 同量级时是最坏情况 —— 循环落在截止时刻前一点点
     # 就要再等一整个 tick,于是 33ms 的驻留时而 33ms、时而 66ms,整段拖慢三成多。
     # 实测:tick=33ms 回放 33ms/帧的素材,180 帧跑成 8.10s(源 5.97s,慢 1.36×)。
-    # 所以 tick 要**远小于**最短驻留。100Hz(10ms)对 33ms 驻留是 ~10% 量化误差,
-    # 而遥测仍按 --hz 发,不会把 100 帧/秒 JSON 灌给浏览器。
-    ap.add_argument("--player-hz", type=float, default=100.0,
+    # 所以 tick 要**远小于**最短驻留。200Hz(5ms)能把 60fps 时间轴的调度量化
+    # 控制在约 5ms 内,而遥测仍按 --hz 发,不会把 200 帧/秒 JSON 灌给浏览器。
+    ap.add_argument("--player-hz", type=float, default=200.0,
                     help="动作播放器 tick 率(回放时间分辨率),独立于遥测率")
     ap.add_argument("--speed", type=int, default=500, help="上电初始化速度 0-1000")
     ap.add_argument("--force", type=int, default=500, help="上电初始化力控 0-1000")
@@ -328,7 +412,7 @@ def main() -> None:
                        "steps": len(s.steps)} for s in sequences]})
 
     dt = 1.0 / max(1.0, args.hz)                       # 遥测周期
-    # 播放器 tick 周期。**不播动作时不需要跑这么快** —— 空转 100Hz 纯烧 CPU,
+    # 播放器 tick 周期。**不播动作时不需要跑这么快** —— 空转 200Hz 纯烧 CPU,
     # 所以下面的等待时间取"遥测截止"和"播放器截止"里更近的那个,而播放器截止
     # 只在 _player 存在时才参与。
     pdt = 1.0 / max(1.0, args.player_hz)
@@ -415,11 +499,12 @@ def main() -> None:
                     # name 也带上:技能包的 slot 恒为 -1(它不在 DefaultAction.txt 里),
                     # 前端光看 slot 分不出是哪个包播完了。
                     emit({"type": "action_done", "slot": _player.seq.slot,
-                          "index": _player.seq.index, "name": _player.seq.name})
+                          "index": _player.seq.index, "name": _player.seq.name,
+                          **_player.summary()})
                     _player = None
 
             # 遥测没到点就回去继续等命令/下一次 player tick。
-            # 少了这个判断的话,播放器每 10ms tick 一次会顺带把遥测也发 100 次/秒。
+            # 少了这个判断的话,播放器每 5ms tick 一次会顺带把遥测也发 200 次/秒。
             if time.monotonic() < next_tick:
                 continue
 

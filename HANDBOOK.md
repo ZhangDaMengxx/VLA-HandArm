@@ -29,6 +29,7 @@ ros2_ws/
 | `src/arm_console.py` | 机械臂调试，默认 mock 和低速 |
 | `src/live_wrist_tracking.py` | 单目腕姿、联合锚定、相对映射和末端限幅 |
 | `src/live_ik_worker.py` | 与轻量 Web 环境隔离的 NERO FK/IK 子进程 |
+| `src/live_ik_scheduler.py` | 单 worker、latest-only 实时 IK 调度和过期结果失效 |
 | `src/app_web.py` | Web 工作台和 WebSocket 后端 |
 | `src/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
 | `src/web/combo_camera.js` | 合体页摄像头与锚定/冻结单按钮状态机 |
@@ -37,13 +38,17 @@ ros2_ws/
 | `src/build_combo_viz.py` | 生成本地 Web 合体模型 |
 | `src/build_canonical.py` | 视频到规范层 |
 | `src/derive_embodiment.py` | 规范层到本体轨迹/数据集 |
+| `src/capture_bundle.py` | Capture 路径、版本目录、manifest、checksum 和血缘入口 |
+| `src/quality_profiles.py` | 质量 profile 校验、阈值比较和 Capture 快照入口 |
+| `src/compare_dataset_numeric.py` | 新旧 LeRobotDataset 数值列等价比较 |
 | `src/test/` | 离线单元与结构测试 |
 | `src/test/hardware/` | 需要真机、CAN 或串口的显式测试，不自动收集 |
 | `third_party/` | 上游源码、厂商 SDK、外部数据和项目 overlay |
 
 ## 开发环境
 
-Web、retargeting 与 ROS Python ABI 依赖当前 `lerobot` Python 3.10 环境：
+Web、retargeting 与 ROS Python ABI 继续使用当前 Python 3.10 环境。2026-08-20
+实测版本为 Python `3.10.20`、`lerobot 0.4.4`：
 
 ```bash
 conda activate lerobot
@@ -53,6 +58,95 @@ python src/app_web.py
 
 仅做纯 Python mock 单测时，可按测试文件要求使用系统 Python。不要用是否能 import
 来推断真机驱动已经可用。
+
+LeRobot v3 数据集生成和严格交付验证使用仓库内独立环境 `.envs/lerobot-v3`。已验收版本为
+Python `3.12.13`、`lerobot 0.6.1`、CPU Torch `2.7.1` 和 `torchcodec 0.4.0`：
+
+```bash
+conda create --override-channels -c conda-forge \
+  -p .envs/lerobot-v3 python=3.12 pip -y
+
+.envs/lerobot-v3/bin/python -m pip install \
+  torch==2.7.1+cpu torchvision==0.22.1+cpu \
+  --index-url https://download.pytorch.org/whl/cpu
+
+.envs/lerobot-v3/bin/python -m pip install \
+  -r environment/lerobot-v3-dataset.txt
+```
+
+严格验证时给 Hugging Face 指定可写缓存，并显式离线运行：
+
+```bash
+HF_HOME=/tmp/lerobot-v3-hf \
+HF_DATASETS_CACHE=/tmp/lerobot-v3-hf/datasets \
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+.envs/lerobot-v3/bin/python src/verify_dataset.py \
+  --capture-root datasets/captures/capture_<id> --canonical --strict-v3
+
+.envs/lerobot-v3/bin/python src/verify_dataset.py \
+  --capture-bundle --capture-root datasets/captures/capture_<id> \
+  --json datasets/captures/capture_<id>/reports/capture_integrity_report.json
+```
+
+新生成 Capture 已通过官方 `LeRobotDataset` 回读和 `--strict-v3`。旧 `lerobot 0.4.4`
+数据也能被 0.6.1 回读，但其 `tasks.parquet` 可能只有匿名索引列，不满足严格 v3 交付校验；
+保留旧数据原样，不做就地修补。
+
+四个 LeRobot 写盘入口都在 `save_episode()` 后显式调用 `finalize()`，所以构建命令返回时
+Parquet footer、视频编码和元数据已经落盘，不依赖 Python 进程退出时的析构兜底。
+
+## Capture 数据路径
+
+三个 `build_canonical*` 入口默认各创建一个
+`datasets/captures/capture_<YYYYMMDD>_<sequence>_<uuid>/`。后续命令不传路径时读取最新 `ready`
+Capture；需要绑定指定批次时，整条链都传相同的 `--capture-root`：
+
+```bash
+python src/build_canonical.py --capture-root datasets/captures/capture_<id>
+python src/derive_embodiment.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --emit-traj
+python src/measure_acceptance.py --capture-root datasets/captures/capture_<id> --robot nero_inspire
+python src/verify_dataset.py --capture-root datasets/captures/capture_<id> --canonical
+python src/replay_rerun.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --serve
+```
+
+`<capture>/ego/` 与
+`<capture>/robot_datasets/<target>/target_revision_v001/retarget_v001/` 分别是可加载数据集；
+轨迹在 RobotDataset 的 `exports/workbench/`，验收汇总在 Capture 的 `reports/`。Web 完整
+生成会创建并锁定一个 Capture，服务重启后默认选择最新 `ready` Capture。
+
+`source/stream_index.parquet` 记录原始帧到 Ego 帧的可空映射及时间来源。当前旧视频/RGB-D
+帧集没有硬件时间时使用 `fps_derived`，只表示处理时间轴，不作为相机同步精度证据。
+
+质量口径位于 `configs/quality_profiles/*.json`，构建时完整复制到
+`source/quality_profile.json`，同一 Capture 不允许静默替换。三个构建器的默认 profile 分别是
+`legacy_rgb_video_30hz_v1`、`legacy_aligned_rgbd_30hz_v1` 和
+`processed_observations_v1`。正式 60 Hz RGB-D 目标使用：
+
+```bash
+python src/build_canonical_from_rgbd.py --input-root <rgbd_root> \
+  --quality-profile ego_fixed_rgbd_60hz_v1
+```
+
+该命令只选择验收口径，不会把 30 Hz、低分辨率或无硬件时间戳的输入变成达标数据。
+`measure_acceptance.py` 默认读取 Capture 快照；对外部/旧根可显式传 `--quality-profile`。
+当前 profile schema 1.1 将绝对精度、稳定性代理、连续性、时序和模型拟合分开。报告中的每项
+都带 `measurement_class`、`measurement_basis`、`ground_truth_required` 和
+`ground_truth_available`。手腕绝对位置误差只有在数据包含 `ground_truth.wrist_pose` 时判定；
+静止抖动只有在存在 `annotation.wrist_stationary` 连续静止段时判定。缺失证据时 `pass=null`。
+
+Ego 和 RobotDataset 会为每个 episode 创建 `annotations/episode_*.json`。生成器只补缺失文件，
+不会覆盖人工审核。RobotDataset 同时生成 `qa/episode_*.json`：帧索引和数值有限性自动判定，
+需要机器人模型或真值的限位、碰撞和指尖误差保持 `not_evaluated`。
+
+`ego/meta/coordinate_system.json` 是坐标语义唯一入口。2.0 契约分别声明
+`observation.wrist_pose`、3D 关键点和 2D 关键点所在 frame；固定相机 RGB 使用
+`episode0_camera`，经 `camera_to_world` 外参变换的 RGB-D 使用 `scene_world`。外部处理结果可
+内嵌 `wrist_pose_frame`，也可传 `--wrist-pose-frame`；旧文件缺省导入会明确标记
+`compatibility_default_episode0_camera`。禁止根据 `source_kind` 或目录名推断坐标系。
+
+旧 `src/out/` 只通过各命令的 `--legacy-out` 或 Web 的 `VLA_LEGACY_OUT=1` 读取。禁止把
+`--legacy-out` 与 Capture/显式输出路径混用，也不要手工把旧目录伪装成新 Capture。正式数据
+目录被 `.gitignore` 排除；只提交目录契约文档，不提交采集内容。
 
 ## 常见改动
 
@@ -174,6 +268,24 @@ Mock 与真机使用同一个 `/ws/hand/mimic` 协议、NERO IK worker 和 7+6 �
 在线、已使能、未冻结，并由页面显式勾选实时跟随授权；不要取消这个安全门。丢手、左右手
 变化、连续 3 次 IK 失败、急停/冻结、未使能或断线时应停止投递并冻结，恢复后必须重新锚定。
 
+实时链路按“最新状态控制”解耦：浏览器仍保持一帧 WebSocket 请求在途和一个待发最新帧；
+后端完成一次 retarget 后先把灵巧手送入 30Hz mailbox，再把腕部目标送入单 worker IK。
+IK 最多一个求解在途、一个 pending，新帧覆盖未求解旧帧；响应返回 `ik_queued`、`ik_replaced`、
+`ik_pending`、`ik_in_flight`，以及带 `source_frame_id` 的最近完成机械臂结果。IK 输入超过
+`180ms` 或完成结果超过 `200ms` 直接丢弃。锚点、授权或会话变化后，即使旧求解随后完成也
+不得进入 arm mailbox。锚定时的一次 FK 仍允许同步等待，因为没有有效机器人锚点就不能映射。
+
+与行业常见实时控制方式的对照如下：
+
+| 做法 | 常见语义 | 本项目结论 |
+|------|----------|------------|
+| ROS 2 QoS `KEEP_LAST(1)` / Servo 命令超时 | 消费最新状态，过期命令不补跑 | 采用：浏览器、IK 和硬件 mailbox 都有界且带时效 |
+| 工业周期控制 | 感知/规划与设备周期分离，各通道独立限频 | 采用：手 30Hz、臂 30Hz 独立，设备内部各自串行等 ACK |
+| 无界 FIFO IK 作业队列 | 每帧最终都执行，适合离线作业 | 拒绝：实时控制会积压并补跑历史动作 |
+| 每帧并发 IK | 吞吐可能更高，但完成乱序且共享种子/客户端竞态 | 拒绝：固定单 worker，结果顺序和资源所有权可证明 |
+
+合体页默认灵巧手速度为 `1000`，机械臂为 `50%`；机械臂独立调试页继续保持 `20%` 默认值。
+
 这条链路不是人体上肢的完整重建：当前输入只有手部 landmarks，位置是单目表观尺度的相对量，
 末端姿态只在锚点附近有限跟随，也没有肩、肘、相机到机器人基座的真实外参。因此它适合小范围腕部平移/旋转和
 灵巧手手指映射，不能宣称完全复制人的肩肘腕轨迹。要扩大到整条手臂，需要加入肩/肘姿态跟踪、
@@ -182,7 +294,7 @@ RGB-D 或多相机深度、外参标定、全上肢 retargeting，以及工作�
 修改后至少运行：
 
 ```bash
-python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_wrist_tracking.py -q
+python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_ik_scheduler.py src/test/test_live_wrist_tracking.py -q
 node src/test/web/hand_tracker_tasks.test.mjs
 node src/test/web/hand_mimic_transport.test.mjs
 node src/test/web/combo_camera.test.mjs
@@ -238,4 +350,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ---
 
-**最后核对**：2026-08-19
+**最后核对**：2026-08-20

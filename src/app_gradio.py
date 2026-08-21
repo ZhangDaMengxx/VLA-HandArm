@@ -8,8 +8,8 @@
   gradio 依赖新版 huggingface-hub,和 lerobot 需要的旧版天然冲突,隔离开互不影响。
 
 数据流(路径全自动串,见各脚本):
-  上传视频 ──► build_canonical.py --video 视频 ──► src/out/canonical_ds
-           ──► derive_embodiment.py --emit-traj ──► src/out/robot_traj_nero_inspire.pkl
+  上传视频 ──► build_canonical.py --video 视频 ──► <capture>/ego/
+           ──► derive_embodiment.py --emit-traj ──► <capture>/robot_datasets/.../exports/workbench/
            ──► replay_rerun.py --serve --video 视频 ──► Rerun web 查看器(嵌 iframe)
 
 运行(在 gradio venv 里):
@@ -37,9 +37,11 @@ REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest")
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lerobot_env import lerobot_python                  # noqa: E402
+from capture_bundle import create_capture, latest_capture  # noqa: E402
 
 LEROBOT_PY = lerobot_python()      # 见 src/lerobot_env.py,环境位置探测的唯一真源
 GRADIO_PORT = int(os.environ.get("GRADIO_PORT", "7860"))
+CAPTURES_ROOT = REPO / "datasets/captures"
 
 _URL_RE = re.compile(r"(https?://\S+\?url=\S+)")   # replay 打印的完整查看器地址
 _replay_proc: subprocess.Popen | None = None
@@ -113,11 +115,12 @@ def _run_bar(cmd, log, caption, floor, ceil, viewer):
     yield "__ok__", p.returncode == 0
 
 
-def _start_replay(video: str | None, log: list[str]) -> str | None:
+def _start_replay(video: str | None, log: list[str], capture_root: Path) -> str | None:
     """后台起 replay_rerun --serve,读 stdout 直到解析出 web 地址,返回 URL(拿到即返回,进程留活)。"""
     global _replay_proc
     _stop_replay()
-    cmd = [LEROBOT_PY, "src/replay_rerun.py", "--serve"]
+    cmd = [LEROBOT_PY, "src/replay_rerun.py", "--serve",
+           "--capture-root", str(capture_root)]
     if video:
         cmd += ["--video", str(video)]
     log.append("$ " + " ".join(cmd))
@@ -146,10 +149,19 @@ def pipeline(video: str | None, skip_regen: bool):
         yield _bar(0, "请先上传视频(.mp4)", "err"), gr.update(), ""
         return
 
-    if not skip_regen:
+    if skip_regen:
+        capture = latest_capture(CAPTURES_ROOT)
+        if capture is None:
+            yield _bar(0, "没有可复用的 Capture，请先完整生成一次", "err"), gr.update(), ""
+            return
+    else:
+        capture = create_capture(CAPTURES_ROOT)
+        log.append(f"Capture: {capture.capture_id}")
+        capture_args = ["--capture-root", str(capture.root)]
         # ① 规范层
         ok = None
-        for out in _run_bar([LEROBOT_PY, "src/build_canonical.py", "--video", str(video)],
+        for out in _run_bar([LEROBOT_PY, "src/build_canonical.py", "--video", str(video),
+                             *capture_args],
                             log, "① 规范层 · 检测人手关键点", 6, 42, gr.update()):
             if out[0] == "__ok__":
                 ok = out[1]
@@ -160,7 +172,8 @@ def pipeline(video: str | None, skip_regen: bool):
             return
         # ② 本体层
         ok = None
-        for out in _run_bar([LEROBOT_PY, "src/derive_embodiment.py", "--emit-traj"],
+        for out in _run_bar([LEROBOT_PY, "src/derive_embodiment.py", "--emit-traj",
+                             *capture_args],
                             log, "② 本体层 · 逐帧逆解 IK", 45, 80, gr.update()):
             if out[0] == "__ok__":
                 ok = out[1]
@@ -172,7 +185,7 @@ def pipeline(video: str | None, skip_regen: bool):
 
     # ③ 回放
     yield _bar(84, "③ 启动 Rerun 服务", "run"), gr.update(), _tail(log)
-    url = _start_replay(str(video), log)
+    url = _start_replay(str(video), log, capture.root)
     if not url:
         yield _bar(84, "③ 未获取到 Rerun 地址 · 展开日志看详情", "err"), gr.update(), _tail(log)
         return

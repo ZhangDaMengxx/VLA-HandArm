@@ -37,6 +37,7 @@ import sys
 sys.path.insert(0, str(SIM))
 from nero_arm import (NERO_ARM_LIMITS, ARM_JOINTS,     # noqa: E402
                       NERO_CPV_VV_DEG, NERO_CPV_AC_DEG, NERO_RATED_SPD_DEG)
+from capture_bundle import discover_trajectory_npz  # noqa: E402
 
 VV = np.array(NERO_CPV_VV_DEG)      # CPV 轮廓速度上限 deg/s(出厂默认)
 AC = np.array(NERO_CPV_AC_DEG)      # CPV 加/减速上限 deg/s²(出厂默认)
@@ -396,10 +397,20 @@ def main() -> int:
                     help="RDP 抽稀成稀疏路点。默认关(流式不需要,离线轨迹模式才要)")
     ap.add_argument("--emit", action="store_true",
                     help="写出 out/arm_pack_<name>.json。默认只报告不落盘")
-    ap.add_argument("files", nargs="*", help="默认 out/robot_traj_*.npz 全部")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle；不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--legacy-out", action="store_true", help="显式扫描旧 src/out")
+    ap.add_argument("files", nargs="*", help="显式轨迹路径；默认扫描当前 Capture")
     a = ap.parse_args()
 
-    paths = [Path(f) for f in a.files] or sorted(OUT.glob("robot_traj_*.npz"))
+    try:
+        paths = [Path(f) for f in a.files] or discover_trajectory_npz(
+            capture_root=a.capture_root,
+            legacy_out=a.legacy_out,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"没找到 npz：{exc}")
+        return 1
     if not paths:
         print("没找到 npz。先跑 derive_embodiment.py --emit-traj")
         return 1

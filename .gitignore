@@ -14,6 +14,8 @@
 
 # ---- 生成物 / 训练输出(可重建,不入库)----
 /outputs/
+/datasets/captures/capture_*/
+/datasets/captures/.capture-sequence.lock
 # 注意用 src/out/* 而非 src/out/:目录级忽略会让下面的 ! 例外失效。
 src/out/*
 # 例外:技能表 registry.yaml 的 trajectory 技能直接引用这两个 npz(各 ~100K)。
@@ -26,6 +28,7 @@ src/out/*
 src/assets/nero_inspire_right.urdf
 
 # ---- Python ----
+.envs/
 __pycache__/
 *.pyc
 *.pyo

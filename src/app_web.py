@@ -53,6 +53,7 @@ from skills.runner import _log_invocation, log_parse       # noqa: E402
 from lerobot_env import lerobot_python                  # noqa: E402
 from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
 from hand_target_filter import OneEuroJointFilter  # noqa: E402
+from live_ik_scheduler import IKTarget, LatestIKScheduler  # noqa: E402
 from nero_arm import NERO_HOME_POSE, NERO_TRACKING_READY_POSE  # noqa: E402
 from live_wrist_tracking import (  # noqa: E402
     LiveWristMapper,
@@ -60,6 +61,11 @@ from live_wrist_tracking import (  # noqa: E402
     OneEuroVectorFilter,
     WristObservation,
     estimate_wrist_observation,
+)
+from capture_bundle import (  # noqa: E402
+    create_capture,
+    latest_capture,
+    resolve_data_paths,
 )
 
 # --- 路径 / 解释器(可用环境变量覆盖)---
@@ -109,16 +115,56 @@ RGBD_INPUT_ROOT = os.environ.get(
     "RGBD_INPUT_ROOT", "third_party/kinect2-middle/kinect2_middle"
 )
 RGBD_CAMERA = os.environ.get("RGBD_CAMERA", "kinect2_middle")
+CAPTURES_ROOT = REPO / "datasets/captures"
+LEGACY_DATA_MODE = os.environ.get("VLA_LEGACY_OUT", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+_active_capture = None if LEGACY_DATA_MODE else latest_capture(CAPTURES_ROOT)
+
+
+def _web_data_paths(robot: str):
+    """Resolve every replay artifact from one active Capture (or explicit legacy mode)."""
+    capture_root = _active_capture.root if _active_capture is not None else None
+    return resolve_data_paths(
+        robot,
+        capture_root=capture_root,
+        legacy_out=LEGACY_DATA_MODE,
+        captures_root=CAPTURES_ROOT,
+    )
 
 
 def _traj_pkl(robot: str) -> Path:
     """derive_embodiment --emit-traj 产出的 pkl(按规格名);replay/play 都据此定位。"""
-    return REPO / f"src/out/robot_traj_{robot}.pkl"
+    try:
+        return _web_data_paths(robot).trajectory_pkl
+    except (ValueError, FileNotFoundError):
+        return CAPTURES_ROOT / "_no_capture" / robot / "robot_traj.pkl"
 
 
 def _metrics_json(robot: str) -> Path:
     """measure_acceptance --json 产出的验收指标缓存(按规格名);右侧验收卡据此显示。"""
-    return REPO / f"src/out/metrics_{robot}.json"
+    try:
+        return _web_data_paths(robot).quality_report
+    except (ValueError, FileNotFoundError):
+        return CAPTURES_ROOT / "_no_capture" / robot / "metrics.json"
+
+
+def _canonical_root(robot: str) -> Path:
+    try:
+        return _web_data_paths(robot).canonical_root
+    except (ValueError, FileNotFoundError):
+        return CAPTURES_ROOT / "_no_capture" / "ego"
+
+
+def _original_video(robot: str) -> Path:
+    try:
+        paths = _web_data_paths(robot)
+    except (ValueError, FileNotFoundError):
+        return CAPTURES_ROOT / "_no_capture" / "recording_000000.mp4"
+    if paths.original_video.exists():
+        return paths.original_video
+    candidates = sorted(paths.original_video.parent.glob("recording_000000.*"))
+    return candidates[0] if candidates else paths.original_video
 
 
 # /api/replay/play 用的 npz,随最近一次成功管线的机器人规格更新。
@@ -221,6 +267,10 @@ def _start_replay(video: str | None, log: list[str], robot: str = "nero_inspire_
            "--grpc-port", str(GRPC_PORT), "--web-port", str(WEB_VIEWER_PORT),
            "--robot", robot,
            "--traj", f"{robot}={_traj_pkl(robot)}"]
+    if LEGACY_DATA_MODE:
+        cmd.append("--legacy-out")
+    elif _active_capture is not None:
+        cmd += ["--capture-root", str(_active_capture.root)]
     if no_video:
         cmd += ["--no-video", "--no-skeleton"]
     elif video:
@@ -250,7 +300,7 @@ def run_pipeline(input_path: str | None, skip_regen: bool, dataset: str, emit,
     dataset='rgb'(上传视频,legacy 相对)或 'rgbd'(手动指定 kinect 目录,metric 几何)。
     hand='inspire'(灵巧手 state=13)或 'gripper'(平行夹爪 state=8);本体 = nero_{hand}_{rgb|rgbd}。
     rgbd_dir/rgbd_camera 为空时回退环境变量默认。"""
-    global TRAJ_NPZ
+    global TRAJ_NPZ, _active_capture
     log: list[str] = []
     ds = DATASETS.get(dataset, DATASETS["rgb"])
     is_rgbd = dataset == "rgbd"
@@ -265,55 +315,61 @@ def run_pipeline(input_path: str | None, skip_regen: bool, dataset: str, emit,
     if is_rgbd and not (REPO / rgbd_root).exists() and not Path(rgbd_root).exists():
         emit({"type": "error", "msg": f"RGB-D 目录不存在: {rgbd_root}"})
         return
+    if LEGACY_DATA_MODE:
+        capture = None
+        capture_args = ["--legacy-out"]
+        data_paths = resolve_data_paths(robot, legacy_out=True)
+    elif skip_regen:
+        capture = _active_capture or latest_capture(CAPTURES_ROOT)
+        if capture is None:
+            emit({"type": "error", "msg": "没有可跳过生成的 Capture;请先运行一次完整管线"})
+            return
+        capture_args = ["--capture-root", str(capture.root)]
+        data_paths = resolve_data_paths(robot, capture_root=capture.root)
+    else:
+        capture = create_capture(CAPTURES_ROOT)
+        capture_args = ["--capture-root", str(capture.root)]
+        data_paths = resolve_data_paths(robot, capture_root=capture.root)
+        emit({"type": "log", "line": f"Capture: {capture.capture_id}"})
     if not skip_regen:
         if is_rgbd:
             cmd = [LEROBOT_PY, "src/build_canonical_from_rgbd.py",
-                   "--input-root", rgbd_root, "--camera", rgbd_cam]
+                   "--input-root", rgbd_root, "--camera", rgbd_cam, *capture_args]
             caption = f"① 规范层 · {ds['label']} 深度反投手部 · {rgbd_root}"
         elif source == "handfile":
-            cmd = [LEROBOT_PY, "src/build_canonical_from_processed.py", "--input", str(input_path)]
+            cmd = [LEROBOT_PY, "src/build_canonical_from_processed.py", "--input", str(input_path),
+                   *capture_args]
             caption = "① 规范层 · 导入外部手部结果"
         else:
-            cmd = [LEROBOT_PY, "src/build_canonical.py", "--video", str(input_path)]
+            cmd = [LEROBOT_PY, "src/build_canonical.py", "--video", str(input_path), *capture_args]
             caption = "① 规范层 · 检测人手关键点"
         if not _run_step(cmd, log, caption, 6, 42, emit):
             emit({"type": "error", "msg": "① 规范层生成失败 · 看日志"})
             return
-        if not _run_step([LEROBOT_PY, "src/derive_embodiment.py", "--robot", robot, "--emit-traj"],
+        if not _run_step([LEROBOT_PY, "src/derive_embodiment.py", "--robot", robot,
+                          "--emit-traj", *capture_args],
                          log, f"② 本体层 · {ds['label']} 逐帧逆解 IK", 45, 78, emit):
             emit({"type": "error", "msg": "② 本体层生成失败 · 看日志"})
             return
         # ②' 验收指标:按本体测数据有效性,缓存 JSON 供右侧验收卡显示(失败不阻断管线)
         _run_step([LEROBOT_PY, "src/measure_acceptance.py",
-                   "--robot", robot, "--json", str(_metrics_json(robot))],
+                   "--robot", robot, "--json", str(data_paths.quality_report), *capture_args],
                   log, f"②' 验收 · {ds['label']} 数据有效性指标", 78, 82, emit)
-    TRAJ_NPZ = _traj_pkl(robot).with_suffix(".npz")   # 供 /api/replay/play 定位
-    # 原始视频硬链接到固定位置,供 /api/replay/video/original serve(canonical 不需要,已在 ds/)
-    if input_path and Path(input_path).exists() and not is_rgbd and source != "handfile":
-        out_vid = REPO / f"src/out/replay_video_original_{robot}.mp4"
-        try:
-            out_vid.unlink(missing_ok=True)
-            # 上传文件落在 /tmp,和 out/ 可能不同文件系统(WSL 下常见)→ 硬链接会
-            # EXDEV。失败就复制:多占一份空间,但 /api/replay/video/original 和
-            # keypoints 量源分辨率都依赖这个文件存在,不能省。
-            try:
-                out_vid.hardlink_to(input_path)
-            except OSError:
-                import shutil
-                shutil.copy2(input_path, out_vid)
-        except Exception as e:  # noqa: BLE001
-            log.append(f"原始视频保存失败(不阻断,原始视频开关会不可用): {e}")
+    TRAJ_NPZ = data_paths.trajectory_npz   # 供 /api/replay/play 定位
     # ③ 回放数据自检。**不再起 replay_rerun --serve** —— 回放页改成 three.js(replay3d.js)
     # 直接按帧号拉 /api/replay/keypoints + /api/traj/frames + 视频,全走 7860 同源。
     # 原来这步要加载 9MB mesh、白等最多 180s 的 URL、还占着 9090/9876 两个端口,
     # 远程访问时那两个端口还得再套一层转发 —— 现在整条都省了。
     emit({"type": "progress", "pct": 88, "msg": "③ 回放数据自检"})
-    missing = [str(p.name) for p in (TRAJ_NPZ, REPO / "src/out/canonical_ds/meta/info.json")
+    missing = [str(p.name) for p in (TRAJ_NPZ, data_paths.canonical_root / "meta/info.json")
                if not p.exists()]
     if missing:
         emit({"type": "error", "msg": f"③ 回放数据缺失: {', '.join(missing)} · 看日志"})
         return
-    emit({"type": "replay_ready", "robot": robot})
+    if capture is not None:
+        _active_capture = capture
+    emit({"type": "replay_ready", "robot": robot,
+          "capture_id": capture.capture_id if capture is not None else "legacy"})
     emit({"type": "progress", "pct": 100, "msg": "完成 · 已加载三面板"})
     emit({"type": "done"})
 
@@ -1209,7 +1265,7 @@ async def replay_keypoints(robot: str = "") -> JSONResponse:
     供 replay3d.js 画骨骼叠加和验证手腕姿态。"""
     import numpy as np
     import pyarrow.parquet as pq
-    ds_root = REPO / "src/out/canonical_ds"
+    ds_root = _canonical_root(robot or "nero_inspire_rgb")
     parquet_files = sorted((ds_root / "data").rglob("*.parquet"))
     if not parquet_files:
         return JSONResponse({"error": "canonical parquet 不存在"}, status_code=404)
@@ -1228,7 +1284,7 @@ async def replay_keypoints(robot: str = "") -> JSONResponse:
     # 视频被缩到 256×256。u 除以 src_w、v 除以 src_h —— 两个除数不同,前端得分轴缩放。
     # 优先量原始视频;没有就从 kp2d 范围反推(取 2 的幂次附近的常见分辨率兜底)。
     src_w = src_h = 0
-    orig = REPO / f"src/out/replay_video_original_{robot}.mp4" if robot else None
+    orig = _original_video(robot) if robot else None
     if orig and orig.exists():
         try:
             import cv2
@@ -1261,7 +1317,7 @@ async def replay_keypoints(robot: str = "") -> JSONResponse:
 async def replay_video_canonical():
     """规范层视频 256×256 @30fps，与 keypoints/traj 帧号严格 1:1 对齐。"""
     from starlette.responses import FileResponse
-    p = REPO / "src/out/canonical_ds/videos/observation.images.ego/chunk-000/file-000.mp4"
+    p = _canonical_root("nero_inspire_rgb") / "videos/observation.images.ego/chunk-000/file-000.mp4"
     if not p.exists():
         return JSONResponse({"error": "canonical 视频不存在"}, status_code=404)
     return FileResponse(p, media_type="video/mp4")
@@ -1271,8 +1327,7 @@ async def replay_video_canonical():
 async def replay_video_original(robot: str = ""):
     """原始上传视频(如果保存了)。⚠ 帧号可能和 canonical 不对齐(起始检测失败帧被跳过)。"""
     from starlette.responses import FileResponse
-    # 管线跑完会把原始视频硬链接到 out/replay_video_original_{robot}.mp4
-    p = REPO / f"src/out/replay_video_original_{robot or 'default'}.mp4"
+    p = _original_video(robot or "nero_inspire_rgb")
     if not p.exists():
         return JSONResponse({"error": "原始视频未保存"}, status_code=404)
     return FileResponse(p, media_type="video/mp4")
@@ -1285,7 +1340,7 @@ async def replay_play(speed: float = 1.0, fps: float = 30.0) -> StreamingRespons
     async def stream():
         global _player_proc
         _stop_player()                                    # 单实例:先停旧的
-        if not TRAJ_NPZ.exists():
+        if TRAJ_NPZ is None or not TRAJ_NPZ.exists():
             yield f"data: {json.dumps({'type':'error','msg':'无轨迹,请先在回放模式跑一遍视频管线'}, ensure_ascii=False)}\n\n"
             return
         sp = max(0.25, min(4.0, speed))
@@ -2361,13 +2416,10 @@ async def hand_video_extract(payload: dict) -> JSONResponse:
     video = str(payload.get("video") or "").strip()
     if not video:
         return JSONResponse({"ok": False, "msg": "要给 video"}, status_code=400)
-    stride = max(1, min(30, int(payload.get("stride") or vg.DEFAULT_STRIDE)))
     # 去尖刺默认开。关掉是给"想看原始输出做对比"用的,不是给"觉得平滑不好"用的 ——
     # 这里做的是 3 点中值去单帧离群,不是平滑(video_gesture 里那段注释解释了为什么
     # **不**加 SavGol 平滑)。
     do_despike = payload.get("despike", True) is not False
-    maxf = max(1, min(vg.MAX_EXTRACT_FRAMES, int(payload.get("max_frames")
-                                                 or vg.MAX_EXTRACT_FRAMES)))
     hand_type = "Left" if str(payload.get("hand_type", "Right")) == "Left" else "Right"
     if not Path(video).is_file():
         return JSONResponse({"ok": False, "msg": f"视频不存在: {video}"},
@@ -2375,20 +2427,19 @@ async def hand_video_extract(payload: dict) -> JSONResponse:
     # ⚠ 占位必须在 run_in_executor **之前**,而且是原子的。读 job.running 再判断
     # 是不够的:executor 只把活排进队列就返回,工作线程还没把 running 置上,
     # 后一个请求就过检查了 —— 两个任务同时写同一个 _job,进度和结果全混。
-    if not vg.claim(video, stride=stride, hand_type=hand_type):
+    if not vg.claim(video, hand_type=hand_type):
         return JSONResponse({"ok": False, "msg": "已有抽取任务在跑,先取消"},
                             status_code=409)
 
     def worker() -> None:
         try:
-            vg.extract(video, stride=stride, hand_type=hand_type, max_frames=maxf,
-                       do_despike=do_despike)
+            vg.extract(video, hand_type=hand_type, do_despike=do_despike)
         except Exception as e:                             # noqa: BLE001
             vg.release(str(e))            # 放掉任务位,否则永久卡 running
 
     asyncio.get_event_loop().run_in_executor(_executor, worker)
-    return JSONResponse({"ok": True, "video": video, "stride": stride,
-                         "max_frames": maxf, "hand_type": hand_type})
+    return JSONResponse({"ok": True, "video": video, "stride": vg.DEFAULT_STRIDE,
+                         "all_source_frames": True, "hand_type": hand_type})
 
 
 @app.get("/api/hand/video/status")
@@ -2433,19 +2484,23 @@ async def hand_video_keyframes(eps: float = 0.25, max_out: int = 12,
     frames, timing = vg.frames_to_pack_frames(kf, speed=int(speed), force=int(force))
     return JSONResponse({"ok": True, "mode": "all" if dense else "key",
                          "eps": eps, "max_out": max_out,
-                         "n_all": len(job.frames), "n_picked": len(kf),
-                         "hit_cap": (not dense) and len(kf) >= max_out,
+                         "n_all": len(job.frames), "n_detected": len(job.frames),
+                         "source_frames": job.done, "n_picked": len(kf),
+                         "hit_cap": len(kf) < len(job.frames)
+                                    if dense else len(kf) >= max_out,
                          "timing": timing, "quality": job.quality,
                          "despiked": job.despiked, "frames": frames})
 
 
 @app.get("/api/hand/video/frames")
-async def hand_video_frames(limit: int = 400) -> JSONResponse:
-    """逐帧结果(给时间轴刷子用)。limit 防一次吐几千帧把前端撑住。"""
+async def hand_video_frames(limit: int = 0) -> JSONResponse:
+    """逐帧结果(给时间轴刷子用)。默认返回全部检出帧;limit>0 可显式截取。"""
     import video_gesture as vg
     job = vg.current_job()
-    fr = job.frames[:max(1, min(2000, int(limit)))]
-    return JSONResponse({"ok": True, "n_all": len(job.frames),
+    cap = max(1, int(limit)) if limit > 0 else len(job.frames)
+    fr = job.frames[:cap]
+    return JSONResponse({"ok": True, "source_frames": job.done,
+                         "n_all": len(job.frames), "n_detected": len(job.frames),
                          "truncated": len(fr) < len(job.frames),
                          "quality": job.quality, "despiked": job.despiked,
                          "frames": fr})
@@ -2532,6 +2587,12 @@ async def ws_hand_mimic(websocket: WebSocket):
         track_orientation=True,
     )
     ik_client: LiveIKClient | None = None
+    ik_scheduler: LatestIKScheduler | None = None
+    session_generation = time.monotonic_ns()
+    session_active = True
+    authorization_revision = 0
+    current_drive_arm = False
+    current_allow_real_arm = False
     last_arm_targets: list[float] | None = None
     consecutive_ik_failures = 0
     joint_order = (
@@ -2544,6 +2605,129 @@ async def ws_hand_mimic(websocket: WebSocket):
     )
     print("[ws] 合体跟随客户端已连接")
 
+    def report_ik(perf: dict) -> None:
+        print(
+            "[perf-arm/ik] "
+            f"id={perf.get('id')} replaced={perf.get('replaced')} "
+            f"age={perf.get('age_ms')}ms solve={perf.get('ik_ms')}ms "
+            f"status={perf.get('status')}",
+            flush=True,
+        )
+
+    async def apply_ik_result(
+        target: IKTarget, solved: dict, metrics: dict
+    ) -> dict:
+        nonlocal consecutive_ik_failures, last_arm_targets
+
+        context = target.context
+        result = {
+            "queued": False,
+            "ik_ok": bool(solved.get("ok", True) and solved.get("ik_ok")),
+            "ik_ms": metrics["ik_ms"],
+            "ik_age_ms": metrics["age_ms"],
+            "ik_completed_replaced": metrics["replaced"],
+            "source_frame_id": target.frame_id,
+            "reason": None,
+            "position_limited": bool(context.get("position_limited")),
+            "orientation_limited": bool(context.get("orientation_limited")),
+            "orientation_delta_deg": list(context.get("orientation_delta_deg") or ()),
+            "orientation_limited_axes": list(
+                context.get("orientation_limited_axes") or ()
+            ),
+        }
+        valid_session = bool(
+            session_active
+            and target.session_generation == session_generation
+            and target.anchor_revision == mapper.anchor_revision
+            and mapper.state == "following"
+            and context.get("authorization_revision") == authorization_revision
+        )
+        if not valid_session:
+            result["reason"] = "stale_session"
+            return result
+
+        if not result["ik_ok"]:
+            consecutive_ik_failures += 1
+            result["reason"] = "ik_failed"
+            if consecutive_ik_failures >= 3:
+                mapper.freeze("ik_failed")
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if _arm is not None:
+                    _arm.end_tracking()
+            return result
+
+        q = [float(value) for value in solved.get("q", ())]
+        if len(q) != 7 or not all(np.isfinite(value) for value in q):
+            result.update(ik_ok=False, reason="invalid_ik_result")
+            consecutive_ik_failures += 1
+            if consecutive_ik_failures >= 3:
+                mapper.freeze("invalid_ik_result")
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if _arm is not None:
+                    _arm.end_tracking()
+            return result
+
+        consecutive_ik_failures = 0
+        last_arm_targets = q
+        result["arm_joint_targets"] = q
+
+        arm = _arm
+        arm_online = bool(
+            arm and arm.ready and arm.console and arm.console.poll() is None
+        )
+        latest = (arm.latest or {}) if arm else {}
+        drive_arm = bool(current_drive_arm and context.get("drive_arm"))
+        allow_real_arm = bool(
+            current_allow_real_arm and context.get("allow_real_arm_tracking")
+        )
+        arm_safe = bool(
+            arm_online and latest.get("enabled") and not latest.get("frozen")
+            and (arm.mock or allow_real_arm)
+        )
+        if drive_arm and arm_safe:
+            queued = _get_arm_target_mailbox().submit(
+                owner, target.frame_id, q, created_at=target.created_at
+            )
+            result.update(
+                queued=queued.accepted,
+                replaced=queued.replaced,
+                reason=queued.reason,
+            )
+        elif drive_arm:
+            result["reason"] = (
+                "offline" if not arm_online
+                else "disabled" if not latest.get("enabled")
+                else "frozen" if latest.get("frozen")
+                else "real_arm_not_armed"
+            )
+        return result
+
+    def ensure_ik_scheduler() -> LatestIKScheduler:
+        nonlocal ik_scheduler
+        if ik_client is None:
+            raise RuntimeError("IK client is not ready")
+        if ik_scheduler is None:
+            def solve(target: IKTarget) -> dict:
+                return ik_client.request({
+                    "cmd": "solve",
+                    "target_pose": list(target.target_pose),
+                })
+
+            ik_scheduler = LatestIKScheduler(
+                solve,
+                apply_ik_result,
+                max_input_age_ms=180.0,
+                max_result_age_ms=200.0,
+                reporter=report_ik,
+            )
+        return ik_scheduler
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -2554,6 +2738,23 @@ async def ws_hand_mimic(websocket: WebSocket):
             frame_id = data.get("frame_id")
             tracking_control = data.get("tracking_control")
             tracking_control_applied = False
+            requested_drive_arm = bool(data.get("drive_arm"))
+            requested_allow_real_arm = bool(data.get("allow_real_arm_tracking"))
+            if (
+                requested_drive_arm != current_drive_arm
+                or requested_allow_real_arm != current_allow_real_arm
+            ):
+                was_driving_arm = current_drive_arm
+                current_drive_arm = requested_drive_arm
+                current_allow_real_arm = requested_allow_real_arm
+                authorization_revision += 1
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
+                if was_driving_arm and not current_drive_arm:
+                    if _arm_target_mailbox is not None:
+                        _arm_target_mailbox.release(owner)
+                    if _arm is not None:
+                        _arm.end_tracking()
 
             if format_type != "mediapipe":
                 await websocket.send_json({
@@ -2567,6 +2768,8 @@ async def ws_hand_mimic(websocket: WebSocket):
                 wrist_position_filter.reset()
                 wrist_orientation_filter.reset()
                 tracking_control_applied = True
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
                 if _arm_target_mailbox is not None:
                     _arm_target_mailbox.release(owner)
                 if _arm is not None:
@@ -2577,6 +2780,8 @@ async def ws_hand_mimic(websocket: WebSocket):
                 target_filter.reset()
                 wrist_position_filter.reset()
                 wrist_orientation_filter.reset()
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
                 if _hand_target_mailbox is not None:
                     _hand_target_mailbox.release(owner)
                 if _arm_target_mailbox is not None:
@@ -2624,10 +2829,17 @@ async def ws_hand_mimic(websocket: WebSocket):
                     if tracking_control == "anchor":
                         wrist_position_filter.reset()
                         wrist_orientation_filter.reset()
+                        if ik_scheduler is not None:
+                            ik_scheduler.release(owner)
+                        if _arm_target_mailbox is not None:
+                            _arm_target_mailbox.release(owner)
+                        if _arm is not None:
+                            _arm.end_tracking()
                         if ik_client is None:
                             ik_client = await asyncio.get_event_loop().run_in_executor(
                                 None, LiveIKClient
                             )
+                        ensure_ik_scheduler()
                         arm = _arm
                         arm_online = bool(
                             arm and arm.ready and arm.console
@@ -2688,7 +2900,9 @@ async def ws_hand_mimic(websocket: WebSocket):
                     )
                     mapping = mapper.observe(wrist_observation)
 
-                arm_target = None
+                completed_arm = (
+                    ik_scheduler.latest_result if ik_scheduler is not None else None
+                )
                 arm_result = {
                     "queued": False,
                     "ik_ok": mapper.state != "following",
@@ -2698,31 +2912,11 @@ async def ws_hand_mimic(websocket: WebSocket):
                     "orientation_delta_deg": [0.0, 0.0, 0.0],
                     "orientation_limited_axes": [False, False, False],
                 }
+                if completed_arm is not None:
+                    arm_result.update(completed_arm)
                 if mapping is not None:
-                    if ik_client is None:
-                        ik_client = await asyncio.get_event_loop().run_in_executor(
-                            None, LiveIKClient
-                        )
-                    solve_started = time.perf_counter()
-                    solved = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        ik_client.request,
-                        {"cmd": "solve",
-                         "target_pose": mapping.target_pose.reshape(-1).tolist()},
-                    )
-                    ik_ms = (time.perf_counter() - solve_started) * 1000.0
-                    if solved.get("ik_ok"):
-                        consecutive_ik_failures = 0
-                        arm_target = [float(value) for value in solved["q"]]
-                        last_arm_targets = arm_target
-                    else:
-                        consecutive_ik_failures += 1
-                        if consecutive_ik_failures >= 3:
-                            mapper.freeze("ik_failed")
                     arm_result.update({
-                        "ik_ok": bool(solved.get("ik_ok")),
-                        "ik_ms": round(ik_ms, 2),
-                        "reason": None if solved.get("ik_ok") else "ik_failed",
+                        "reason": None,
                         "position_limited": mapping.position_limited,
                         "orientation_limited": mapping.orientation_limited,
                         "orientation_delta_deg": [
@@ -2785,8 +2979,6 @@ async def ws_hand_mimic(websocket: WebSocket):
                     if _hand_target_mailbox is not None:
                         _hand_target_mailbox.release(owner)
 
-                drive_arm = bool(data.get("drive_arm"))
-                allow_real_arm = bool(data.get("allow_real_arm_tracking"))
                 arm = _arm
                 arm_online = bool(
                     arm and arm.ready and arm.console and arm.console.poll() is None
@@ -2794,28 +2986,55 @@ async def ws_hand_mimic(websocket: WebSocket):
                 latest = (arm.latest or {}) if arm else {}
                 arm_safe = bool(
                     arm_online and latest.get("enabled") and not latest.get("frozen")
-                    and (arm.mock or allow_real_arm)
+                    and (arm.mock or current_allow_real_arm)
                 )
-                if drive_arm and arm_target is not None and arm_safe:
-                    queued = _get_arm_target_mailbox().submit(
-                        owner, frame_id, arm_target, created_at=received_at
+                if mapping is not None:
+                    scheduler = ensure_ik_scheduler()
+                    queued_ik = scheduler.submit(
+                        owner,
+                        session_generation,
+                        frame_id,
+                        mapper.anchor_revision,
+                        mapping.target_pose.reshape(-1).tolist(),
+                        created_at=received_at,
+                        context={
+                            "authorization_revision": authorization_revision,
+                            "drive_arm": current_drive_arm,
+                            "allow_real_arm_tracking": current_allow_real_arm,
+                            "position_limited": mapping.position_limited,
+                            "orientation_limited": mapping.orientation_limited,
+                            "orientation_delta_deg": [
+                                round(value, 2)
+                                for value in mapping.orientation_delta_deg
+                            ],
+                            "orientation_limited_axes": list(
+                                mapping.orientation_limited_axes
+                            ),
+                        },
                     )
                     arm_result.update(
-                        queued=queued.accepted,
-                        replaced=queued.replaced,
-                        reason=queued.reason,
+                        ik_queued=queued_ik.accepted,
+                        ik_replaced=queued_ik.replaced,
+                        ik_pending=scheduler.pending_count,
+                        ik_in_flight=scheduler.in_flight_count,
                     )
-                elif drive_arm:
+                    if completed_arm is None:
+                        arm_result.update(ik_ok=None, reason=queued_ik.reason)
+
+                if current_drive_arm and not arm_safe:
                     arm_result["reason"] = (
                         "offline" if not arm_online
                         else "disabled" if not latest.get("enabled")
                         else "frozen" if latest.get("frozen")
-                        else "real_arm_not_armed" if arm and not arm.mock and not allow_real_arm
+                        else "real_arm_not_armed"
+                        if arm and not arm.mock and not current_allow_real_arm
                         else arm_result.get("reason")
                     )
-                elif _arm_target_mailbox is not None:
+                elif not current_drive_arm and _arm_target_mailbox is not None:
                     _arm_target_mailbox.release(owner)
                 if mapper.state != "following":
+                    if ik_scheduler is not None:
+                        ik_scheduler.release(owner)
                     if _arm_target_mailbox is not None:
                         _arm_target_mailbox.release(owner)
                     if _arm is not None:
@@ -2826,7 +3045,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                     "frame_id": frame_id,
                     "joint_angles": joint_angles,
                     "hand_joint_targets": raw_hand_target,
-                    "arm_joint_targets": arm_target or last_arm_targets,
+                    "arm_joint_targets": last_arm_targets,
                     "gesture": gesture,
                     "hardware": hardware,
                     "arm": arm_result,
@@ -2846,6 +3065,12 @@ async def ws_hand_mimic(websocket: WebSocket):
                 wrist_orientation_filter.reset()
                 if mapper.state in ("anchoring", "following"):
                     mapper.freeze(f"tracking_error:{type(e).__name__}")
+                if ik_scheduler is not None:
+                    ik_scheduler.release(owner)
+                if _arm_target_mailbox is not None:
+                    _arm_target_mailbox.release(owner)
+                if _arm is not None:
+                    _arm.end_tracking()
                 print(f"[ws] 合体跟随失败: {e}")
                 await websocket.send_json({
                     "ok": False,
@@ -2860,12 +3085,17 @@ async def ws_hand_mimic(websocket: WebSocket):
     except Exception as e:
         print(f"[ws] WebSocket 错误: {e}")
     finally:
+        session_active = False
         if _hand_target_mailbox is not None:
             _hand_target_mailbox.release(owner)
+        if ik_scheduler is not None:
+            ik_scheduler.release(owner)
         if _arm_target_mailbox is not None:
             _arm_target_mailbox.release(owner)
         if _arm is not None:
             _arm.end_tracking()
+        if ik_scheduler is not None:
+            await ik_scheduler.close()
         if ik_client is not None:
             await asyncio.get_event_loop().run_in_executor(None, ik_client.close)
 
@@ -3089,6 +3319,7 @@ async def gesture_play(payload: dict) -> JSONResponse:
                          "frames": len(pack.frames),
                          "steps": len(pack.frames) + (1 if home_first else 0),
                          "return_home": home_first,
+                         "playback_mode": pack.playback_mode,
                          "duration_ms": pack.duration_ms})
 
 

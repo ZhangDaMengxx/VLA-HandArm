@@ -17,6 +17,7 @@ dex_retargeting      #         手部重定向(RetargetingConfig);SingleHandDete
 # pip check 无冲突。装法:pip install "mediapipe==0.10.14" "numpy==2.2.6"(同时指定,防回退 numpy)。
 mediapipe==0.10.14   # 人手关键点检测(勿升级,理由见上)
 lerobot>=0.4         # 0.4.4   LeRobotDataset(数据集读写)
+pyarrow              #         Source stream_index.parquet 与 LeRobot parquet 读写
 scipy                #         Savitzky-Golay 平滑 + 旋转四元数
 opencv-python        #         读视频
 meshcat              #         浏览器 3D 查看器(replay_full.py)

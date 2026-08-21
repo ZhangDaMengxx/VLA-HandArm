@@ -29,12 +29,20 @@ from scipy.spatial.transform import Rotation as Rot
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # src/(vendored detector + estimate_wrist)
 from hand_estimators import make_hand_estimator
+from capture_bundle import (
+    WRIST_FRAME_EPISODE0_CAMERA,
+    archive_original_video,
+    record_source,
+    resolve_ego_output,
+    write_sample_stream_index,
+    write_ego_metadata,
+)
+from quality_profiles import load_quality_profile
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-ROOT = REPO / "src/out/canonical_ds"
 IMG = 256
 TASK = "imitate the demonstrated hand motion"
 
@@ -68,7 +76,24 @@ def main():
     ap.add_argument("--hand-estimator", default="mediapipe",
                     choices=["mediapipe", "wilor"],
                     help="手部估计器;WiLoR 适配器已预留,模型接入前不可用")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle 目录;不传则在 datasets/captures/ 新建")
+    ap.add_argument("--root", default=None,
+                    help="精确 canonical 输出目录(高级兼容入口,不自动创建 Capture)")
+    ap.add_argument("--legacy-out", action="store_true",
+                    help="显式写入旧 src/out/canonical_ds")
+    ap.add_argument("--quality-profile", default="legacy_rgb_video_30hz_v1",
+                    help="质量 profile ID 或 JSON 路径")
     args = ap.parse_args()
+
+    try:
+        root, capture = resolve_ego_output(
+            capture_root=args.capture_root,
+            output_root=args.root,
+            legacy_out=args.legacy_out,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from error
 
     if args.video:
         video = args.video
@@ -90,25 +115,46 @@ def main():
     )
     cap = cv2.VideoCapture(video)
     fps = int(round(cap.get(cv2.CAP_PROP_FPS))) or 30
+    source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    if ROOT.exists():
-        shutil.rmtree(ROOT)
+    archived_video = None
+    if capture is not None:
+        try:
+            quality_profile = load_quality_profile(args.quality_profile)
+        except (ValueError, FileNotFoundError) as error:
+            raise SystemExit(str(error)) from error
+        record_source(capture, kind="rgb_video", source=video, config={
+            "hand_estimator": args.hand_estimator,
+            "selfie": False,
+            "fps": fps,
+            "width": source_width,
+            "height": source_height,
+            "wrist_pose_frame": WRIST_FRAME_EPISODE0_CAMERA,
+            "hand_keypoints_frame": "wrist_local_mano",
+        }, quality_profile=quality_profile)
+        archived_video = archive_original_video(capture, video)
+    if root.exists():
+        shutil.rmtree(root)
     ds = LeRobotDataset.create(repo_id="local/handdemo_canonical", fps=fps,
-                               features=CANONICAL_FEATURES, root=str(ROOT),
+                               features=CANONICAL_FEATURES, root=str(root),
                                robot_type="canonical", use_videos=True,
                                metadata_buffer_size=1)
     estimator_id = np.array([ESTIMATOR_IDS[args.hand_estimator]], dtype=np.float32)
 
-    n_frames, n_miss = 0, 0
+    n_source_frames, n_frames, n_miss = 0, 0, 0
+    source_ego_frame_indices: list[int | None] = []
     last_kp, last_kp2d, last_vis, last_wp = None, None, None, None
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
+        n_source_frames += 1
         rgb = frame[..., ::-1]
         obs = det.detect(rgb)
         if obs is None:
             if last_kp is None:      # 起始还没有检测到手,跳过(保持逐帧自洽)
+                source_ego_frame_indices.append(None)
                 continue
             kp_vec, kp2d_vec, wp_vec = last_kp, last_kp2d, last_wp
             vis_vec = np.zeros(21, dtype=np.float32)
@@ -126,6 +172,7 @@ def main():
             wp_vec = pose_to_vec(obs.wrist_pose)
             last_kp, last_kp2d, last_vis, last_wp = kp_vec, kp2d_vec, vis_vec, wp_vec
 
+        source_ego_frame_indices.append(n_frames)
         img = cv2.cvtColor(cv2.resize(frame, (IMG, IMG)), cv2.COLOR_BGR2RGB)
         ds.add_frame({
             "observation.images.ego": img,
@@ -139,8 +186,26 @@ def main():
         n_frames += 1
     cap.release()
     ds.save_episode()
-    print(f"wrote {n_frames} frames ({n_miss} 丢检沿用上一帧), 1 episode -> {ROOT}")
-    print("回读验证(独立进程): python src/verify_dataset.py --canonical")
+    ds.finalize()
+    if capture is not None:
+        write_sample_stream_index(
+            capture,
+            frame_count=n_source_frames,
+            fps=fps,
+            rgb_path=archived_video.relative_to(capture.source).as_posix(),
+            pairing_basis="video_frame_index",
+            ego_frame_indices=source_ego_frame_indices,
+        )
+        write_ego_metadata(
+            capture,
+            estimator=args.hand_estimator,
+            source_kind="rgb_video",
+            wrist_pose_frame=WRIST_FRAME_EPISODE0_CAMERA,
+            wrist_pose_frame_declared_by="rgb_video_builder_fixed_camera_contract",
+        )
+    print(f"wrote {n_frames} frames ({n_miss} 丢检沿用上一帧), 1 episode -> {root}")
+    verify_args = f"--capture-root {capture.root}" if capture is not None else f"--root {root}"
+    print(f"回读验证(独立进程): python src/verify_dataset.py --canonical {verify_args}")
 
 
 if __name__ == "__main__":

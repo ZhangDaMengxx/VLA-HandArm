@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""src/test/test_video_gesture.py — 挑帧 / 时序保真度的单元测试(不碰视频解码)。
+"""src/test/test_video_gesture.py — 视频逐帧抽取、挑帧和时序保真度单元测试。
 
-只测纯数据变换那部分:pick_keyframes 和 frames_to_pack_frames。视频解码 +
-MediaPipe 那段要真视频、跑得慢,放端到端测试里。
+抽取回归使用假的 OpenCV/MediaPipe 对象验证 EOF 和漏检计数；不加载模型、不碰硬件。
 
     python3 -m pytest src/test/test_video_gesture.py
 """
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1]
@@ -47,19 +47,13 @@ def test_no_stretch_at_common_strides():
             f"stride={stride} 拉伸 {tm['stretch']}"
 
 
-def test_stretch_reported_when_source_faster_than_tick():
-    """源比 tick 还快时必须**如实报告**拉伸倍数,不能默默慢放。
-
-    阈值写成**相对 tick** 的,不写死倍数 —— PLAYER_TICK_MS 调整时(30Hz→100Hz
-    就调过一次)写死的数字会假失败。取 tick 的 1/4 帧间隔,期望拉伸≈4×。
-    """
+def test_source_faster_than_tick_keeps_timeline_and_reports_overwrite_risk():
+    """源比 tick 快时不预重采样；运行时由 latest-target 覆盖过期目标。"""
     fps = 1000.0 / (PLAYER_TICK_MS / 4.0)          # 帧间 = tick/4
     pf, tm = vg.frames_to_pack_frames(_seq(10, fps=fps, stride=1))
     assert tm["floored"] > 0, f"帧间 {PLAYER_TICK_MS/4}ms 应被记成 floored"
-    # 指标必须**如实**报出量级:早先把末帧的 default_hold_ms 也算进分子分母,
-    # 4× 被稀释成 1.48×,看起来"还行",真实失真就被藏住了。
-    assert tm["stretch"] > 3.0, f"帧间为 tick/4 时应报约 4× 拉伸,实得 {tm['stretch']}"
-    assert all(f["hold_ms"] >= PLAYER_TICK_MS for f in pf)
+    assert tm["stretch"] == 1.0, "导入阶段不应拉伸原时间轴"
+    assert all(f["hold_ms"] < PLAYER_TICK_MS for f in pf[:-1])
 
 
 def test_30fps_source_not_floored_at_current_tick():
@@ -70,14 +64,15 @@ def test_30fps_source_not_floored_at_current_tick():
     assert abs(tm["stretch"] - 1.0) < 0.02, f"应无拉伸,实得 {tm['stretch']}"
 
 
-def test_long_gap_capped():
-    """漏检造成的长空档要截短,否则回放莫名停几秒。"""
+def test_long_gap_preserved_on_authoritative_timeline():
+    """漏检空档保持源视频时长，期间维持上一目标，不伪造中间姿态。"""
     fr = [{"frame": 0, "t": 0.0, "rad": [0.0] * 6},
           {"frame": 300, "t": 10.0, "rad": [0.5] * 6},     # 10s 空档
           {"frame": 303, "t": 10.1, "rad": [0.6] * 6}]
     pf, tm = vg.frames_to_pack_frames(fr)
-    assert pf[0]["hold_ms"] == vg.HOLD_MS_CEIL, f"应截到上限,实得 {pf[0]['hold_ms']}"
-    assert tm["ceiled"] == 1
+    assert pf[0]["hold_ms"] == 10_000
+    assert pf[1]["t_ns"] == 10_000_000_000
+    assert tm["ceiled"] == 0 and tm["stretch"] == 1.0
 
 
 def test_pack_frames_shape():
@@ -139,11 +134,106 @@ def test_pick_keyframes_single():
     assert len(vg.pick_keyframes(fr)) == 1
 
 
-def test_caps_are_consistent_with_pack():
-    """抽取上限不能超过技能包能装的帧数,否则解完了存不进去。"""
-    from gesture_pack import MAX_FRAMES
-    assert vg.MAX_EXTRACT_FRAMES <= MAX_FRAMES, \
-        f"抽取上限 {vg.MAX_EXTRACT_FRAMES} > 包上限 {MAX_FRAMES}"
+def test_extract_reads_every_source_frame_to_eof(tmp_path, monkeypatch):
+    """容器帧数元数据不准时也必须读到 EOF,且漏检只影响结果数、不影响解析数。"""
+    video = tmp_path / "all-frames.mp4"
+    video.write_bytes(b"fake")
+
+    class FakeCapture:
+        def __init__(self, _path):
+            self.frames = iter(range(5))
+
+        def isOpened(self):
+            return True
+
+        def get(self, prop):
+            # 故意把元数据帧数低报为 2;实际可解码 5 帧。
+            if prop == 1:
+                return 30.0
+            if prop == 4:
+                return max(0, self.current) * 1000.0 / 30.0
+            return 2
+
+        def read(self):
+            try:
+                frame = next(self.frames)
+                self.current = frame
+                return True, frame
+            except StopIteration:
+                return False, None
+
+        def release(self):
+            pass
+
+    fake_cv2 = types.SimpleNamespace(
+        CAP_PROP_FPS=1,
+        CAP_PROP_FRAME_COUNT=2,
+        CAP_PROP_POS_MSEC=4,
+        COLOR_BGR2RGB=3,
+        VideoCapture=FakeCapture,
+        cvtColor=lambda frame, _code: frame,
+    )
+
+    class FakeEstimator:
+        def __init__(self, hand_type):
+            self.hand_type = hand_type
+
+        def detect(self, frame):
+            if frame == 2:                 # 一帧漏检,但这帧仍然必须算已解析
+                return None
+            return types.SimpleNamespace(keypoints_3d=[])
+
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setitem(
+        sys.modules,
+        "hand_estimators",
+        types.SimpleNamespace(MediaPipeHandEstimator=FakeEstimator),
+    )
+    monkeypatch.setattr(vg, "retarget_one", lambda _kp: [0.1] * 6)
+
+    assert vg.DEFAULT_STRIDE == 1
+    assert vg.claim(str(video), hand_type="Right")
+    job = vg.extract(str(video), hand_type="Right", do_despike=False)
+
+    assert job.done == 5
+    assert job.total == 5
+    assert job.detected == 4
+    assert [frame["frame"] for frame in job.frames] == [0, 1, 3, 4]
+    assert [frame["t_ns"] for frame in job.frames] == [0, 33_333_333, 100_000_000,
+                                                        133_333_333]
+
+
+def test_pack_frames_preserve_source_pts_not_frame_index():
+    """可变帧率素材必须沿用解码 PTS，不能重新按 frame/fps 铺均匀时间轴。"""
+    fr = [
+        {"frame": 0, "t": 0.0, "t_ns": 0, "rad": [0.0] * 6},
+        {"frame": 1, "t": 0.010, "t_ns": 10_000_000, "rad": [0.1] * 6},
+        {"frame": 2, "t": 0.042, "t_ns": 42_000_000, "rad": [0.2] * 6},
+    ]
+    pf, _ = vg.frames_to_pack_frames(fr)
+    assert [f["t_ns"] for f in pf] == [0, 10_000_000, 42_000_000]
+    assert [f["hold_ms"] for f in pf[:2]] == [10, 32]
+    assert [f["label"] for f in pf] == ["t=0.000s", "t=0.010s", "t=0.042s"]
+
+
+def test_web_video_extract_has_no_sampling_controls():
+    """Web 入口不应再把逐帧解析悄悄降成 stride/帧数上限。"""
+    page = (SRC / "web/index.html").read_text(encoding="utf-8")
+    assert 'id="vidStride"' not in page
+    assert 'id="vidMaxFrames"' not in page
+    assert 'fetch("/api/hand/video/frames?limit=' not in page
+    assert 'new Set(["hand_gesture_pack/1", GESTURE_SCHEMA])' in page
+    assert 'PLAYBACK_TIMELINE' in page
+    assert 'function recHasTimestamp(value)' in page
+    assert 'value !== null && value !== undefined && value !== ""' in page
+
+
+def test_web_old_json_missing_tns_is_not_coerced_to_zero():
+    """JS 的 Number(null)==0；旧 /1 包必须按 hold_ms 重建，不能从第 2 帧报重复 0。"""
+    page = (SRC / "web/index.html").read_text(encoding="utf-8")
+    assert "const provided = recHasTimestamp(f.t_ns);" in page
+    assert "let t = provided ?" in page
+    assert "t_ns: recHasTimestamp(f.t_ns)" in page
 
 
 def test_console_hz_matches_spawn_arg():

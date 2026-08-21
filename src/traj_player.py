@@ -10,7 +10,7 @@
 进度打 stdout(JSON 行)供 app_web 解析:{"type":"progress","frame":i,"total":N,"pct":..}
 
 用法(一般由 app_web 调):
-  python3 src/traj_player.py --npz src/out/robot_traj_nero_inspire.npz --fps 30 --speed 1.0
+  python3 src/traj_player.py --npz datasets/captures/capture_<id>/robot_datasets/<target>/target_revision_v001/retarget_v001/exports/workbench/robot_traj.npz --fps 30 --speed 1.0
 """
 from __future__ import annotations
 

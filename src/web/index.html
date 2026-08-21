@@ -395,6 +395,8 @@ body {
 .mx-na   { background: var(--text-3); }
 .mx-label { flex: 1; font-size: 12px; color: var(--text-2); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
+.mx-kind { flex-shrink: 0; padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px;
+  font-family: var(--mono); font-size: 9px; color: var(--text-3); }
 .mx-val { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
 .mx-th { font-family: var(--mono); font-size: 10px; color: var(--text-3); }
 .mx-empty { font-size: 11px; color: var(--text-3); line-height: 1.55; }
@@ -631,7 +633,7 @@ body {
   </div>
   <div class="card">
     <div class="card-head"><span>数据有效性 · 验收</span><span id="mxSummary" class="mx-sum">—</span></div>
-    <div class="jgroup">通用(规范层)</div>
+    <div class="jgroup" id="mxCanonicalTitle">采集 / 规范层</div>
     <div id="mxCanonical"><div class="mx-empty">未测 · 跑一次管线生成</div></div>
     <div class="jgroup" style="margin-top:12px" id="mxEmbTitle">本体专属</div>
     <div id="mxEmbodiment"></div>
@@ -881,19 +883,11 @@ body {
       border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:11px;
       padding:6px 8px;font-family:inherit;"><option value="">加载中…</option></select>
     <input type="file" id="vidFile" accept="video/*" style="display:none;">
-    <div style="display:flex;gap:6px;margin-top:9px;align-items:center;">
-      <label style="flex:1;font-size:10px;color:var(--text-3);">
-        <div style="margin-bottom:3px;">抽帧间隔 stride</div>
-        <input type="number" id="vidStride" value="3" min="1" max="30"
-          style="width:100%;box-sizing:border-box;background:var(--accent-soft);
-          border:1px solid var(--line);border-radius:5px;color:var(--text-2);
-          font-family:var(--mono);font-size:10px;padding:4px 5px;"></label>
-      <label style="flex:1;font-size:10px;color:var(--text-3);">
-        <div style="margin-bottom:3px;">最多解析帧</div>
-        <input type="number" id="vidMaxFrames" value="200" min="1" max="600"
-          style="width:100%;box-sizing:border-box;background:var(--accent-soft);
-          border:1px solid var(--line);border-radius:5px;color:var(--text-2);
-          font-family:var(--mono);font-size:10px;padding:4px 5px;"></label>
+    <div style="display:flex;gap:6px;margin-top:9px;align-items:flex-end;">
+      <div style="flex:1;font-size:10px;color:var(--text-3);">
+        <div style="margin-bottom:3px;">解析范围</div>
+        <div style="padding:5px 0;color:var(--text-2);font-family:var(--mono);">原视频全部帧</div>
+      </div>
       <label style="flex:1;font-size:10px;color:var(--text-3);">
         <div style="margin-bottom:3px;">哪只手</div>
         <select id="vidHandType" style="width:100%;box-sizing:border-box;
@@ -910,8 +904,7 @@ body {
     <div id="vidProgress" style="font-family:var(--mono);font-size:10px;
       color:var(--text-3);margin-top:9px;line-height:1.5;">未开始</div>
     <div class="jgroup" style="margin-top:8px;line-height:1.5;">
-      解析<b>只读视频</b>,不碰硬件。stride=3 在 30fps 下约等于 10Hz 采样。
-      MediaPipe 单帧约 50ms,200 帧大概 10s。
+      逐帧读到视频结束。解析<b>只读视频</b>,不碰硬件；未检出手的源帧会单独计数。
     </div>
   </div>
   <div class="card">
@@ -1298,8 +1291,8 @@ body {
     <!-- 速度力控滑块:录制栏单独一组,方便调整 -->
     <div style="margin:12px 0;">
       <div style="font-size:10px;color:var(--text-3);margin-bottom:6px;">臂速度(%)</div>
-      <input type="range" id="rcArmSpeed" min="1" max="100" value="20" class="slider">
-      <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="rcArmSpeedVal">20%</div>
+      <input type="range" id="rcArmSpeed" min="1" max="100" value="50" class="slider">
+      <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="rcArmSpeedVal">50%</div>
     </div>
     <div style="display:flex;gap:10px;margin:12px 0;">
       <label style="flex:1;">
@@ -1478,8 +1471,8 @@ body {
     <div class="card-head"><span>臂 · 速度</span></div>
     <label>
       <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">速度百分比 1-100(调试期建议 ≤30)</div>
-      <input type="range" id="cbArmSpeed" min="1" max="100" value="20" class="slider">
-      <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="cbArmSpeedVal">20%</div>
+      <input type="range" id="cbArmSpeed" min="1" max="100" value="50" class="slider">
+      <div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;" id="cbArmSpeedVal">50%</div>
     </label>
   </div>
   <div class="card">
@@ -1796,14 +1789,23 @@ renderJoints();
 function mxRow(m) {
   const cls = m.pass === true ? "mx-pass" : m.pass === false ? "mx-fail" : "mx-na";
   const val = m.value === null ? "—" : m.value + (m.unit || "");
-  return `<div class="mx-row" title="${(m.note||"").replace(/"/g,"&quot;")}">`
+  const kinds = {
+    absolute_accuracy: m.ground_truth_available ? "绝对" : "需真值",
+    stability_proxy: "稳定代理",
+    continuity: "连续性"
+  };
+  const kind = kinds[m.measurement_class] || "";
+  const detail = [m.measurement_basis, m.note].filter(Boolean).join(" · ");
+  return `<div class="mx-row" title="${detail.replace(/"/g,"&quot;")}">`
        + `<span class="mx-dot ${cls}"></span>`
        + `<span class="mx-label">${m.label}</span>`
+       + (kind ? `<span class="mx-kind">${kind}</span>` : "")
        + `<span class="mx-val">${val}</span>`
        + `<span class="mx-th">${m.threshold||""}</span></div>`;
 }
 async function loadMetrics(robot) {
   const canon = $("mxCanonical"), emb = $("mxEmbodiment"), sum = $("mxSummary");
+  const canonTitle = $("mxCanonicalTitle");
   try {
     const r = await fetch("/api/metrics?robot=" + encodeURIComponent(robot));
     const d = await r.json();
@@ -1812,8 +1814,10 @@ async function loadMetrics(robot) {
       emb.innerHTML = ""; sum.textContent = "—"; sum.style.color = "var(--text-3)";
       return;
     }
-    const cm = d.metrics.filter(m => m.category === "canonical");
+    const cm = d.metrics.filter(m => m.category === "source" || m.category === "canonical");
     const em = d.metrics.filter(m => m.category === "embodiment");
+    const profile = d.quality_profile?.profile_id;
+    canonTitle.textContent = profile ? `采集 / 规范层 · ${profile}` : "采集 / 规范层";
     canon.innerHTML = cm.map(mxRow).join("");
     emb.innerHTML = em.map(mxRow).join("");
     const testable = d.metrics.filter(m => m.pass !== null);
@@ -2644,12 +2648,14 @@ function updateHandState(row) {
     _telLast.hand = {tel: row.tel || null, rad: rad, raw: raw};
     renderHandTelem(row.tel, "hand", rad, raw);
   } else if (row.type === "action_step") {
-    $("actionProgress").textContent = `步骤 ${row.step}/${row.total}`;
+    const timing = row.playback_mode === PLAYBACK_TIMELINE
+      ? ` · 已发 ${row.sent} · 覆盖 ${row.skipped_total} · 延迟 ${row.lag_ms}ms` : "";
+    $("actionProgress").textContent = `步骤 ${row.step}/${row.total}${timing}`;
     // 技能包和预设动作共用播放器,进度事件也是同一种。正在播包时把进度也写到
     // 技能包栏 —— 否则在那一栏看不到任何反馈。
     if (_packPlaying) {
       $("packPlayState").textContent =
-        `播放中: ${_packPlaying} · 步骤 ${row.step}/${row.total}`;
+        `播放中: ${_packPlaying} · 步骤 ${row.step}/${row.total}${timing}`;
     }
   } else if (row.type === "action_done") {
     $("actionProgress").textContent = "已完成";
@@ -2657,7 +2663,10 @@ function updateHandState(row) {
     document.querySelectorAll(".action-item").forEach(el => el.classList.remove("playing"));
     setActionPaused(false);
     if (_packPlaying) {
-      $("packPlayState").textContent = `已完成: ${_packPlaying}`;
+      const timing = row.playback_mode === PLAYBACK_TIMELINE
+        ? ` · 已发 ${row.sent} · 覆盖 ${row.skipped} · 最大延迟 ${row.max_lag_ms}ms`
+        : "";
+      $("packPlayState").textContent = `已完成: ${_packPlaying}${timing}`;
       _packPlaying = null;
     }
   }
@@ -2968,7 +2977,10 @@ $("btnActionStop").onclick = async () => {
 // rad 用来喂 3D 预览和滑块回填,raw_vendor 是真正上线的值。**以 raw 为准** ——
 // 保存时后端也以 raw 为准,这样「看到的」和「回放的」逐位相同。
 // ===========================================================================
-const GESTURE_SCHEMA = "hand_gesture_pack/1";
+const GESTURE_SCHEMA = "hand_gesture_pack/2";
+const GESTURE_SCHEMAS = new Set(["hand_gesture_pack/1", GESTURE_SCHEMA]);
+const PLAYBACK_KEYFRAME = "keyframe_strict";
+const PLAYBACK_TIMELINE = "timeline_latest";
 // 项目序 → 厂商通道序。和后端 PROJECT_TO_VENDOR = [5,4,3,2,1,0] 同一份映射。
 const PROJ_TO_VENDOR = [5, 4, 3, 2, 1, 0];
 // rad ↔ raw 换算表。和后端 inspire_hand.RAW_MAP 必须一致 —— 全部 invert=true
@@ -3004,7 +3016,8 @@ const REC_MAX_FRAMES = 2400;
 // 帧列表最多渲染多少行。**只限渲染,不限数据** —— 2400 个 DOM 行会让每次重建都卡,
 // 而人也不会去逐行编辑上千帧。超出的部分照样保存/回放,只是列表里不铺出来。
 const REC_RENDER_LIMIT = 200;
-let _recFrames = [];          // [{label, rad[6], raw_vendor[6], speed, force, hold_ms}]
+let _recFrames = [];          // [{label,rad,raw_vendor,speed,force,hold_ms,t_ns}]
+let _recPlaybackMode = PLAYBACK_KEYFRAME;
 let _recPreviewTimer = null;  // 3D 试播的定时器链
 let _packPlaying = null;      // 正在回放的技能包名
 
@@ -3017,12 +3030,53 @@ function setRecBadge() {
   if (b) b.classList.toggle("has-badge", _recFrames.length > 0);
 }
 
+function recHasTimestamp(value) {
+  // Number(null) 和 Number("") 都是 0，但这两种值表示“没有时间戳”，必须走
+  // hold_ms 重建。否则旧 /1 包会从第 2 帧开始全部被误判成重复的 t_ns=0。
+  return value !== null && value !== undefined && value !== ""
+    && Number.isFinite(Number(value));
+}
+
+function recDurationMs() {
+  if (!_recFrames.length) return 0;
+  const last = _recFrames[_recFrames.length - 1];
+  return ((recHasTimestamp(last.t_ns) ? Number(last.t_ns) : 0) / 1e6) + last.hold_ms;
+}
+
+function recRebuildTimeline() {
+  let t = 0;
+  _recFrames.forEach(f => {
+    f.t_ns = Math.round(t);
+    t += f.hold_ms * 1e6;
+  });
+}
+
+function recNormalizeTimeline(frames, mode) {
+  let acc = 0, prev = -1;
+  return frames.map((f, i) => {
+    const hold = _cl(parseInt(f.hold_ms, 10) || 0, 0, 60000);
+    const provided = recHasTimestamp(f.t_ns);
+    let t = provided ? Math.max(0, Math.round(Number(f.t_ns))) : acc;
+    if (i && t <= prev) {
+      if (mode === PLAYBACK_TIMELINE) {
+        const source = provided ? `读取值 ${t}` : `由上一帧 hold_ms 重建为 ${t}`;
+        throw new Error(`第 ${i + 1} 帧 t_ns 没有严格递增：${source}，上一帧 ${prev}`);
+      }
+      t = acc;
+    }
+    prev = t;
+    acc = t + hold * 1e6;
+    return { ...f, hold_ms: hold, t_ns: t };
+  });
+}
+
 function renderRecFrames() {
   const host = $("recFrames");
   if (!host) return;
-  const total = _recFrames.reduce((a, f) => a + f.hold_ms, 0);
+  const total = recDurationMs();
   $("recStat").textContent = _recFrames.length
-    ? `${_recFrames.length} 帧 · ${(total / 1000).toFixed(1)}s` : "0 帧";
+    ? `${_recFrames.length} 帧 · ${(total / 1000).toFixed(1)}s`
+      + `${_recPlaybackMode === PLAYBACK_TIMELINE ? " · 时间轴" : ""}` : "0 帧";
   setRecBadge();
   if (!_recFrames.length) {
     host.innerHTML = '<div style="line-height:1.6;">还没有帧 —— 去『关节』栏拖滑块摆'
@@ -3064,6 +3118,7 @@ function renderRecFrames() {
     if (!_recFrames[i]) return;
     _recFrames[i].hold_ms = _cl(parseInt(el.value, 10) || 0, 0, 60000);
     el.value = _recFrames[i].hold_ms;
+    recRebuildTimeline();
     renderRecFrames();                       // 总时长要跟着变
   };
   host.onclick = (e) => {
@@ -3079,9 +3134,12 @@ function _esc(s) {
 function recFrameAction(act, i) {
   const f = _recFrames[i];
   if (!f) return;
-  if (act === "del") { _recFrames.splice(i, 1); renderRecFrames(); return; }
+  if (act === "del") {
+    _recFrames.splice(i, 1); recRebuildTimeline(); renderRecFrames(); return;
+  }
   if (act === "up" && i > 0) {
     _recFrames.splice(i - 1, 0, _recFrames.splice(i, 1)[0]);
+    recRebuildTimeline();
     renderRecFrames(); return;
   }
   if (act === "prev") {
@@ -3095,6 +3153,7 @@ function recFrameAction(act, i) {
     if (!cur) return;
     cur.label = f.label;                     // 名字保留,只换姿态
     cur.hold_ms = f.hold_ms;
+    cur.t_ns = f.t_ns;
     _recFrames[i] = cur;
     renderRecFrames();
     $("recHint").textContent = `已用当前姿态替换 #${i + 1}`;
@@ -3130,12 +3189,15 @@ function captureFrame() {
   // 存的时候把 rad 也折一遍 raw:保证 rad 和 raw_vendor 表示的是**同一个**姿态。
   // 直接存原始 rad 的话,rad 是连续值而 raw 有取整,回放看到的会和预览差一点。
   const rawProj = radToRawProj(rad);
+  const recSpeed = parseInt($("recSpeedSlider").value, 10);
+  const recForce = parseInt($("recForceSlider").value, 10);
+  const recHold = parseInt($("recHold").value, 10);
   return {
     label: "", rad: rawProjToRad(rawProj).map(x => +x.toFixed(6)),
     raw_vendor: projToVendor(rawProj),
-    speed: parseInt($("recSpeedSlider").value, 10) || 500,
-    force: parseInt($("recForceSlider").value, 10) || 500,
-    hold_ms: _cl(parseInt($("recHold").value, 10) || 600, 0, 60000),
+    speed: _cl(Number.isFinite(recSpeed) ? recSpeed : 500, 0, 1000),
+    force: _cl(Number.isFinite(recForce) ? recForce : 500, 0, 1000),
+    hold_ms: _cl(Number.isFinite(recHold) ? recHold : 600, 0, 60000),
   };
 }
 
@@ -3145,6 +3207,10 @@ $("btnRecCapture").onclick = () => {
   }
   const f = captureFrame();
   if (!f) return;
+  if (_recPlaybackMode === PLAYBACK_TIMELINE) {
+    _recPlaybackMode = PLAYBACK_KEYFRAME;     // 手工帧混入后改回逐帧必达
+  }
+  f.t_ns = Math.round(recDurationMs() * 1e6);
   _recFrames.push(f);
   renderRecFrames();
   $("recHint").textContent = `已记录第 ${_recFrames.length} 帧`
@@ -3155,6 +3221,7 @@ $("btnRecClear").onclick = () => {
   if (!_recFrames.length) return;
   if (!confirm(`清空 ${_recFrames.length} 帧?未保存的会丢。`)) return;
   _recFrames = [];
+  _recPlaybackMode = PLAYBACK_KEYFRAME;
   stopRecPreview();
   renderRecFrames();
   $("recHint").textContent = "已清空";
@@ -3194,6 +3261,7 @@ function buildPack() {
     joint_order: HAND_SET_DEFS.map(d => d.name),
     note: ($("recNote").value || "").trim(),
     return_home_first: $("chkRecHome").checked,
+    playback_mode: _recPlaybackMode,
     frames: _recFrames.map(f => ({ ...f })),
   };
 }
@@ -3254,7 +3322,19 @@ $("packFile").onchange = async (e) => {
   if (!file) return;
   try {
     const pack = JSON.parse(await file.text());
-    if (pack.schema !== GESTURE_SCHEMA) throw new Error("schema 不是 " + GESTURE_SCHEMA);
+    if (!GESTURE_SCHEMAS.has(pack.schema)) {
+      throw new Error("schema 不是 hand_gesture_pack/1 或 /2");
+    }
+    if (!Array.isArray(pack.frames) || !pack.frames.length) {
+      throw new Error("frames 为空");
+    }
+    if (pack.frames.length > REC_MAX_FRAMES) {
+      throw new Error(`帧数 ${pack.frames.length} 超上限 ${REC_MAX_FRAMES}`);
+    }
+    if (pack.playback_mode != null && pack.playback_mode !== PLAYBACK_KEYFRAME
+        && pack.playback_mode !== PLAYBACK_TIMELINE) {
+      throw new Error("playback_mode 不认识: " + pack.playback_mode);
+    }
     loadPackIntoRecorder(pack, file.name);
     setHandTab("rec");
     $("recHint").textContent = `已导入 ${file.name} —— 点『保存技能包』才会落到后端`;
@@ -3276,7 +3356,12 @@ function normRawVendor(rawVendor) {
 
 // 把一个包灌进录制器(导入 / 「编辑」都走这里)
 function loadPackIntoRecorder(pack, relOrName) {
-  _recFrames = (pack.frames || []).map(f => {
+  const rawFrames = pack.frames || [];
+  const videoLabels = rawFrames.length > 1
+    && rawFrames.every(f => /^t=\d+(?:\.\d+)?s$/.test(String(f.label || "")));
+  _recPlaybackMode = pack.playback_mode === PLAYBACK_TIMELINE ||
+    (!pack.playback_mode && videoLabels) ? PLAYBACK_TIMELINE : PLAYBACK_KEYFRAME;
+  const normalized = rawFrames.map(f => {
     const src = Array.isArray(f.raw_vendor) && f.raw_vendor.length === 6
       ? f.raw_vendor
       : projToVendor(radToRawProj(f.rad || [0, 0, 0, 0, 0, 0]));
@@ -3285,11 +3370,17 @@ function loadPackIntoRecorder(pack, relOrName) {
       label: String(f.label || "").slice(0, 64),
       rad: n.rad,
       raw_vendor: n.raw_vendor,
-      speed: _cl(parseInt(f.speed, 10) || 500, 0, 1000),
-      force: _cl(parseInt(f.force, 10) || 500, 0, 1000),
-      hold_ms: _cl(parseInt(f.hold_ms, 10) || 600, 0, 60000),
+      speed: _cl(Number.isFinite(parseInt(f.speed, 10)) ? parseInt(f.speed, 10) : 500,
+                 0, 1000),
+      force: _cl(Number.isFinite(parseInt(f.force, 10)) ? parseInt(f.force, 10) : 500,
+                 0, 1000),
+      hold_ms: _cl(Number.isFinite(parseInt(f.hold_ms, 10)) ? parseInt(f.hold_ms, 10) : 600,
+                   0, 60000),
+      t_ns: recHasTimestamp(f.t_ns)
+        ? Math.max(0, Math.round(Number(f.t_ns))) : null,
     };
   });
+  _recFrames = recNormalizeTimeline(normalized, _recPlaybackMode);
   $("recName").value = pack.name || "";
   $("recNote").value = pack.note || "";
   $("chkRecHome").checked = pack.return_home_first !== false;
@@ -3422,8 +3513,6 @@ $("btnVidExtract").onclick = async () => {
   if (!video) { $("vidProgress").textContent = "先选一个视频"; return; }
   const body = {
     video,
-    stride: parseInt($("vidStride").value, 10) || 3,
-    max_frames: parseInt($("vidMaxFrames").value, 10) || 200,
     hand_type: $("vidHandType").value,
   };
   const r = await fetch("/api/hand/video/extract", {
@@ -3454,8 +3543,8 @@ function startVidPoll() {
     catch (_) { return; }
     const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
     $("vidProgress").innerHTML =
-      `${j.running ? "解析中" : "已结束"} ${pct}% · ${j.done}/${j.total} 帧`
-      + ` · 检出手 ${j.detected} · ${j.elapsed}s`
+      `${j.running ? "解析中" : "已结束"} ${pct}% · 源帧 ${j.done}/${j.total}`
+      + ` · 检出手 ${j.detected} 帧 · ${j.elapsed}s`
       + (j.error ? `<br><span style="color:var(--warning)">${_esc(j.error)}</span>` : "");
     if (!j.running) {
       stopVidPoll();
@@ -3469,7 +3558,7 @@ function startVidPoll() {
 
 async function loadVidFrames() {
   try {
-    const j = await (await fetch("/api/hand/video/frames?limit=2000")).json();
+    const j = await (await fetch("/api/hand/video/frames")).json();
     _vidFrames = j.frames || [];
   } catch (_) { _vidFrames = []; }
   const sc = $("vidScrub");
@@ -3541,8 +3630,10 @@ function renderVidQuality(q, despiked) {
 async function pickKeyframes() {
   const eps = parseFloat($("vidEps").value) || 0.25;
   const maxOut = parseInt($("vidMaxOut").value, 10) || 12;
-  const spd = parseInt($("speedSlider").value, 10) || 500;
-  const frc = parseInt($("forceSlider").value, 10) || 500;
+  const speedValue = parseInt($("speedSlider").value, 10);
+  const forceValue = parseInt($("forceSlider").value, 10);
+  const spd = Number.isFinite(speedValue) ? speedValue : 500;
+  const frc = Number.isFinite(forceValue) ? forceValue : 500;
   const r = await fetch(`/api/hand/video/keyframes?mode=${vidMode()}`
                       + `&eps=${eps}&max_out=${maxOut}&speed=${spd}&force=${frc}`);
   const j = await r.json().catch(() => ({}));
@@ -3552,14 +3643,12 @@ async function pickKeyframes() {
     return;
   }
   _vidKeyframes = j.frames || [];
-  $("vidKfStat").textContent = `${j.n_picked}/${j.n_all} 帧`;
-  // 时间保真度:拉伸了就明说,别让人自己去猜为什么回放比视频慢。
+  $("vidKfStat").textContent = `${j.n_picked}/${j.n_detected || j.n_all} 检出帧`
+    + ` · ${j.source_frames || j.n_all} 源帧`;
+  // t_ns 是权威时间轴；短于 tick 的目标运行时按 latest 语义覆盖，不预重采样。
   const tm = j.timing || {};
   if (tm.src_ms) {
     const st = tm.stretch || 1;
-    // 两个方向都要警告。只判 st > 1.05 会漏掉**加速**:key 模式下关键帧间隔常常
-    // 超过 HOLD_MS_CEIL(2000ms)被截短,实测 0.541× —— 回放比演示快近一倍,而那
-    // 恰恰是"手势看起来不对"的一种。静默的加速和静默的慢放一样坏。
     const warn = st > 1.05 || st < 0.95;
     $("vidTiming").innerHTML =
       `源 ${(tm.src_ms / 1000).toFixed(2)}s → 回放 `
@@ -3567,22 +3656,17 @@ async function pickKeyframes() {
       + ` · 倍率 <b style="color:${warn ? "var(--warning)" : "var(--success)"}">`
       + `${st.toFixed(2)}×</b> · tick ${tm.tick_ms}ms`
       + (tm.floored ? `<br><span style="color:var(--warning)">${tm.floored} 帧间隔`
-          + ` 短于 tick,被抬到 ${tm.tick_ms}ms —— 想原速就把 stride 调小`
-          + `(或素材帧率低于 ${Math.round(1000 / tm.tick_ms)}fps)</span>` : "")
-      // ceiled 在两种模式下含义不同,消息也得分开说。dense 模式下超过 2s 的间隔
-      // 只可能是漏检空档;key 模式下那是「这个姿态保持了 3 秒」的**有意驻留**,
-      // 被截短就是节奏失真。写成同一句话会让人在 key 模式下以为素材有漏检。
-      + (tm.ceiled ? (vidMode() === "all"
-          ? `<br><span style="color:var(--text-3)">${tm.ceiled} 处长空档(漏检)`
-            + `已截短到 2s</span>`
-          : `<br><span style="color:var(--warning)">${tm.ceiled} 处驻留超过 2s`
-            + ` 被截短 —— 关键帧之间隔得久是"保持这个姿态",截短会让手势变快。`
-            + `想保留原节奏就用「全部帧」模式</span>`) : "");
+          + ` 短于 tick；时间轴保持不变，来不及发送的中间目标会被最新目标覆盖</span>` : "")
+      + (tm.ceiled ? `<br><span style="color:var(--text-3)">${tm.ceiled} 处间隔超过`
+          + ` hold_ms 字段上限，但 t_ns 时间轴保持不变</span>` : "");
   } else { $("vidTiming").textContent = ""; }
   renderVidQuality(j.quality, j.despiked);
   const cap = j.hit_cap
-    ? '<div style="color:var(--warning);margin-bottom:5px;">⚠ 达到上限 '
-      + j.max_out + ' —— 后面的没挑,调大上限或提高阈值</div>' : "";
+    ? (vidMode() === "all"
+      ? '<div style="color:var(--warning);margin-bottom:5px;">⚠ 达到技能包上限 '
+        + j.max_out + ' 帧 —— 视频已完整解析,但超出部分不能送入录制器</div>'
+      : '<div style="color:var(--warning);margin-bottom:5px;">⚠ 达到关键帧上限 '
+        + j.max_out + ' —— 后面的没挑,调大上限或提高阈值</div>') : "";
   $("vidKfList").innerHTML = cap + _vidKeyframes.map((f, i) => `
     <div class="frame-row">
       <span class="fi">#${i + 1}</span>
@@ -3605,7 +3689,7 @@ function vidFramesToRecFrames() {
   return _vidKeyframes.map(f => {
     const n = normRawVendor(projToVendor(radToRawProj(f.rad)));
     return { label: f.label || "", rad: n.rad, raw_vendor: n.raw_vendor,
-             speed: f.speed, force: f.force, hold_ms: f.hold_ms };
+             speed: f.speed, force: f.force, hold_ms: f.hold_ms, t_ns: f.t_ns };
   });
 }
 $("btnVidToRec").onclick = () => {
@@ -3613,6 +3697,8 @@ $("btnVidToRec").onclick = () => {
   if (_recFrames.length && !confirm(
       `录制器里已有 ${_recFrames.length} 帧,替换成视频解出的 ${_vidKeyframes.length} 帧?`)) return;
   _recFrames = vidFramesToRecFrames();
+  _recPlaybackMode = PLAYBACK_TIMELINE;
+  _recFrames = recNormalizeTimeline(_recFrames, _recPlaybackMode);
   stopRecPreview();
   renderRecFrames();
   setHandTab("rec");
@@ -3626,7 +3712,11 @@ $("btnVidAppendRec").onclick = () => {
       '<div style="color:var(--danger)">超过 ' + REC_MAX_FRAMES + ' 帧上限</div>');
     return;
   }
-  _recFrames = _recFrames.concat(add);
+  const baseNs = Math.round(recDurationMs() * 1e6);
+  const shifted = recNormalizeTimeline(add, PLAYBACK_TIMELINE)
+    .map(f => ({ ...f, t_ns: f.t_ns + baseNs }));
+  if (!_recFrames.length) _recPlaybackMode = PLAYBACK_TIMELINE;
+  _recFrames = _recFrames.concat(shifted);
   renderRecFrames();
   setHandTab("rec");
   $("recHint").textContent = `已追加 ${add.length} 帧,共 ${_recFrames.length} 帧`;
@@ -3653,7 +3743,8 @@ async function playPack(body) {
     }
     _packPlaying = j.name || body.name || body.path;
     st.textContent = `播放中: ${_packPlaying} · ${j.frames} 帧`
-      + `${j.steps > j.frames ? "(含回零帧)" : ""}`;
+      + `${j.steps > j.frames ? "(含回零帧)" : ""}`
+      + `${j.playback_mode === PLAYBACK_TIMELINE ? " · 时间轴覆盖" : " · 逐帧必达"}`;
     return true;
   } catch (e) {
     st.innerHTML = '<span style="color:var(--danger)">回放失败: '
@@ -5095,7 +5186,7 @@ async function cbStartArm() {
   if (_cbArmOn) return true;
   cbDot("cbArmStatus", "busy", "打开 CAN…");
   try {
-    const spd = +$("cbArmSpeed").value || 20;
+    const spd = +$("cbArmSpeed").value || 50;
     const r = await fetch(`/api/arm/start?mock=${$("cbArmMock").checked}&speed=${spd}`,
                           { method: "POST" });
     const j = await r.json();
@@ -5271,7 +5362,7 @@ function rcCaptureFrame() {
     arm_rad: armRad.map(x => +x.toFixed(6)),
     hand_rad: rawProjToRad(rawProj).map(x => +x.toFixed(6)),
     hand_raw: projToVendor(rawProj),
-    arm_speed_percent: parseInt($("rcArmSpeed").value, 10) || 20,    // 录制栏滑块
+    arm_speed_percent: parseInt($("rcArmSpeed").value, 10) || 50,    // 录制栏滑块
     speed: parseInt($("rcHandSpeed").value, 10) || 500,              // 录制栏滑块
     force: parseInt($("rcHandForce").value, 10) || 500,              // 录制栏滑块
     hold_ms: _cl(parseInt($("rcHold").value, 10) || 800, 0, 60000),

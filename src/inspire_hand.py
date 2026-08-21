@@ -348,6 +348,26 @@ class InspireHand:
             self.last_error = f"写 {reg} 异常: {e}"
             return False
 
+    def write_shorts_fast(self, reg: str, vals: List[int]) -> bool:
+        """快速写 6 short,不等待设备写回复。仅供高频 latest-target 位置流。
+
+        RH56DFX 对写指令允许不回复;普通 write_shorts 为兼容调试命令仍会尝试收回复,
+        最坏会等 txn_timeout。视频 60fps 不能把这个等待放在每个 ANGLE_SET 上。
+        串口由 hand_console 单线程独占,所以下一次事务开始前清掉可能迟到的写回复即可。
+        设备健康由周期 ANGLE_ACT 回读和串口异常检测,不靠每个位置目标的 ACK。
+        """
+        if self._sp is None:
+            return False
+        try:
+            payload = b"".join(struct.pack("<h", int(v)) for v in vals)
+            self._sp.reset_input_buffer()
+            self._sp.write(build_write(REG[reg], payload, self.cfg.hand_id))
+            self._sp.flush()
+            return True
+        except Exception as e:                         # noqa: BLE001
+            self.last_error = f"快速写 {reg} 异常: {e}"
+            return False
+
     def write_byte(self, reg: str, val: int) -> bool:
         if self._sp is None:
             return False

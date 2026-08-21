@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.1",
+  "profile_id": "ego_fixed_rgbd_60hz_v1",
+  "revision": 2,
+  "status": "target",
+  "description": "Target fixed-camera Ego RGB-D acquisition standard with hardware timestamps.",
+  "source_kinds": ["aligned_rgbd", "native_rgbd"],
+  "acquisition": {
+    "device_class": "fixed_camera_rgbd",
+    "sync_mode": "hardware_timestamp_paired",
+    "rgb": {"required": true, "min_fps": 60, "min_width": 1920, "min_height": 1080},
+    "depth": {"required": true, "min_fps": 60, "min_width": 640, "min_height": 480},
+    "hardware_timestamps": {"required": true},
+    "rgb_depth_sync": {"required": true, "max_error_ms": 10}
+  },
+  "metrics": {
+    "hand_detection_rate_percent": {"operator": "gte", "value": 90, "unit": "%", "label": "Hand detection rate", "measurement_class": "detection", "ground_truth_required": false},
+    "wrist_position_absolute_error_p95_cm": {"operator": "lt", "value": 1, "unit": "cm", "label": "Wrist absolute position error p95", "measurement_class": "absolute_accuracy", "ground_truth_required": true},
+    "wrist_static_jitter_p95_mm": {"operator": "lt", "value": 15, "unit": "mm", "label": "Stationary wrist position jitter p95", "measurement_class": "stability_proxy", "ground_truth_required": false},
+    "wrist_translation_step_p99_mm": {"operator": "lt", "value": 100, "unit": "mm", "label": "Wrist translation frame step p99", "measurement_class": "continuity", "ground_truth_required": false},
+    "wrist_rotation_step_p99_deg": {"operator": "lt", "value": 60, "unit": "deg", "label": "Wrist rotation frame step p99", "measurement_class": "continuity", "ground_truth_required": false},
+    "bone_length_std_max_mm": {"operator": "lt", "value": 10, "unit": "mm", "label": "Worst within-episode bone-length standard deviation", "measurement_class": "stability_proxy", "ground_truth_required": false},
+    "frame_interval_jitter_max_ms": {"operator": "lt", "value": 10, "unit": "ms", "label": "Internal frame interval jitter", "measurement_class": "timing", "ground_truth_required": false},
+    "rgb_depth_alignment_error_px": {"operator": "lt", "value": 1, "unit": "px", "label": "RGB-depth alignment error", "measurement_class": "absolute_accuracy", "ground_truth_required": true},
+    "wrist_depth_step_p99_mm": {"operator": "lt", "value": 100, "unit": "mm", "label": "Wrist depth frame step p99", "measurement_class": "continuity", "ground_truth_required": false},
+    "camera_reprojection_error_px": {"operator": "lt", "value": 0.5, "unit": "px", "label": "Camera calibration reprojection error", "measurement_class": "absolute_accuracy", "ground_truth_required": true},
+    "retarget_tip_error_median_cm": {"operator": "lt", "value": 1, "unit": "cm", "label": "Median fingertip retargeting error", "measurement_class": "model_fidelity", "ground_truth_required": false},
+    "joint_limit_violation_count": {"operator": "eq", "value": 0, "unit": "", "label": "Joint limit violations", "measurement_class": "safety", "ground_truth_required": false},
+    "joint_step_max_deg": {"operator": "lt", "value": 30, "unit": "deg", "label": "Maximum frame-to-frame joint step", "measurement_class": "continuity", "ground_truth_required": false},
+    "gripper_open_error_mm": {"operator": "lt", "value": 1, "unit": "mm", "label": "Gripper opening error", "measurement_class": "model_fidelity", "ground_truth_required": false}
+  }
+}

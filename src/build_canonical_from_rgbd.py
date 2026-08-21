@@ -28,12 +28,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hand_estimators import make_hand_estimator
 from estimate_wrist import estimate_wrist_pose, depth_wrist_orientation
 from single_hand_detector import SingleHandDetector
+from capture_bundle import (
+    WRIST_FRAME_SCENE_WORLD,
+    archive_aligned_rgbd,
+    record_source,
+    resolve_ego_output,
+    write_ego_frame_mapping,
+    write_ego_metadata,
+)
+from quality_profiles import load_quality_profile
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-DEFAULT_ROOT = REPO / "src/out/canonical_ds"
 IMG = 256
 TASK = "imitate the demonstrated hand motion"
 
@@ -322,8 +330,24 @@ def main() -> None:
     ap.add_argument("--depth-jump-thresh-m", type=float, default=0.05,
                     help="时序抗跳:关键点 Z 比上帧接受值跳 >该米数判尖峰置无效;0=关闭")
     ap.add_argument("--max-frames", type=int, default=0, help="调试用;0 表示全部帧")
-    ap.add_argument("--root", default=str(DEFAULT_ROOT), help="canonical_ds 输出目录")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle 目录;不传则在 datasets/captures/ 新建")
+    ap.add_argument("--root", default=None,
+                    help="精确 canonical 输出目录(高级兼容入口,不自动创建 Capture)")
+    ap.add_argument("--legacy-out", action="store_true",
+                    help="显式写入旧 src/out/canonical_ds")
+    ap.add_argument("--quality-profile", default="legacy_aligned_rgbd_30hz_v1",
+                    help="质量 profile ID 或 JSON 路径;新 60Hz 采集使用 ego_fixed_rgbd_60hz_v1")
     args = ap.parse_args()
+
+    try:
+        root, capture = resolve_ego_output(
+            capture_root=args.capture_root,
+            output_root=args.root,
+            legacy_out=args.legacy_out,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from error
 
     src = Path(args.input_root)
     color_dir = src / "color"
@@ -337,12 +361,47 @@ def main() -> None:
         pairs = pairs[:args.max_frames]
     if not pairs:
         raise SystemExit(f"没有找到匹配的 color/depth 帧: {src}")
+    first_rgb = cv2.imread(str(pairs[0][0]), cv2.IMREAD_UNCHANGED)
+    first_depth = cv2.imread(str(pairs[0][1]), cv2.IMREAD_UNCHANGED)
+    if first_rgb is None or first_depth is None:
+        raise SystemExit(f"无法读取首个 RGB-D 帧: {pairs[0][0]}, {pairs[0][1]}")
+    rgb_height, rgb_width = first_rgb.shape[:2]
+    depth_height, depth_width = first_depth.shape[:2]
     debug_dir = Path(args.debug_dir) if args.debug_dir else None
     if debug_dir is not None:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     det = _make_detector(args.hand_estimator, args.target_hand, args.max_num_hands)
-    root = Path(args.root)
+    if capture is not None:
+        try:
+            quality_profile = load_quality_profile(args.quality_profile)
+        except (ValueError, FileNotFoundError) as error:
+            raise SystemExit(str(error)) from error
+        record_source(capture, kind="aligned_rgbd", source=src, config={
+            "camera": args.camera,
+            "fps": args.fps,
+            "rgb_width": rgb_width,
+            "rgb_height": rgb_height,
+            "depth_width": depth_width,
+            "depth_height": depth_height,
+            "depth_scale": args.depth_scale,
+            "hand_estimator": args.hand_estimator,
+            "hand_keypoints_source": args.hand_keypoints_source,
+            "wrist_orientation": args.wrist_orientation,
+            "wrist_pose_frame": WRIST_FRAME_SCENE_WORLD,
+            "hand_keypoints_frame": (
+                WRIST_FRAME_SCENE_WORLD
+                if args.hand_keypoints_source == "depth_world"
+                else "wrist_local_mano"
+            ),
+        }, quality_profile=quality_profile)
+        archive_aligned_rgbd(
+            capture,
+            pairs,
+            fps=args.fps,
+            depth_scale=args.depth_scale,
+            camera=args.camera,
+        )
     if root.exists():
         shutil.rmtree(root)
     ds = LeRobotDataset.create(repo_id="local/handdemo_canonical", fps=args.fps,
@@ -354,6 +413,7 @@ def main() -> None:
     PALM_IDX = [0, 5, 9, 13, 17]
     jump_gate = TemporalDepthGate(args.depth_jump_thresh_m)
     n_frames, n_miss, n_depth_fallback, n_depth_orient, n_jump = 0, 0, 0, 0, 0
+    source_ego_frame_indices: list[int | None] = [None] * len(pairs)
     last = None
     last_wrist_2d = None
     for source_i, (color_path, depth_path) in enumerate(pairs):
@@ -417,6 +477,7 @@ def main() -> None:
                 )
                 cv2.imwrite(str(debug_dir / f"{color_path.stem}.jpg"), dbg)
 
+        source_ego_frame_indices[source_i] = n_frames
         img = cv2.resize(rgb, (IMG, IMG))
         ds.add_frame({
             "observation.images.ego": img,
@@ -429,6 +490,21 @@ def main() -> None:
         })
         n_frames += 1
     ds.save_episode()
+    ds.finalize()
+    if capture is not None:
+        write_ego_frame_mapping(capture, source_ego_frame_indices)
+        write_ego_metadata(
+            capture,
+            estimator=args.hand_estimator,
+            source_kind="aligned_rgbd",
+            wrist_pose_frame=WRIST_FRAME_SCENE_WORLD,
+            wrist_pose_frame_declared_by="calibration.camera_to_world",
+            hand_keypoints_frame=(
+                WRIST_FRAME_SCENE_WORLD
+                if args.hand_keypoints_source == "depth_world"
+                else "wrist_local_mano"
+            ),
+        )
     print(f"wrote {n_frames} RGB-D frames ({n_miss} detector misses, {n_depth_fallback} keypoint depth fallbacks, "
           f"{n_jump} temporal-jump rejects, "
           f"wrist_orientation={args.wrist_orientation}: {n_depth_orient} frames used depth-fit) -> {root}")

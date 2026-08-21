@@ -29,12 +29,10 @@ import numpy as np
 from inspire_hand import HAND_JOINTS, HAND_LIMITS
 from paths import DATA, REPO
 
-# 一次最多解多少帧。
-# 原来是 600,配 stride=3 只够 20s 素材;但要**连贯**回放得用 stride=1,那 600 帧
-# 只有 20s 且一动作一帧都不能少。放到 2000:30fps 下 stride=1 能覆盖 66s。
-# 代价是解析时间(约 50ms/帧,2000 帧 100s),所以前端默认值仍取小的,由用户按需调大。
-MAX_EXTRACT_FRAMES = 2000
-DEFAULT_STRIDE = 3                  # 隔几帧取一帧;30fps 下 stride=3 约等于 10Hz
+# Web 视频转动作必须逐源帧解析。旧实现默认 stride=3 且最多处理 200/2000 帧,
+# 因而页面上的「全部帧」实际只表示「全部已抽取帧」,不是原视频全部帧。
+# 保留 stride 字段只是为了让历史状态/质量函数的数据结构兼容;Web 抽取固定为 1。
+DEFAULT_STRIDE = 1
 VIDEO_SUFFIXES = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
@@ -109,8 +107,8 @@ class ExtractJob:
     video: str = ""
     hand_type: str = "Right"
     stride: int = DEFAULT_STRIDE
-    total: int = 0                 # 计划解多少帧
-    done: int = 0                  # 已解多少帧
+    total: int = 0                 # 运行中为元数据估算,结束后校正为实际解码帧数
+    done: int = 0                  # 实际解码并送入检测器的源帧数
     detected: int = 0              # 其中检出手的帧数
     fps: float = 0.0
     running: bool = False
@@ -149,7 +147,7 @@ def cancel_job() -> None:
         _job.cancel = True
 
 
-def claim(video: str, *, stride: int, hand_type: str) -> bool:
+def claim(video: str, *, hand_type: str) -> bool:
     """原子地占下任务位。已有任务在跑就返回 False。
 
     ⚠ 必须**同步**占位,不能等 extract() 在工作线程里把 running 置 True ——
@@ -163,7 +161,7 @@ def claim(video: str, *, stride: int, hand_type: str) -> bool:
             return False
         _job.running = True          # 就地占位,后面 extract() 会把其余字段填全
         _job.video = video
-        _job.stride = max(1, int(stride))
+        _job.stride = DEFAULT_STRIDE
         _job.hand_type = hand_type
         _job.total = 0
         _job.done = 0
@@ -203,11 +201,12 @@ def retarget_one(obs_kp3d: np.ndarray) -> list[float]:
             for n, i in zip(HAND_JOINTS, idx6)]
 
 
-def extract(video: str, *, stride: int = DEFAULT_STRIDE, hand_type: str = "Right",
-            max_frames: int = MAX_EXTRACT_FRAMES,
-            do_despike: bool = True,
+def extract(video: str, *, hand_type: str = "Right", do_despike: bool = True,
             progress=None) -> ExtractJob:
-    """解析视频,填 _job。阻塞式 —— 调用方负责扔到线程里。
+    """逐源帧解析完整视频,填 _job。阻塞式 —— 调用方负责扔到线程里。
+
+    循环以解码器 EOF 为准,不拿 CAP_PROP_FRAME_COUNT 当停止条件。容器元数据里的
+    帧数可能不准,只能用于运行中的进度估算;任务结束时 total 会校正为实际解码帧数。
 
     检不到手的帧**跳过而不是补零**:补零会在时间轴上插进一个"突然张开"的假姿态,
     挑帧时看不出那是漏检。跳过的话前端能看到帧号不连续,知道那段没检到。
@@ -229,7 +228,7 @@ def extract(video: str, *, stride: int = DEFAULT_STRIDE, hand_type: str = "Right
             _job.started_at = _job.started_at or time.monotonic()
         _job.video = str(p.resolve())
         _job.hand_type = hand_type
-        _job.stride = max(1, int(stride))
+        _job.stride = DEFAULT_STRIDE
 
     cap = cv2.VideoCapture(str(p))
     if not cap.isOpened():
@@ -240,11 +239,9 @@ def extract(video: str, *, stride: int = DEFAULT_STRIDE, hand_type: str = "Right
     try:
         fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
         nframe = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        st = max(1, int(stride))
-        plan = min(max_frames, (nframe + st - 1) // st) if nframe > 0 else max_frames
         with _job_lock:
             _job.fps = fps
-            _job.total = plan
+            _job.total = max(0, nframe)
 
         # 估计器每次任务新建:MediaPipe 的 Hands 是**有状态**的(带跨帧跟踪),
         # 复用上一个视频的实例会把上一段的跟踪状态带进来。
@@ -252,13 +249,21 @@ def extract(video: str, *, stride: int = DEFAULT_STRIDE, hand_type: str = "Right
         est = MediaPipeHandEstimator(hand_type=hand_type)
 
         i = 0
+        last_t = -1.0
         while True:
             ok, bgr = cap.read()
             if not ok:
                 break
-            if i % st:
-                i += 1
-                continue
+            # 优先用容器/解码器给出的显示时间戳。i/fps 只适合恒帧率视频；VFR、
+            # 丢帧或编辑过的素材必须按 PTS 才能保留原动作节奏。部分 OpenCV 后端
+            # 会一直返回 0 或偶发倒退，此时才回退到 fps 推导并强制单调。
+            pos_ms = float(cap.get(cv2.CAP_PROP_POS_MSEC))
+            source_t = pos_ms / 1000.0 if math.isfinite(pos_ms) and pos_ms >= 0 else -1.0
+            if i > 0 and source_t <= last_t:
+                source_t = max(i / fps, last_t + 1.0 / fps)
+            elif source_t < 0:
+                source_t = i / fps
+            last_t = source_t
             with _job_lock:
                 if _job.cancel:
                     break
@@ -275,18 +280,23 @@ def extract(video: str, *, stride: int = DEFAULT_STRIDE, hand_type: str = "Right
                         _job.error = f"第 {i} 帧解析异常(已跳过): {e}"
             with _job_lock:
                 _job.done += 1
+                # 元数据低报时扩展进度分母,避免运行中出现 done > total。元数据完全
+                # 缺失时保持 total=0 到 EOF,否则每处理一帧都会假装成 100%。
+                if _job.total:
+                    _job.total = max(_job.total, _job.done)
                 if rad is not None and all(math.isfinite(x) for x in rad):
                     _job.detected += 1
-                    _job.frames.append({"frame": i, "t": round(i / fps, 3),
+                    _job.frames.append({"frame": i, "t": round(source_t, 9),
+                                        "t_ns": int(round(source_t * 1e9)),
                                         "rad": [round(x, 6) for x in rad]})
                 if progress:
                     progress(_job.to_dict())
-                if _job.done >= plan:
-                    break
             i += 1
     finally:
         cap.release()
         with _job_lock:
+            # CAP_PROP_FRAME_COUNT 可能高报或低报;完成后的真实总数就是读到 EOF 的数量。
+            _job.total = _job.done
             # 去尖刺 + 质量报告作为**后处理**:中值要看前后帧,逐帧边解边做拿不到
             # 后一帧。放在这里的另一个好处是下游(挑帧/预览/存包)全部自动拿到
             # 清理过的数据,不用每个消费者各记一遍要不要清理。
@@ -516,9 +526,10 @@ def pick_keyframes(frames: list[dict], *, eps: float = KEYFRAME_EPS,
     return out
 
 
-# 驻留时间的上限。超过这个的间隔一律是**漏检造成的空档**(检不到手的帧被跳过,
-# 时间轴上就留了个洞),照搬会让回放莫名停顿好几秒。
-HOLD_MS_CEIL = 2000
+# hold_ms 是 JSON 兼容/末帧驻留字段；中间帧真正的执行时刻由 t_ns 决定。
+# 字段范围与 gesture_pack 保持一致，超过它只截字段，不改权威时间轴。
+HOLD_MS_MAX = 60_000
+HOLD_MS_CEIL = HOLD_MS_MAX             # 兼容旧调用方名称
 
 
 def frames_to_pack_frames(frames: list[dict], *, speed: int = 500,
@@ -526,33 +537,26 @@ def frames_to_pack_frames(frames: list[dict], *, speed: int = 500,
                           default_hold_ms: int = 400) -> tuple[list[dict], dict]:
     """帧序列 → 技能包帧(带 hold_ms)。返回 (帧, 时间保真度报告)。
 
-    hold_ms 用**相邻帧的真实时间差**,这样回放节奏和视频里做动作的节奏一致。
-
-    ⚠ 下限是 PLAYER_TICK_MS(回放器的时间分辨率),**不是**我原来拍的 80ms。
-    原来那个 80 是错的:30fps 源在 stride=1 时帧间 33ms,被抬到 80ms 就是整段
-    慢 2.4× —— 用户看到的"很延迟"就是这么来的。抬到 tick 周期是物理下限(比一个
-    tick 短的驻留落不到实处),抬到 80 是凭空加的 2.4 倍慢放。
-
-    上限 HOLD_MS_CEIL 仍然要:那是漏检空档,不是真实节奏。
-
-    报告里带 stretch(实际总时长 / 源时长)。有拉伸就该让人看见,而不是默默慢放。
+    hold_ms 记录相邻源时间差但不参与中间帧调度；播放器按 t_ns 的墙钟时间选择
+    最新到期目标。短于播放器 tick 的目标允许被覆盖，长漏检空档保持上一目标，
+    都不会在导入阶段预重采样或修改时间轴。
     """
     from gesture_pack import PLAYER_TICK_MS
     out = []
     gap_src = gap_play = floored = ceiled = 0
+    first_ns = int(frames[0].get("t_ns", round(frames[0]["t"] * 1e9))) if frames else 0
     for i, f in enumerate(frames):
+        cur_ns = int(f.get("t_ns", round(f["t"] * 1e9)))
         if i + 1 < len(frames):
-            dt_ms = int(round((frames[i + 1]["t"] - f["t"]) * 1000))
-            hold = int(_clamp(dt_ms, PLAYER_TICK_MS, HOLD_MS_CEIL))
-            # ⚠ stretch 只统计**帧间间隔**,不把末帧的 default_hold_ms 算进去。
-            # 算进去的话它在分子分母各出现一次,会把真实拉伸**稀释**掉:
-            # 120fps 素材实际慢 4×,连着 400ms 末帧一起算只报 1.48× —— 那个数
-            # 看起来"还行",于是真正的时序失真被藏住了。
+            next_ns = int(frames[i + 1].get(
+                "t_ns", round(frames[i + 1]["t"] * 1e9)))
+            dt_ms = int(round((next_ns - cur_ns) / 1e6))
+            hold = int(_clamp(dt_ms, 0, HOLD_MS_MAX))
             gap_src += dt_ms
-            gap_play += hold
+            gap_play += dt_ms             # latest 模式按 t_ns，实际时间轴不变
             if dt_ms < PLAYER_TICK_MS:
                 floored += 1
-            elif dt_ms > HOLD_MS_CEIL:
+            elif dt_ms > HOLD_MS_MAX:
                 ceiled += 1
         else:
             hold = default_hold_ms
@@ -560,11 +564,13 @@ def frames_to_pack_frames(frames: list[dict], *, speed: int = 500,
         # 累加的话就把上面 int(round()) 的取整误差攒起来了:30fps 每帧少 0.333ms,
         # 600 帧末尾差 200ms(实测 199.7ms)。t_ns 每帧独立算,残差不累积。
         # 减去首帧时刻,让 t_ns 是"相对包起点"的 —— 素材可能不是从 0 秒开始截的。
-        out.append({"label": f"t={f['t']:.2f}s", "rad": list(f["rad"]),
+        out.append({"label": f"t={(cur_ns - first_ns) / 1e9:.3f}s",
+                    "rad": list(f["rad"]),
                     "speed": int(speed), "force": int(force), "hold_ms": hold,
-                    "t_ns": int(round((f["t"] - frames[0]["t"]) * 1e9))})
+                    "t_ns": cur_ns - first_ns})
+    total_timeline_ms = gap_src + (out[-1]["hold_ms"] if out else 0)
     return out, {"src_ms": gap_src, "play_ms": gap_play,
-                 "total_play_ms": sum(f["hold_ms"] for f in out),
+                 "total_play_ms": total_timeline_ms,
                  "stretch": round(gap_play / gap_src, 3) if gap_src else 1.0,
                  "floored": floored, "ceiled": ceiled,
                  "tick_ms": PLAYER_TICK_MS}

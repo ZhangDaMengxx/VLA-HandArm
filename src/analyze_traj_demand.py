@@ -3,7 +3,7 @@
 
 为什么要先算这个:在问"臂能不能跟上"之前,得先知道要它跟多快。
 供给侧(臂实际能到多少 deg/s、到位要多久)必须实测;需求侧不用,
-out/robot_traj_*.npz 里已经有全部答案了。
+Capture 的 `exports/workbench/robot_traj.npz` 里已经有全部答案了。
 
 ⚠ 时间轴不在 npz 里 —— 只有 (N,7) 角度矩阵。帧率按源视频的 30fps 取,
 见 gesture_pack.py:53「30fps 下 stride=1 一秒就 30 帧」。改 --fps 可换算。
@@ -16,8 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-SIM = Path(__file__).resolve().parent
-OUT = SIM / "out"
+from capture_bundle import discover_trajectory_npz
 
 
 def analyze(path: Path, fps: float) -> dict:
@@ -55,10 +54,20 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fps", type=float, default=30.0,
                     help="源轨迹帧率(npz 里没有时间列,只能外部给)")
-    ap.add_argument("files", nargs="*", help="默认 out/robot_traj_*.npz 全部")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle；不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--legacy-out", action="store_true", help="显式扫描旧 src/out")
+    ap.add_argument("files", nargs="*", help="显式轨迹路径；默认扫描当前 Capture")
     args = ap.parse_args()
 
-    paths = [Path(f) for f in args.files] or sorted(OUT.glob("robot_traj_*.npz"))
+    try:
+        paths = [Path(f) for f in args.files] or discover_trajectory_npz(
+            capture_root=args.capture_root,
+            legacy_out=args.legacy_out,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"没找到 npz：{exc}")
+        return 1
     if not paths:
         print("没找到 npz。先跑 derive_embodiment.py --emit-traj")
         return 1

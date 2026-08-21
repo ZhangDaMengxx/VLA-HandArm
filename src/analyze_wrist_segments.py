@@ -26,9 +26,8 @@ import pandas as pd
 from scipy.spatial.transform import Rotation as Rot
 
 from robot_specs import get_spec
+from capture_bundle import read_ego_coordinate_system, resolve_ego_input
 
-REPO = Path(__file__).resolve().parents[1]
-CANON_ROOT = REPO / "src/out/canonical_ds"
 AXES = {
     "+X": np.array([1.0, 0.0, 0.0]),
     "-X": np.array([-1.0, 0.0, 0.0]),
@@ -168,7 +167,10 @@ def rpy_deg(B: np.ndarray) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--robot", default="nero_inspire")
-    ap.add_argument("--canonical", default=str(CANON_ROOT))
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle；不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--canonical", default=None, help="显式 Ego LeRobotDataset 根目录")
+    ap.add_argument("--legacy-out", action="store_true", help="显式读取旧 src/out")
     ap.add_argument("--segment", action="append", type=parse_segment,
                     default=[("flip", 410, 425), ("swing", 180, 190)],
                     help="动作帧段 name=start:end,可重复。默认 flip=410:425 swing=180:190")
@@ -183,8 +185,24 @@ def main() -> None:
     args = ap.parse_args()
 
     spec = get_spec(args.robot)
-    wps = load_wrist_poses(Path(args.canonical))
+    canonical_root, _ = resolve_ego_input(
+        capture_root=args.capture_root,
+        input_root=args.canonical,
+        legacy_out=args.legacy_out,
+    )
+    coordinates = read_ego_coordinate_system(
+        canonical_root,
+        required=False,
+        allow_legacy_schema=True,
+    )
+    wrist_pose_frame = (
+        "undeclared"
+        if coordinates is None
+        else coordinates["features"]["observation.wrist_pose"]["frame"]
+    )
+    wps = load_wrist_poses(canonical_root)
     print(f"canonical frames: {len(wps)}")
+    print(f"wrist_pose frame: {wrist_pose_frame}")
 
     motions = {}
     for name, start, end in args.segment:

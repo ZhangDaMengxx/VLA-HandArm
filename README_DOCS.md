@@ -13,11 +13,11 @@
 
 | 文档 | 内容 | 当前基准 |
 |------|------|----------|
-| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-19 |
-| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-19 |
+| [README.md](README.md) | 项目入口和仓库边界 | 2026-08-21 |
+| [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-21 |
 | [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-19 |
-| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-19 |
-| [TODO.md](TODO.md) | 可执行待办 | 2026-08-19 |
+| [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-21 |
+| [TODO.md](TODO.md) | 可执行待办 | 2026-08-21 |
 | [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
 | [GIT_GUIDE.md](GIT_GUIDE.md) | 三个仓库的 Git 约定 | 2026-08-14 |
 | [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
@@ -58,6 +58,7 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 | [src/COMBO_DEBUG.md](src/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
 | [src/HAND_SAFETY_PLAN.md](src/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
 | [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
+| [datasets/captures/README.md](datasets/captures/README.md) | Capture Bundle、quality profile 快照和旧路径兼容边界 |
 | [VISUALIZER_SPEC.md](VISUALIZER_SPEC.md) | 可视化约定 |
 | [src/build_urdf/README.md](src/build_urdf/README.md) | URDF 装配分析工具 |
 | [src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md) | MediaPipe Tasks、引擎降级、latest-target 和验收契约 |
@@ -106,10 +107,13 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
-4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；单目位置不是绝对米制真值，真实机械臂尚未验证。
+4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；灵巧手与机械臂 IK 已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。
 5. 页面内切换会等待硬件复位和断开；浏览器关闭依赖 `pagehide/sendBeacon` 尽力通知，
    服务端 heartbeat/lease watchdog 和多标签页通道所有权尚未实现。
+6. Capture 路径、生命周期、Source 基础留存、版本化 quality profile、绝对/代理质量语义、
+   坐标契约、Python 3.12 + LeRobot 0.6.1 严格 v3、episode sidecar 和 Capture 完整性校验已完成；
+   设备原生 RGB-D/raw depth、真实硬件时间戳以及限位/碰撞/指尖误差的物理 QA 证据仍未闭环。
 
 ---
 
-**最后全面审查**：2026-08-19
+**最后全面审查**：2026-08-21

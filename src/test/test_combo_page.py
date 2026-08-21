@@ -43,6 +43,14 @@ def test_video_tracking_has_one_combo_entrypoint():
     assert '腕部姿态：回放一致' in _INDEX
     assert 'id="cbWristMode"' not in _INDEX
     assert 'data-mode="local_right"' not in _INDEX
+
+
+def test_acceptance_card_distinguishes_truth_and_proxy_metrics():
+    assert "m.measurement_class" in _INDEX
+    assert "m.ground_truth_available" in _INDEX
+    assert 'stability_proxy: "稳定代理"' in _INDEX
+    assert 'continuity: "连续性"' in _INDEX
+    assert '"需真值"' in _INDEX
     assert 'id="hp_camera"' not in _INDEX and "HandCameraControl" not in _INDEX
     assert "tracking_control" in _COMBO_CAMERA
     assert "arm_joint_targets" in _INDEX and "hand_joint_targets" in _INDEX
@@ -86,6 +94,12 @@ def test_combo_live_hand_speed_defaults_to_1000_and_is_applied_on_connect():
     assert "await this.onBeforeStart?.()" in _COMBO_CAMERA
 
 
+def test_combo_live_arm_speed_defaults_to_50_percent():
+    start = _INDEX.index('id="cbArmSpeed"')
+    assert 'value="50"' in _INDEX[start:start + 160]
+    assert 'const spd = +$("cbArmSpeed").value || 50' in _INDEX
+
+
 def test_combo_tracking_backend_has_anchor_and_real_arm_gate():
     assert "LiveWristMapper" in _APP
     assert 'tracking_control = data.get("tracking_control")' in _APP
@@ -108,6 +122,20 @@ def test_combo_tracking_backend_has_anchor_and_real_arm_gate():
     assert "'tracking_ready'" in _INDEX and "'home'" in _INDEX
     assert "prepareComboTrackingArm" in _INDEX
     assert '"home_pose": list(NERO_HOME_POSE)' in _APP
+
+
+def test_combo_hand_path_is_not_blocked_by_live_ik():
+    start = _APP.index('@app.websocket("/ws/hand/mimic")')
+    end = _APP.index("def _estimate_hand_frame", start)
+    handler = _APP[start:end]
+    hand_submit = handler.index("_get_hand_target_mailbox().submit")
+    ik_submit = handler.index("scheduler.submit(")
+    assert hand_submit < ik_submit
+    assert '"cmd": "solve"' not in handler[handler.index("try:"):]
+    assert "LatestIKScheduler" in handler
+    assert '"source_frame_id": target.frame_id' in handler
+    assert "target.anchor_revision == mapper.anchor_revision" in handler
+    assert "context.get(\"authorization_revision\") == authorization_revision" in handler
 
 
 def _gltf_json(p: Path) -> dict:

@@ -32,6 +32,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src" / "skills"))
 from hand_pose import (FEASIBLE, HAND_JOINTS, INDEX, index_min_raw,  # noqa: E402
                        rad_to_raw)
+sys.path.insert(0, str(REPO / "src"))
+from capture_bundle import discover_trajectory_npz  # noqa: E402
 
 # 与 backend.HAND_NAMES 同序 —— 靠名字对齐,不靠列位置
 HAND_NAMES = list(HAND_JOINTS)
@@ -147,6 +149,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--npz", type=Path, default=None, help="只看这一个文件")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle；不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--legacy-out", action="store_true", help="显式扫描旧 src/out")
     args = ap.parse_args()
 
     if args.npz:
@@ -155,9 +160,16 @@ def main() -> int:
             print(f"✗ 文件不存在: {args.npz}")
             return 1
     else:
-        paths = sorted((REPO / "src" / "out").glob("robot_traj_*.npz"))
+        try:
+            paths = discover_trajectory_npz(
+                capture_root=args.capture_root,
+                legacy_out=args.legacy_out,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"✗ {exc}")
+            return 1
         if not paths:
-            print("✗ src/out/ 下没有 robot_traj_*.npz")
+            print("✗ 当前 Capture 中没有 robot_traj.npz")
             return 1
 
     ok = [report(p) for p in paths]

@@ -19,9 +19,7 @@ from scipy.spatial.transform import Rotation as Rot
 
 from robot_specs import get_spec
 from nero_kin import NeroKin
-
-REPO = Path(__file__).resolve().parents[1]
-CANON_ROOT = REPO / "src/out/canonical_ds"
+from capture_bundle import read_ego_coordinate_system, resolve_ego_input
 
 
 def pose_vec_to_mat(v: np.ndarray) -> np.ndarray:
@@ -67,11 +65,29 @@ def main() -> None:
     ap.add_argument("--basis", type=float, nargs=3, default=None,
                     metavar=("ROLL", "PITCH", "YAW"),
                     help="临时用 RPY(弧度)覆盖 RobotSpec.wrist_motion_basis_R")
-    ap.add_argument("--canonical", default=str(CANON_ROOT))
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle；不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--canonical", default=None, help="显式 Ego LeRobotDataset 根目录")
+    ap.add_argument("--legacy-out", action="store_true", help="显式读取旧 src/out")
     args = ap.parse_args()
 
     spec = get_spec(args.robot)
-    wps = load_wrist_poses(Path(args.canonical))
+    canonical_root, _ = resolve_ego_input(
+        capture_root=args.capture_root,
+        input_root=args.canonical,
+        legacy_out=args.legacy_out,
+    )
+    coordinates = read_ego_coordinate_system(
+        canonical_root,
+        required=False,
+        allow_legacy_schema=True,
+    )
+    wrist_pose_frame = (
+        "undeclared"
+        if coordinates is None
+        else coordinates["features"]["observation.wrist_pose"]["frame"]
+    )
+    wps = load_wrist_poses(canonical_root)
     if len(wps) < 2:
         raise SystemExit("canonical 帧数不足")
 
@@ -94,6 +110,7 @@ def main() -> None:
     dRs_robot_body = np.stack([B @ R @ B.T for R in dRs_human_body])
 
     print(f"canonical frames: {len(wps)}")
+    print(f"wrist_pose frame: {wrist_pose_frame}")
     print(f"basis: {basis_label}")
     print("B =")
     print(np.array2string(B, precision=4, suppress_small=True))

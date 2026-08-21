@@ -103,11 +103,6 @@ class RobotSpec:
         if not self.repo_id:
             self.repo_id = f"local/{self.name}_handdemo"
 
-    @property
-    def out_root(self) -> Path:
-        return REPO / f"src/out/lerobot_ds_{self.name}"
-
-
 # ============================================================================
 # 两个 NERO 规格,按数据源分开,互不污染:
 #   nero_inspire_rgb  —— 普通 RGB(无深度/无世界系)。legacy 相对路径 + 原始静止 home。

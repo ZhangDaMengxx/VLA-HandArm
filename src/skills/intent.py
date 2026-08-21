@@ -257,8 +257,8 @@ class PackTarget:
     # 哪种包:gesture_pack(纯手,data/gestures/)| combo_pack(臂+手,data/combos/)
     #
     # ⚠ **必须有这个字段**,不能只靠 path。两种包有各自的沙箱根,
-    # `data/gestures/test1.json` 和 `data/combos/test1.json` 是**两个合法的不同文件**,
-    # 而 path 都是相对各自根的 "test1.json"。执行层只拿到 path 的话不知道该用哪个根
+    # `data/gestures/<同名>.json` 和 `data/combos/<同名>.json` 可以是**两个合法的不同文件**,
+    # 而 path 都是相对各自根的同一文件名。执行层只拿到 path 的话不知道该用哪个根
     # 去 load —— 猜错就是放错动作,而 combo 包**会动臂**(伤害量级和手不同)。
     kind: str = "gesture_pack"
 

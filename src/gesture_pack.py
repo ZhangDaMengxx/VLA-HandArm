@@ -54,6 +54,9 @@ SCHEMA = "hand_gesture_pack/2"
 ACCEPT_SCHEMAS = ("hand_gesture_pack/1", "hand_gesture_pack/2")
 HAND_MODEL = "inspire_rh56dfx_right"
 NCH = 6                                  # 通道数,手是 6 个驱动关节
+PLAYBACK_KEYFRAME = "keyframe_strict"
+PLAYBACK_TIMELINE = "timeline_latest"
+PLAYBACK_MODES = (PLAYBACK_KEYFRAME, PLAYBACK_TIMELINE)
 
 HOLD_MS_MIN, HOLD_MS_MAX = 0, 60_000     # 单帧驻留上限 60s,防手滑填 6000000 卡死播放
 # 单个包的帧数上限。原来 512 是按"手拖滑块能录几帧"定的(那种用法几十帧就够),
@@ -217,6 +220,7 @@ class GesturePack:
     hand: str = HAND_MODEL
     created_at: str = ""
     return_home_first: bool = True     # 回放前先回零位。见 to_action_sequence()
+    playback_mode: str = PLAYBACK_KEYFRAME
     # 读文件时**补**了多少帧的 t_ns。>0 = 这个包的时间轴是从整数 hold_ms 累加出来的,
     # 带原有漂移(600 帧量级 ~200ms),不是从视频源时刻算的。
     # 不存进 to_dict —— 它描述的是"这次是怎么读进来的",不是包的内容。
@@ -228,6 +232,9 @@ class GesturePack:
 
     @property
     def duration_ms(self) -> int:
+        if (self.playback_mode == PLAYBACK_TIMELINE and self.frames
+                and self.frames[-1].t_ns is not None):
+            return int(round(self.frames[-1].t_ns / 1e6)) + self.frames[-1].hold_ms
         return sum(f.hold_ms for f in self.frames)
 
     def ensure_t_ns(self) -> int:
@@ -268,6 +275,7 @@ class GesturePack:
             "joint_order": list(HAND_JOINTS),
             "created_at": self.created_at or datetime.now().isoformat(timespec="seconds"),
             "note": self.note, "return_home_first": self.return_home_first,
+            "playback_mode": self.playback_mode,
             "frames": [f.to_dict() for f in self.frames],
         }
 
@@ -297,10 +305,22 @@ class GesturePack:
                 frames.append(GestureFrame.from_dict(fd))
             except GestureError as e:
                 raise GestureError(f"第 {i + 1} 帧: {e}") from e
+        mode = d.get("playback_mode")
+        if mode is None:
+            # 2026-08-20 以前的视频导入包没有 mode,但每帧都有生成器固定写入的
+            # t=<秒>s 标签。只对这种明确来源做兼容识别;普通旧包仍按严格关键帧播。
+            video_labels = len(frames) > 1 and all(
+                re.fullmatch(r"t=\d+(?:\.\d+)?s", f.label or "") for f in frames
+            )
+            mode = PLAYBACK_TIMELINE if video_labels else PLAYBACK_KEYFRAME
+        mode = str(mode)
+        if mode not in PLAYBACK_MODES:
+            raise GestureError(f"playback_mode 不认识: {mode!r},需要 {PLAYBACK_MODES}")
         pack = cls(name=name, frames=frames, note=str(d.get("note", ""))[:500],
                    hand=str(d.get("hand", HAND_MODEL)),
                    created_at=str(d.get("created_at", "")),
-                   return_home_first=bool(d.get("return_home_first", True)))
+                   return_home_first=bool(d.get("return_home_first", True)),
+                   playback_mode=mode)
         # /1 的旧文件没有 t_ns,在**入口**补齐,这样下游(to_action_sequence、
         # ActionPlayer)只需要处理"每帧都有绝对时刻"这一种情况。
         # 补齐后 from_dict 的返回值和 /2 的文件在结构上不可区分,所以把**补了几帧**
@@ -308,6 +328,12 @@ class GesturePack:
         # "时刻是累加出来的、带漂移"。不记的话只能拿 drift_ms()==0 反推,而那会
         # 误报在整数毫秒正好整除的包上(见 t_ns_filled 的注释)。
         pack.t_ns_filled = pack.ensure_t_ns()
+        if pack.playback_mode == PLAYBACK_TIMELINE:
+            for i in range(1, len(pack.frames)):
+                if pack.frames[i].t_ns <= pack.frames[i - 1].t_ns:
+                    raise GestureError(
+                        f"timeline_latest 的 t_ns 必须严格递增:第 {i}、{i + 1} 帧"
+                    )
         return pack
 
 
@@ -342,9 +368,9 @@ CONSOLE_HZ = 30                     # 遥测发布率(给浏览器看的)
 # 为什么要远大于 30:一步的驻留只能是整数个 tick,而 hold_ms 和 tick 同量级时是
 # 最坏情况 —— 循环落在截止时刻前一点点就得再等一整个 tick,33ms 的驻留时而 33、
 # 时而 66,整段拖慢三成多。实测 tick=33ms 回放 33ms/帧素材:180 帧跑成 8.10s
-# (源 5.97s,慢 1.36×)。100Hz 时量化误差降到 ~10%。
-PLAYER_HZ = 100
-PLAYER_TICK_MS = int(round(1000 / PLAYER_HZ))       # 10ms = 最短可落地的驻留
+# (源 5.97s,慢 1.36×)。当前 200Hz 给 60fps 时间轴约 5ms 的最大调度量化。
+PLAYER_HZ = 200
+PLAYER_TICK_MS = int(round(1000 / PLAYER_HZ))       # 5ms,60fps 目标最大调度量化约 5ms
 
 
 def to_action_sequence(pack: GesturePack, *, slot: int = -1,
@@ -379,7 +405,8 @@ def to_action_sequence(pack: GesturePack, *, slot: int = -1,
                                 speeds=[f.speed] * NCH, forces=[f.force] * NCH,
                                 delay_ms=f.hold_ms,
                                 t_ns=None if f.t_ns is None else f.t_ns + off_ns))
-    return ActionSequence(index=-1, name=pack.name, steps=steps, slot=slot)
+    return ActionSequence(index=-1, name=pack.name, steps=steps, slot=slot,
+                          playback_mode=pack.playback_mode)
 
 
 # --------------------------------------------------------------------------
@@ -529,7 +556,8 @@ def list_packs() -> list[dict]:
         out.append({"path": rel, "name": pack.name, "frames": len(pack.frames),
                     "duration_ms": pack.duration_ms, "note": pack.note,
                     "created_at": pack.created_at,
-                    "return_home_first": pack.return_home_first})
+                    "return_home_first": pack.return_home_first,
+                    "playback_mode": pack.playback_mode})
     return out
 
 

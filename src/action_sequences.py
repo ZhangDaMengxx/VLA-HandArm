@@ -37,6 +37,8 @@ class ActionSequence:
     name: str                     # 显示名
     steps: list[ActionStep]
     slot: int = -1                # 文件里的位置,唯一,前端/播放器用它定位
+    # keyframe_strict:每一步都执行;timeline_latest:按墙钟时间只发最新到期目标。
+    playback_mode: str = "keyframe_strict"
 
 
 def parse_field(s: str) -> int | None:

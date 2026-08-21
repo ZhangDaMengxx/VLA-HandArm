@@ -52,7 +52,7 @@ python src/app_web.py
 - `/ws/hand/mimic` 同时输出 7 轴机械臂与 6 轴灵巧手目标；Mock 和真机共用协议与 IK 链
 - 单一按钮完成当前手腕位置/姿态的联合锚定、冻结和重新锚定；首个有效手帧即可点击，随后固定采集 12 帧并做离群点剔除
 - 锚点使用机械臂当前关节 FK，页面显示采样进度与位置/姿态抖动，避免启动跳变或无限等待稳定
-- latest-target 真机控制最多一个待发目标和一个 ACK 在途；真臂实时跟随默认不授权
+- 灵巧手与机械臂 IK 已解耦；各链路 latest-only，最多一个待处理目标和一个在途操作，过期 IK 不下发
 - retarget 后的真手目标使用六关节 One Euro 自适应滤波和 0.0005rad 分辨率门限；3D 预览不滤波
 - HTTP 为断线时的 retarget/3D 预览降级路径，WebSocket 恢复前不驱动真手
 - 联合动作录制和回放（这是 Web 工作台能力，不等于现行 MCP combo 工具）
@@ -68,6 +68,9 @@ WebSocket 返回后逐帧追加硬件 HTTP 请求；后端以 30Hz 投递最新�
 `monocular_scale`，只适合锚定后的有限范围相对控制，不是绝对米制真值。Mock 模式已完成
 WebSocket、IK 和 Three.js 臂手联动验收；真实机械臂尚未验证。丢手、左右手变化、连续
 IK 失败、急停/冻结、未使能或断线都会停止机械臂目标投递并冻结跟随。
+灵巧手目标在 retarget 后立即进入独立 30Hz mailbox，不等待机械臂 IK；IK 使用单 worker
+和深度 1 的 pending 槽，响应携带最近完成机械臂结果的 `source_frame_id`。合体页默认
+灵巧手速度 `1000`、机械臂速度 `50%`。
 
 页面内切换会等待复位和断开完成；浏览器关闭或刷新则通过 `pagehide/sendBeacon` 尽力通知
 后端执行同一释放流程。浏览器进程被强制结束、主机断电或网络中断时，该通知无法保证送达；
@@ -78,13 +81,40 @@ IK 失败、急停/冻结、未使能或断线都会停止机械臂目标投递�
 ```bash
 pip install -r requirements.txt
 python src/build_nero_inspire.py
-python src/build_canonical.py
-python src/derive_embodiment.py --emit-traj
-python src/replay_rerun.py --serve
+python src/build_canonical.py                         # 新建 Capture，Ego 写入 <capture>/ego/
+python src/derive_embodiment.py --emit-traj           # 默认读取最新 ready Capture
+python src/replay_rerun.py --serve                    # 默认回放最新 ready Capture
 ```
 
 管线将人手视频转换为规范层，再映射到 NERO + Inspire 的关节轨迹和
-LeRobotDataset。具体约定见 [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)。
+LeRobotDataset。正式数据默认保存在
+`datasets/captures/capture_<YYYYMMDD>_<sequence>_<uuid>/`：`ego/` 是独立 Ego
+LeRobotDataset，机器人数据集位于
+`robot_datasets/<target>/target_revision_v001/retarget_v001/`。一次 Web 管线运行也固定使用
+同一个 Capture，避免规范层、轨迹和验收报告串到不同批次。
+Source 层会保留原视频、处理结果原文件或参与构建的原分辨率 RGB/对齐深度，并记录
+Source -> Ego 帧映射；缺失的硬件时间戳保持为空，不会用 FPS 推算值冒充。
+每次构建还会把所选版本化质量口径固化为 `source/quality_profile.json`。默认 profile 按
+RGB 视频、旧 960×540 RGB-D 帧集或外部处理结果区分；未来固定相机 60 Hz 数采显式使用
+`--quality-profile ego_fixed_rgbd_60hz_v1`。验收读取 Capture 快照，不按当前代码中的新阈值
+重解释旧数据，并把 LeRobot 内部帧间隔一致性与真实 RGB/Depth 硬件同步分开报告。验收项还
+显式标记绝对精度、稳定性代理和连续性；没有逐帧真值时，手腕绝对误差保持不可测，骨长波动
+或深度连续性不会被当成绝对精度通过。
+Ego `meta/coordinate_system.json` 使用 2.0 契约逐字段声明坐标语义：普通固定相机 RGB 的
+`wrist_pose` 为 `episode0_camera`，带 `camera_to_world` 标定的 RGB-D 为 `scene_world`；
+消费者读取该文件，不根据目录或输入类型猜坐标系。
+每个新 Ego/RobotDataset 还会按 episode 建立 `annotations/episode_*.json`；默认状态是
+`unreviewed`，后续构建不会覆盖人工审核。RobotDataset 的 `qa/episode_*.json` 记录帧索引、
+state/action 有限值等自动检查，缺少碰撞、限位或指尖真值时明确标为 `not_evaluated`。
+整个 Capture 可用 `src/verify_dataset.py --capture-bundle --capture-root <capture>` 校验 Source、
+环境快照、严格 v3、血缘、sidecar 覆盖和 SHA-256。
+
+旧 `src/out/` 不会自动移动或删除；只有显式传 `--legacy-out`（Web 使用
+`VLA_LEGACY_OUT=1`）才会读取旧产物。当前迁移只改变路径并保留既有 `xyzw` 四元数和数值
+运算。数据集专用 Python 3.12.13 + `lerobot[dataset]==0.6.1` 环境和严格 v3 校验已通过；
+完整 Source RGB-D 原始流与真实硬件微秒时间戳仍需由后续采集设备提供。目录说明见
+[datasets/captures/README.md](datasets/captures/README.md)，字段约定见
+[src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)。
 
 ## 目录
 
@@ -95,6 +125,8 @@ src/                   驱动、Web、技能、标定、仿真和数据管线
 src/test/              离线测试；hardware/ 为需显式运行的真机脚本
 assets/                URDF、mesh 和浏览器模型
 data/                  动作包、标定和数据集
+datasets/captures/     Capture Bundle 根目录；真实 Capture 默认不进入 Git
+configs/quality_profiles/  版本化数采能力与验收阈值
 third_party/            上游源码、厂商 SDK、外部数据和项目 overlay
 deploy/                完整 Web/ROS2 真机主机部署
 ```
@@ -114,4 +146,4 @@ deploy/                完整 Web/ROS2 真机主机部署
 
 ---
 
-**最后核对**：2026-08-19
+**最后核对**：2026-08-20

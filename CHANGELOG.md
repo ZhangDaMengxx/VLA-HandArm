@@ -6,6 +6,99 @@
 
 ---
 
+## [2026-08-21] - 开发基线收口
+
+### Changed (变更)
+
+- 将最终 451 帧视频动作包以 `data/gestures/拿螺丝刀.json` 纳入版本库，显式使用 `timeline_latest`；删除早期 645 帧链路样本 `episode_000000.json`
+- 测试和现行文档统一引用实际动作包文件名，继续验证 7.507 秒源时间轴和末帧保持语义
+
+### Verification (验证)
+
+- Python 编译、`git diff --check` 和三个 Web Node 测试通过
+- 动作时间轴、播放器、视频导入和异步 IK 定向回归 `40 passed`
+- 隔离已记录的手指限位漂移、旧轨迹夹具、测试变量和 TestClient 后台线程阻断项后，离线宽回归 `191 passed`、3 个既有 `PytestReturnNotNoneWarning`
+- 全量 `pytest` 仍会被 P0 手指 span/limit 不一致测试在收集阶段主动终止；未修改或掩盖该安全问题
+- 未连接或驱动真机
+
+## [2026-08-20] - Ego Capture Bundle 路径迁移
+
+### Added (新增)
+
+- 新增 `src/live_ik_scheduler.py`：合体实时跟随使用单 worker、深度 1 pending 的 latest-only IK 调度，记录 source frame、会话、锚点和授权版本
+- 新增 `src/capture_bundle.py`，集中管理 Capture 创建、最新批次解析、Ego/RobotDataset/轨迹/报告路径
+- 新增 `bundle.json`、Source/Ego/Robot 元数据、SHA-256 校验表和基础处理血缘
+- 新增 Capture `building/ready/failed` 生命周期和异常退出失败记录
+- 新增 Source 原始输入归档、`stream_index.parquet`、Source -> Ego 帧映射和显式时间来源
+- 新增 `coordinate_system.json` 2.0 契约，逐字段声明 `episode0_camera`、`scene_world`、腕部局部系和 RGB 像素系
+- 新增 `configs/quality_profiles/` 与 `src/quality_profiles.py`，提供 60 Hz 目标及三类旧数据兼容口径
+- 每个 Capture 新增不可变 `source/quality_profile.json` 快照，acquisition 记录 profile ID 和 revision
+- quality profile 升至 schema 1.1，阈值声明测量类别和是否需要真值；旧 schema 1.0 快照继续可读
+- 新增 `src/compare_dataset_numeric.py` 及路径/数值回归测试
+- 新增 `datasets/captures/README.md`；真实 `capture_*` 数据由 `.gitignore` 排除
+- 新增 `.envs/lerobot-v3` 数据集专用环境约定和 `environment/lerobot-v3-dataset.txt` 可复现依赖
+- 新增 `verify_dataset.py --strict-v3`，校验 v3 元数据、Parquet、视频、feature 及帧/episode/task 计数
+- 每个 Capture 新增根级 `environment/runtime.json`、`requirements.txt` 和 `environment.lock` 生成环境快照
+- Ego/RobotDataset 新增逐 episode annotation；默认 `unreviewed`，生成器不覆盖已有人工审核
+- RobotDataset 新增逐 episode QA，自动检查帧索引与 state/action 有限性，物理项缺证据时标为 `not_evaluated`
+- 新增 `verify_dataset.py --capture-bundle` 和 JSON 报告，覆盖 Source、环境、严格 v3、血缘、sidecar 与 SHA-256
+
+### Changed (变更)
+
+- 合体摄像头实时跟随的机械臂默认速度由 `20%` 调整为 `50%`；灵巧手实时速度继续保持 `1000`
+- 合体跟随不再在灵巧手目标入队前同步等待机械臂 IK；灵巧手与 IK/机械臂分别走独立 latest-target 通道，WebSocket 立即返回 IK 入队状态和最近完成结果
+- IK 输入超过 `180ms`、结果超过 `200ms`、会话/锚点/授权失效时直接丢弃；重锚、冻结、丢手、异常或断线会使在途结果失效并回收 worker
+- 灵巧手调试的视频转动作改为逐源帧解析到实际 EOF，移除默认 `stride=3`、200 帧前端限制和 2000 帧后端限制；进度分开显示源帧与检出手帧
+- 视频和密集 JSON 录制回放改为 `timeline_latest`：保留解码 PTS/`t_ns`，按墙钟只发送最新到期目标，不突发补发过期帧，最终目标保持必发
+- 时间轴 `ANGLE_SET` 使用非等待回复的快速写；`SPEED_SET`/`FORCE_SET` 仅在变化时写，播放器提高到 200Hz 并报告覆盖帧数与最大调度延迟
+- 录制器接受 `hand_gesture_pack/1`、`/2` 和旧无模式视频结构；`data/gestures/拿螺丝刀.json` 使用显式 `timeline_latest`，手工关键帧继续使用 `keyframe_strict`
+- 三个 Canonical 构建器默认创建 Capture 并写入 `<capture>/ego/`
+- `derive_embodiment.py` 默认写入 `<capture>/robot_datasets/<target>/target_revision_v001/retarget_v001/`
+- 轨迹改存 RobotDataset `exports/workbench/`，验收汇总改存 Capture `reports/retargeting/`
+- 验证、Rerun 回放和 Web 管线统一从一个活动 Capture 解析全部数据；隐式读取只选择最新 `ready` Capture，不让较新的半成品遮住完整批次
+- 旧 `src/out/` 仅通过 `--legacy-out` 或 `VLA_LEGACY_OUT=1` 显式兼容，不自动移动或删除
+- 当前 `xyzw` 四元数、关键点、矩阵、IK、滤波和 retarget 数值语义保持不变
+- RGB 视频保留原始 MP4，处理结果保留原文件，RGB-D 保留参与构建的原分辨率 RGB 和对齐深度；同盘优先硬链接、跨盘复制兜底
+- 普通 RGB、外部处理结果和标定 RGB-D 显式写入腕姿 frame；派生、验证、验收、腕部分析与 Rerun 读取并校验该声明，不按 `source_kind` 推断
+- 三个 Canonical 构建器按来源选择默认质量 profile，支持 `--quality-profile` 显式选择；RGB-D 记录实际 RGB/Depth 尺寸
+- `measure_acceptance.py` 按 Capture 快照读取阈值，分开报告 Source 设备能力、硬件同步和 LeRobot 内部 cadence；Web 验收卡显示 profile 与 Source 指标
+- 验收报告分开输出手腕绝对位置误差、静止段抖动、位置/姿态连续性和骨长稳定性；缺真值或静止标注时返回 `pass=null`
+- RGB-D 像素对齐缺参考对应点时不再用腕深度连续性判定通过；Web 验收卡标识“需真值”“稳定代理”和“连续性”
+- LeRobot 数据集时间字段按 0.6.1 实际输出明确为 float32 秒；Source 硬件时间继续使用 int64 微秒
+- 三个 Ego 构建器和 RobotDataset 派生器在 `save_episode()` 后显式 `finalize()`，命令返回前完成文件落盘
+- 当前存储契约继续固定为 `xyzw`；未来 `qwxyz` 仅作为新 schema 的显式导出转换，不原地改写既有 Capture
+
+### Verification (验证)
+
+- 异步 IK、mailbox、腕部映射和合体页定向回归 `66 passed`；100ms 慢 IK、单 pending、旧目标覆盖、过期丢弃及求解途中 release/close 均有自动测试
+- 隔离 6 个既有安全表、旧轨迹 fixture、测试变量和 TestClient 后台线程阻断文件后，离线宽回归 `190 passed`、3 个既有 `PytestReturnNotNoneWarning`；三个 Web Node 测试通过
+- 系统 Python 下 Capture/Source、路径、坐标契约、旧 Capture 兼容、数值及 Web/腕部组合回归 `70 passed, 1 skipped`；跳过项为系统环境缺少 pyarrow
+- quality profile、Capture、数值比较及 Web/腕部相关回归 `89 passed`；三个 Web Node 测试通过
+- 绝对/代理指标拆分后，quality profile 定向测试 `12 passed`，隔离既有硬件、外部服务和旧轨迹 fixture 后离线回归 `169 passed`；三个 Web Node 测试通过
+- schema 1.0 的既有 3 帧 Capture 可继续生成新报告：缺真值的绝对精度保持 `pass=null`，新旧 Ego 10 个数值列最大绝对差仍为 `0`
+- 实际 lerobot 环境用同一 3 帧 processed 输入重建带 profile 快照的 Capture：状态为 `ready`、LeRobotDataset 回读 3 帧/1 episode，`device_class` 与 `sync_mode` 正确
+- quality profile 接入前后同一输入的 10 个数值列最大绝对差为 `0`
+- 在实际 lerobot 环境完成 3 帧 processed Source -> Ego 全链路：Capture 为 `ready`、硬件微秒时间戳和 Source -> Ego 映射正确、LeRobotDataset 回读成功
+- 用同一 3 帧处理结果重建 2.0 坐标契约 Capture：回读显示 `episode0_camera`/`wrist_local_mano`，新旧 10 个数值列最大绝对差为 `0`
+- 现有 Ego 780 帧与 RobotDataset 557 帧通过当前 `LeRobotDataset` 回读
+- 同一旧数据通过新旧路径比较：Ego 10 个、Robot 7 个数值列最大绝对差均为 `0`
+- Python 3.12.13 + LeRobot 0.6.1 数据集环境 `pip check` 通过；旧 Ego 780 帧和 RobotDataset 557 帧由官方类离线回读成功
+- 新 3 帧完整 Capture 通过官方 LeRobot 0.6.1 加载和 `--strict-v3`，五个 processed 输入核心字段最大数值差为 `0`
+- 新 Capture 根级 `environment/` 三项快照完整；旧 0.4.4 数据虽可回读，但其匿名列 `tasks.parquet` 被 strict-v3 正确拒绝
+- Capture/strict-v3/quality/numeric 定向回归 `38 passed`；隔离既有硬件、外部服务和旧轨迹 fixture 后离线回归 `174 passed`，三个 Web Node 测试通过
+- `verify_dataset.py` 将 RobotSpec 延迟到 CLI 主流程导入，strict-v3 库接口不再受技能测试顶层 `schema` 模块污染
+- episode/Capture QA 定向测试 `26 passed`，相关组合回归 `50 passed`
+- Python 3.12 环境重新生成的新 3 帧 Capture 在命令返回时通过 `--capture-bundle`、strict-v3 和官方 LeRobot 加载
+- QA 改为逐 Parquet 聚合、checksum 改为分块读取后，定向回归 `41 passed`，最终离线宽回归 `177 passed`，三个 Web Node 测试通过
+- Python 编译与 `git diff --check` 通过；未连接或驱动真机
+- 全仓 pytest 仍被既有 Pinocchio 缺失、手势表参数漂移和旧轨迹技能 fixture 问题阻断；本次顶层回归另确认既有 `SIM` 测试变量与手势 raw 限位断言各 1 项失败
+
+### Remaining (未完成)
+
+- 采集设备原生 RGB-D 容器、未对齐 raw depth、真实相机硬件时间戳，以及限位/碰撞/指尖误差的物理 QA 证据尚未接入
+
+---
+
 ## [2026-08-19] - 实时人手合体跟随
 
 ### Progress (进度)

@@ -28,6 +28,7 @@ from nero_kin import NeroKin
 from wrist_stabilize import gate_outliers, attenuate_out_of_plane
 from robot_specs import get_spec, axis_tokens_to_R_hand_ee
 from schema import STATE_DIM
+from capture_bundle import read_ego_coordinate_system, resolve_data_paths, write_robot_metadata
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
@@ -35,7 +36,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from dex_retargeting.retargeting_config import RetargetingConfig
 
-CANON_ROOT = REPO / "src/out/canonical_ds"
 CANON_REPO = "local/handdemo_canonical"
 IMG = 256
 TASK = "imitate the demonstrated hand motion"
@@ -59,9 +59,9 @@ def vec_to_pose(v: np.ndarray) -> np.ndarray:
     return T
 
 
-def load_canonical():
+def load_canonical(canonical_root: Path):
     """读 canonical_ds → (kps(N,21,3), wps(N,4,4), egos(N,H,W,3)uint8, fps)。"""
-    ds = LeRobotDataset(CANON_REPO, root=str(CANON_ROOT))
+    ds = LeRobotDataset(CANON_REPO, root=str(canonical_root))
     N = len(ds)
     kps = np.zeros((N, 21, 3), np.float64)
     wps = np.zeros((N, 4, 4), np.float64)
@@ -313,6 +313,15 @@ def main():
     ap = argparse.ArgumentParser(description="canonical_ds + RobotSpec → 本体 LeRobotDataset")
     ap.add_argument("--robot", default="nero_inspire", help="本体名(见 robot_specs.SPECS)")
     ap.add_argument("--emit-traj", action="store_true", help="顺带写 robot_traj_<robot>.pkl 供 replay_rerun")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle;不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--canonical", default=None, help="显式 canonical LeRobotDataset 根目录")
+    ap.add_argument("--output-root", default=None,
+                    help="显式 RobotDataset 根目录;外部 canonical 必须同时提供")
+    ap.add_argument("--legacy-out", action="store_true",
+                    help="显式读取并写入旧 src/out 路径")
+    ap.add_argument("--target-revision", default="target_revision_v001")
+    ap.add_argument("--retarget-revision", default="retarget_v001")
     ap.add_argument("--arm-position-mode", choices=["relative", "fixed", "absolute"], default=None,
                     help="relative=legacy 相对首帧位移; fixed=锁 home/anchor(仅朝向); absolute=metric 绝对米制位置")
     ap.add_argument("--arm-position-gain", type=float, default=None,
@@ -331,6 +340,18 @@ def main():
                     help="anchored 装配轴映射,逗号分隔:human X/Y/Z 分别落到 ee 哪根轴,如 -Y,-Z,+X(用 = 传避免负号被当选项:--r-hand-ee=-Y,-Z,+X)")
     args = ap.parse_args()
     spec = get_spec(args.robot)
+    try:
+        data_paths = resolve_data_paths(
+            spec.name,
+            capture_root=args.capture_root,
+            canonical_root=args.canonical,
+            output_root=args.output_root,
+            legacy_out=args.legacy_out,
+            target_revision=args.target_revision,
+            retarget_revision=args.retarget_revision,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from error
     if args.r_hand_ee is not None:
         spec.R_hand_ee = axis_tokens_to_R_hand_ee(args.r_hand_ee.split(","))
     if args.arm_position_gain is not None:
@@ -343,7 +364,21 @@ def main():
         spec.wrist_position_basis_rpy = tuple(args.wrist_position_basis_rpy)
     print(f"派生本体: {spec.name}")
 
-    kps, wps, egos, fps = load_canonical()
+    try:
+        coordinates = read_ego_coordinate_system(
+            data_paths.canonical_root,
+            required=False,
+            allow_legacy_schema=True,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from error
+    if coordinates is None:
+        print("  坐标契约:legacy/未声明;保留旧数值处理,不推断 wrist_pose 坐标系")
+    else:
+        wrist_frame = coordinates["features"]["observation.wrist_pose"]["frame"]
+        print(f"  坐标契约:{coordinates['contract']} wrist_pose={wrist_frame}")
+
+    kps, wps, egos, fps = load_canonical(data_paths.canonical_root)
     N = len(kps)
     print(f"canonical: {N} 帧 @ {fps}fps")
 
@@ -374,22 +409,9 @@ def main():
     state = np.concatenate([q_arm, hand_state], axis=1).astype(np.float32)  # (N, dim)
     action = np.concatenate([state[1:], state[-1:]], axis=0).astype(np.float32)
 
-    if args.emit_traj:
-        traj = REPO / f"src/out/robot_traj_{spec.name}.pkl"
-        with open(traj, "wb") as f:
-            pickle.dump(dict(arm=q_arm, hand=hand_full, hand_joint_names=hand_full_names,
-                             arm_joint_names=spec.arm_joint_names), f)
-        # 顺带存一份可移植 npz:本环境是 numpy 2.x,ROS2 侧是 numpy 1.x 读不了 pkl,
-        # 但 .npy/.npz 格式跨版本稳定。ROS2 的 replay_traj.py 优先读同名 npz。
-        np.savez(traj.with_suffix(".npz"),
-                 arm=q_arm.astype(np.float64), hand=np.asarray(hand_full, dtype=np.float64),
-                 arm_joint_names=np.asarray(spec.arm_joint_names),
-                 hand_joint_names=np.asarray(hand_full_names))
-        print(f"  emit {traj}  (+ {traj.with_suffix('.npz').name})")
-
     import shutil
-    if spec.out_root.exists():
-        shutil.rmtree(spec.out_root)
+    if data_paths.dataset_root.exists():
+        shutil.rmtree(data_paths.dataset_root)
     features = {
         "observation.state": {"dtype": "float32", "shape": (dim,), "names": names_state},
         "action": {"dtype": "float32", "shape": (dim,), "names": names_state},
@@ -397,13 +419,35 @@ def main():
                                    "names": ["height", "width", "channel"]},
     }
     ds = LeRobotDataset.create(repo_id=spec.repo_id, fps=int(round(fps)), features=features,
-                               root=str(spec.out_root), robot_type=spec.name,
+                               root=str(data_paths.dataset_root), robot_type=spec.name,
                                use_videos=True, metadata_buffer_size=1)
     for f in range(N):
         ds.add_frame({"observation.state": state[f], "action": action[f],
                       "observation.images.ego": egos[f], "task": TASK})
     ds.save_episode()
-    print(f"wrote {N} frames, 1 episode -> {spec.out_root}")
+    ds.finalize()
+    if args.emit_traj:
+        traj = data_paths.trajectory_pkl
+        traj.parent.mkdir(parents=True, exist_ok=True)
+        with open(traj, "wb") as f:
+            pickle.dump(dict(arm=q_arm, hand=hand_full, hand_joint_names=hand_full_names,
+                             arm_joint_names=spec.arm_joint_names), f)
+        # 顺带存一份可移植 npz:本环境是 numpy 2.x,ROS2 侧是 numpy 1.x 读不了 pkl,
+        # 但 .npy/.npz 格式跨版本稳定。ROS2 的 replay_traj.py 优先读同名 npz。
+        np.savez(data_paths.trajectory_npz,
+                 arm=q_arm.astype(np.float64), hand=np.asarray(hand_full, dtype=np.float64),
+                 arm_joint_names=np.asarray(spec.arm_joint_names),
+                 hand_joint_names=np.asarray(hand_full_names))
+        print(f"  emit {traj}  (+ {data_paths.trajectory_npz.name})")
+    if data_paths.capture is not None:
+        write_robot_metadata(
+            data_paths.capture,
+            target_id=spec.name,
+            dataset_root=data_paths.dataset_root,
+            target_revision=args.target_revision,
+            retarget_revision=args.retarget_revision,
+        )
+    print(f"wrote {N} frames, 1 episode -> {data_paths.dataset_root}")
 
 
 if __name__ == "__main__":

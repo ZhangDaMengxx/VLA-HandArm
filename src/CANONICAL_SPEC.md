@@ -20,7 +20,7 @@
 | **长度** | 浮点字段统一**米(m)**;传感器原始整数深度保留 **uint16 毫米(mm)**,入库转 float32 米 |
 | **角度** | 弧度(rad)。规范层不存关节角,只存位置/四元数,角度由运动链反推 |
 | **四元数** | `[qx, qy, qz, qw]`(scipy `as_quat()` 的 **xyzw**),单位模,Hamilton 约定。语义 `p_参考 = R·p_物体 + t`,其中 `R = quat→matrix(q)` |
-| **时间** | 秒(s),float64,首帧 t=0 单调递增;另存 Unix epoch(s) |
+| **时间** | LeRobot `timestamp` 为 float32 秒(s)、首帧 t=0 单调递增；Source 原始硬件时间戳另存 int64 微秒(us) |
 | **图像坐标** | 像素,原点左上,+u 右、+v 下 |
 | **dtype** | 除深度/图像外,数值字段 float32(物理误差远大于 float32 的 ~0.03µm,无需 float64) |
 
@@ -28,11 +28,68 @@
 
 浮点的精度是**相对精度**(float32 ~7 位有效数字)。换单位只是把数值和最小步长**同步缩放**,物理分辨率不变——`0.5 m` 与 `500 mm` 的 float32 步长都约 `0.03 µm`。**mm 不比 m 精确**。单位真正影响精度的只有**整数存储**(uint16 mm 步长 1mm),这正是深度原始保留 mm 的原因。浮点统一米,是为了和 URDF / Pinocchio / dex-retargeting / ROS(REP-103 强制米)全链路 SI 一致,避免每步 derive ×0.001 的换算 bug。
 
+当前 schema 固定保留 `xyzw`，因为 SciPy、现有腕姿、回放、IK 和 retarget 全链均使用该顺序。
+若外部交付必须使用 `qwxyz`，只能由显式导出适配器在边界转换，并同步提升 schema、记录来源
+顺序和补充往返数值测试；禁止原地改写既有 Capture 或仅修改字段说明。
+
 ### 坐标系定义(写死)
 
 - **世界系 W**:右手系,原点 = 场景固定基准(标定板角点 / 机械臂基座),**+Z 竖直向上(逆重力)**,+X/+Y 水平。→ Tier 1 目标系。
 - **相机系 C**:OpenCV 约定,原点光心,**+X 右、+Y 下、+Z 沿光轴指向场景**。→ Tier 0 现状系。
 - **手腕 / MANO 系**:MANO canonical frame(`operator2mano` 旋进去的那个)。
+
+### Capture Bundle 存储契约（2026-08-20 现状）
+
+正式数据默认按一次采集一个 Bundle 保存：
+
+```text
+datasets/captures/capture_<YYYYMMDD>_<sequence:06d>_<uuid>/
+├── bundle.json
+├── environment/                               # Python、依赖和完整环境快照
+├── source/
+├── ego/                                      # 独立 Ego LeRobotDataset 根
+│   └── annotations/episode_*.json            # 人工审核 sidecar，默认 unreviewed
+├── robot_datasets/<target>/target_revision_v001/retarget_v001/
+│   ├── annotations/episode_*.json            # 机器人派生结果人工审核
+│   └── qa/episode_*.json                     # 自动结构 QA + 未评估物理项
+├── lineage/
+└── reports/
+```
+
+路径权威实现是 `capture_bundle.py`。三个 `build_canonical*` 默认创建新 Capture；派生、验收、
+验证、回放和 Web 必须绑定同一 Capture。`src/out/` 只保留 `--legacy-out` 显式读取，不自动
+移动或删除。`bundle.json` 使用 `building/ready/failed` 生命周期，Ego 元数据及校验和写完后
+才进入 `ready`；不指定路径的消费者只选择最新 `ready` Capture。
+
+`ego_schema.json` 记录 MediaPipe 21 点、米/弧度和 `xyzw` 数值契约；
+`coordinate_system.json` 2.0 逐字段记录坐标语义。普通固定相机 RGB 的 `wrist_pose` 是
+`episode0_camera`，通过 `camera_to_world` 标定外参变换的 RGB-D 是 `scene_world`。默认 3D
+手关键点保持 `wrist_local_mano` 以服务 dex-retargeting；只有显式 `depth_world` 构建才为
+`scene_world`。2D 点始终属于 `ego_rgb_pixels`。消费者必须读取该元数据，不能凭目录名或
+`source_kind` 推断。此次分层只增加声明与校验，没有转换任何关键点、四元数、矩阵或时间值。
+
+Source 基础层现已保留原视频、处理结果原文件或参与构建的原分辨率 RGB/已对齐深度，并用
+`stream_index.parquet` 记录 Source -> Ego 帧映射。硬件时间字段使用微秒，缺失时保持 null 并
+标记 `fps_derived`；当前旧 Kinect 帧集没有原生容器、raw depth 或硬件时间，不能补造。
+
+质量标准由 `configs/quality_profiles/*.json` 版本化，每个 Capture 在
+`source/quality_profile.json` 保存不可变快照。`ego_fixed_rgbd_60hz_v1` 是正式固定相机目标；
+旧 RGB、旧 960×540@30 RGB-D 和 processed 输入使用独立兼容 profile，不能宣称目标设备能力。
+`measure_acceptance.py` 读取快照决定阈值，并将 Source 硬件同步与 LeRobot 内部 cadence 分开。
+schema 1.1 进一步给每项阈值声明测量类别和是否需要真值。当前数据没有逐帧手腕真值时，
+`wrist_position_absolute_error_p95_cm` 必须保持不可测；骨长帧间标准差、腕部帧间步长和深度
+连续性只属于代理指标。可选 `ground_truth.wrist_pose` 用于逐帧绝对位置比较，可选
+`annotation.wrist_stationary` 用于明确标注静止段；验收器不会从低运动量自动猜测静止段。
+
+Web/ROS 运行环境仍是 Python `3.10.20` + `lerobot 0.4.4`。数据集专用环境已使用
+Python `3.12.13` + `lerobot 0.6.1` 完成新 Capture 生成、官方回读和严格 LeRobot v3.0
+结构校验；每个 Capture 根还保存 `environment/runtime.json`、`requirements.txt` 和
+`environment.lock`。设备原生 RGB-D 采集和 episode 级 QA 仍未完成。旧 0.4.4 数据可由
+0.6.1 回读，但旧 `tasks.parquet` 不满足当前严格交付校验，因此不应就地改写为新格式。
+新数据集为每个 episode 生成 annotation；已有人工审核文件不会被重写。RobotDataset QA 自动
+检查帧索引连续性和 state/action 有限性，而限位、碰撞与指尖绝对误差必须等真实证据接入后
+才能判定。`verify_dataset.py --capture-bundle` 对整个 Capture 做严格 v3、血缘、sidecar 和
+checksum 完整性检查。
 
 ---
 
@@ -43,7 +100,7 @@
 | 项 | 要求 | 不达标的后果 |
 |---|---|---|
 | **RGB 分辨率** | ≥720p,建议 1080p,**存原生**(降采样放 derive) | 手指关节/小物体不可分辨 |
-| **帧率** | ≥30fps,**固定帧率 CFR** | VFR 会让时间戳与动作块对不齐 |
+| **帧率** | 目标 RGB/Depth 60fps,**固定帧率 CFR** | VFR 会让时间戳与动作块对不齐 |
 | **快门** | 优先**全局快门**;卷帘须配短曝光 | 快速手部运动被卷帘拍歪(几何畸变) |
 | **曝光/白平衡/对焦** | **单条 episode 内锁定**,禁用 auto | 自动曝光致画面忽明忽暗、颜色漂移,VLA 误学 |
 | **运动模糊** | 曝光时间尽量短 | 模糊的手,MediaPipe/WiLoR 都测不准 |
@@ -56,7 +113,7 @@
 | **光照** | 均匀漫射,避免强红外源(阳光/某些射灯)干扰 ToF | 红外"晃瞎"深度传感器 |
 | **编码** | 母带无损或高码率,禁手机级强压缩 | 压缩块效应糊掉手部纹理 |
 
-**当前建议下限**:1080p(至少 720p)RGB + 640×576 配准深度 @30fps CFR + 全局快门/锁曝光 + 出厂或自标内外参 + 每帧时间戳。这套采下来,MediaPipe 现在能用、WiLoR 以后能用、X-VLA 能训、换本体换模型都不重采。
+**正式目标**:1920×1080 RGB + 至少 640×480 配准深度 @60fps CFR + 全局快门/锁曝光 + 出厂或自标内外参 + 每帧硬件时间戳，RGB-D 同步残差 <10ms。30fps 旧数据只按对应 compatibility profile 留档和评估，不等于满足新数采目标。
 
 ---
 
@@ -88,10 +145,10 @@
 
 | 字段 | dtype | shape | 单位 | 坐标系 | 来源 | 状态 |
 |---|---|---|---|---|---|---|
-| `observation.hand_keypoints` | float32 | (63,)=21×3 | 米 | T0=相机系 / **T1=世界系** | 3D landmarks,序=`KP_NAMES` | ✅(单目近似米制)/🔜真米制 |
+| `observation.hand_keypoints` | float32 | (63,)=21×3 | 米 | 默认 `wrist_local_mano`;仅 `depth_world` 为 `scene_world` | 3D landmarks,序=`KP_NAMES` | ✅ |
 | `observation.hand_keypoints_2d` | float32 | (42,)=21×2 | 像素 u,v | 图像 | 2D landmarks | ✅ |
 | `observation.hand_visibility` | float32 | (21,) | 0–1 | — | presence/可见度 | ✅ |
-| `observation.wrist_pose` | float32 | (7,) | `t`(m)+quat(xyzw) | T0=相机系 / **T1=世界系** | `pose_to_vec()`,rot=手腕系姿态 | ✅ RGB-D 走世界系;derive `frame_mode=metric` 已去 home 锚定 |
+| `observation.wrist_pose` | float32 | (7,) | `t`(m)+quat(xyzw) | RGB=`episode0_camera`;标定 RGB-D=`scene_world` | `pose_to_vec()`,rot=手腕系姿态 | ✅ `coordinate_system.json` 2.0 显式声明 |
 | `observation.hand_estimator_id` | float32 | (1,) | — | — | `0=mediapipe,1=wilor` | ✅ |
 | `handedness` | str/int | 标量 | — | — | `"right"/"left"` | 🔜(单手也显式存) |
 
@@ -110,7 +167,7 @@
 
 | 字段 | dtype | shape | 单位 | 说明 | 状态 |
 |---|---|---|---|---|---|
-| `timestamp` | float64 | 标量 | 秒 | 首帧=0 单调递增(LeRobotDataset 自带 frame_index) | ✅ |
+| `timestamp` | float32 | 标量 | 秒 | 首帧=0 单调递增，由 LeRobot 0.6.1 生成 | ✅ |
 | `timestamp_rgb` / `timestamp_depth` | float64 | 标量 | 秒 | 各流独立时间戳(Femto RGB/深度可能不同频) | 🔜 |
 
 ### 2.5 Per-episode 元数据(episode 级,非每帧)

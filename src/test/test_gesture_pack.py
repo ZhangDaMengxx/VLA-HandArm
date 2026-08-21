@@ -149,11 +149,13 @@ def test_frame_needs_one_side():
 
 # ---------------------------------------------------------------- 包
 def test_pack_roundtrip():
-    p = _pack(3, note="备注", return_home_first=False)
+    p = _pack(3, note="备注", return_home_first=False,
+              playback_mode=gp.PLAYBACK_TIMELINE)
     d = json.loads(json.dumps(p.to_dict(), ensure_ascii=False))
     q = gp.GesturePack.from_dict(d)
     assert q.name == p.name and len(q.frames) == 3
     assert q.note == "备注" and q.return_home_first is False
+    assert q.playback_mode == gp.PLAYBACK_TIMELINE
     assert [f.raw_vendor for f in q.frames] == [f.raw_vendor for f in p.frames]
     assert q.duration_ms == 100 + 200 + 300
 
@@ -171,6 +173,32 @@ def test_pack_rejects_wrong_schema():
         except gp.GestureError:
             continue
         raise AssertionError(f"schema={bad!r} 应该被拒")
+
+
+def test_pack_rejects_unknown_playback_mode():
+    d = _pack().to_dict()
+    d["playback_mode"] = "burst_catchup"
+    try:
+        gp.GesturePack.from_dict(d)
+    except gp.GestureError as e:
+        assert "playback_mode" in str(e)
+        return
+    raise AssertionError("未知 playback_mode 应该被拒")
+
+
+def test_screwdriver_gesture_imports_as_timeline_latest():
+    """用户确认的 451 帧视频动作包保持源时间轴语义。"""
+    path = Path(__file__).resolve().parents[2] / "data/gestures/拿螺丝刀.json"
+    pack = gp.GesturePack.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert len(pack.frames) == 451
+    assert pack.playback_mode == gp.PLAYBACK_TIMELINE
+    assert pack.frames[0].t_ns == 0 and pack.frames[-1].t_ns == 7_507_000_000
+    assert pack.duration_ms == 7_907
+    assert all(pack.frames[i].t_ns > pack.frames[i - 1].t_ns
+               for i in range(1, len(pack.frames)))
+    seq = gp.to_action_sequence(pack)
+    assert seq.playback_mode == gp.PLAYBACK_TIMELINE
+    assert seq.steps[1].t_ns == gp.HOME_HOLD_MS * 1_000_000
 
 
 def test_pack_rejects_empty_frames():

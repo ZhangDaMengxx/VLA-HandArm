@@ -5,7 +5,7 @@
   - Robot (3D)  : NERO(7-DoF) + inspire(12) 装配网格,可鼠标轨道旋转/缩放
   - Joint angles: 臂 7 + 手 12 关节角曲线,竖直游标 = 当前帧
 
-数据来自已算好的轨迹(默认 src/out/robot_traj_nero_inspire.pkl,两层路径产物;无则回退旧 robot_traj.pkl),不再实时 retarget。
+数据来自已算好的轨迹（默认读取最新 Capture 的 RobotDataset `exports/workbench/robot_traj.pkl`），不再实时 retarget。
 支持多条轨迹做 A/B 对比(--traj 标签=路径,可重复),各自成一棵实体树,在左侧面板勾选显隐。
 
 用法:
@@ -14,7 +14,8 @@
   # 2) 直接在浏览器看:WSL 起服务,Windows 浏览器打开打印出来的 URL
   python src/replay_rerun.py --serve
   # 3) A/B 对比两条 retarget 轨迹
-  python src/replay_rerun.py --traj default=src/out/robot_traj.pkl --traj tippip=src/out/robot_traj_tippip.pkl
+  python src/replay_rerun.py --traj default=/path/to/a.pkl --traj tippip=/path/to/b.pkl
+  # 旧 src/out 产物必须显式使用 --legacy-out
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from scipy.spatial.transform import Rotation as Rot
 from estimate_wrist import physical_wrist_orientation
 from robot_specs import get_spec, axis_tokens_to_R_hand_ee
 from wrist_stabilize import attenuate_out_of_plane, gate_outliers
+from capture_bundle import read_ego_coordinate_system, resolve_data_paths
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -577,7 +579,8 @@ def main():
                     help="轨迹 pkl,可写 标签=路径;可重复做 A/B。默认 robot_traj_nero_inspire.pkl(回退 robot_traj.pkl)")
     ap.add_argument("--urdf", default="",
                     help="可视化 URDF;留空则用 RobotSpec.viz_urdf(inspire=灵巧手, gripper=平行夹爪)")
-    ap.add_argument("--video", default=str(REPO / "data/hand_1.mp4"))
+    ap.add_argument("--video", default="",
+                    help="源视频;默认使用 Capture source/rgb_original，再回退 data/hand_1.mp4")
     ap.add_argument("--no-video", action="store_true",
                     help="不读取源视频,Human 面板使用占位帧;用于外部处理好的 hand file")
     ap.add_argument("--fps", type=float, default=25.0)
@@ -587,8 +590,8 @@ def main():
                     help="起 web 服务在浏览器看(默认改为存 .rrd)")
     ap.add_argument("--web-port", type=int, default=9090)
     ap.add_argument("--grpc-port", type=int, default=9876)
-    ap.add_argument("--save", default=str(REPO / "src/out/replay.rrd"),
-                    help="非 --serve 时写入的 .rrd 路径")
+    ap.add_argument("--save", default=None,
+                    help="非 --serve 时写入的 .rrd 路径;默认写 Capture reports/replay.rrd")
     ap.add_argument("--max-frames", type=int, default=0)
     ap.add_argument("--debug-frames", action=argparse.BooleanOptionalAction, default=True,
                     help="在 3D 视图画 robot base/link7 和 canonical wrist raw 坐标轴")
@@ -596,6 +599,9 @@ def main():
                     help="调试坐标轴使用的机器人末端 frame 名")
     ap.add_argument("--robot", default="nero_inspire",
                     help="用于重算 debug IK target frame 的 RobotSpec 名")
+    ap.add_argument("--capture-root", default=None,
+                    help="Capture Bundle;不传则读取 datasets/captures/ 中最新一次")
+    ap.add_argument("--legacy-out", action="store_true", help="显式读取旧 src/out")
     ap.add_argument("--arm-position-mode", choices=["fixed", "relative", "absolute"], default=None,
                     help="重算 debug IK target frame 时覆盖 RobotSpec.arm_position_mode;应与 derive_embodiment.py 生成轨迹时一致")
     ap.add_argument("--wrist-rotation-compose", choices=["left", "right"], default=None,
@@ -604,15 +610,19 @@ def main():
                     help="anchored 装配轴映射覆盖,逗号分隔(human X/Y/Z -> ee 轴,如 -Y,-Z,+X);须与 derive_embodiment 生成轨迹时一致")
     args = ap.parse_args()
 
-    # 默认轨迹随 --robot 走(spec 名映射到 derive 产物);回退旧单本体路径。
-    _default_traj = REPO / f"src/out/robot_traj_{args.robot}.pkl"
-    if not _default_traj.exists():
-        _alias = REPO / "src/out/robot_traj_nero_inspire.pkl"
-        _default_traj = _alias if _alias.exists() else REPO / "src/out/robot_traj.pkl"
-    traj_items = args.traj or [f"default={_default_traj}"]
+    spec = get_spec(args.robot)
+    try:
+        data_paths = resolve_data_paths(
+            spec.name,
+            capture_root=args.capture_root,
+            legacy_out=args.legacy_out,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise SystemExit(str(error)) from error
+
+    traj_items = args.traj or [f"default={data_paths.trajectory_pkl}"]
     traj_specs = parse_traj_args(traj_items)
 
-    spec = get_spec(args.robot)
     urdf_path = Path(args.urdf) if args.urdf else spec.viz_urdf
     model = RobotModel(urdf_path)
     meshes = load_meshes(model)
@@ -638,12 +648,27 @@ def main():
     if args.max_frames:
         F = min(F, args.max_frames)
 
-    wrist_poses = load_canonical_wrist_poses(REPO / "src/out/canonical_ds") if args.debug_frames else None
+    wrist_pose_frame = "undeclared"
+    if args.debug_frames:
+        try:
+            coordinates = read_ego_coordinate_system(
+                data_paths.canonical_root,
+                required=False,
+                allow_legacy_schema=True,
+            )
+        except (ValueError, FileNotFoundError) as error:
+            raise SystemExit(str(error)) from error
+        if coordinates is not None:
+            wrist_pose_frame = coordinates["features"]["observation.wrist_pose"]["frame"]
+    wrist_poses = load_canonical_wrist_poses(data_paths.canonical_root) if args.debug_frames else None
     target_ee_poses = None
     human_wrist_in_base = None
     if wrist_poses is not None:
         F = min(F, len(wrist_poses))
-        log(f"坐标系调试:读取 canonical wrist_pose {len(wrist_poses)} 帧")
+        log(
+            f"坐标系调试:读取 canonical wrist_pose {len(wrist_poses)} 帧 "
+            f"frame={wrist_pose_frame}"
+        )
         target_ee_poses, human_wrist_in_base = compute_target_ee_poses(wrist_poses[:F], spec)
         if human_wrist_in_base is not None:
             log("坐标系调试[anchored]:human_wrist_in_base 已用 R_base_world 投到机器人 base 系,与 target 同位置;两者只应差固定装配旋转 R_hand_ee,若逐帧同步转动=坐标系已自洽")
@@ -666,13 +691,16 @@ def main():
 
     if args.no_video:
         try:
-            cap = SkeletonVideo.from_canonical(REPO / "src/out/canonical_ds")
+            cap = SkeletonVideo.from_canonical(data_paths.canonical_root)
             log("Human 面板使用 canonical hand skeleton")
         except Exception as e:
             log(f"canonical skeleton unavailable, fallback blank: {e}")
             cap = BlankVideo()
     else:
-        cap = open_video(Path(args.video))
+        video_path = Path(args.video) if args.video else data_paths.original_video
+        if not video_path.exists() and not args.video:
+            video_path = REPO / "data/hand_1.mp4"
+        cap = open_video(video_path)
     vid_fps = cap.get(cv2.CAP_PROP_FPS)
     fps = vid_fps if vid_fps and vid_fps > 1 else args.fps   # 真实播放帧率(轨迹与视频帧 1:1)
 
@@ -705,8 +733,9 @@ def main():
         serve_uri = uri.replace("127.0.0.1", ip).replace("0.0.0.0", ip)
         rr.serve_web_viewer(web_port=args.web_port, open_browser=False, connect_to=serve_uri)
     else:
-        Path(args.save).parent.mkdir(parents=True, exist_ok=True)
-        rr.save(args.save)
+        save_path = Path(args.save) if args.save else data_paths.replay_rrd
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        rr.save(str(save_path))
     rr.send_blueprint(bp)
 
     # 静态:世界坐标系约定(Z 向上)+ 每条轨迹的网格(顶点在 link 局部系,逐帧只更新 Transform)
@@ -714,7 +743,7 @@ def main():
     if args.debug_frames:
         log_axes("world/frames/robot_base", np.eye(4), length=0.16, radius=0.006)
         rr.log("world/frames/notes",
-               rr.TextLog("Frames: robot_base=URDF/base. robot_ee_target=derive IK target. robot_ee_current=Pinocchio link7 after IK. human_wrist_raw=canonical wrist pose without T_base_camera."),
+               rr.TextLog(f"Frames: robot_base=URDF/base. robot_ee_target=derive IK target. robot_ee_current=Pinocchio link7 after IK. human_wrist_raw=canonical wrist pose in {wrist_pose_frame}; no T_base_camera is inferred."),
                static=True)
     for root in robot_roots:
         for m in meshes:
@@ -756,7 +785,12 @@ def main():
             # anchored:投到 base 系、与 target 同位置。和 robot_ee_target 逐帧一起转 = 坐标系自洽。
             log_axes("world/frames/human_wrist_in_base", human_wrist_in_base[fr], length=0.13, radius=0.004)
         elif args.debug_frames and wrist_poses is not None:
-            log_axes("world/frames/human_wrist_raw", wrist_poses[fr], length=0.11, radius=0.004)
+            log_axes(
+                f"world/frames/human_wrist_raw_{wrist_pose_frame}",
+                wrist_poses[fr],
+                length=0.11,
+                radius=0.004,
+            )
 
         # --- 人手视频帧(+骨架) ---
         ok, frame = cap.read()

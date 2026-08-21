@@ -1,7 +1,7 @@
 # 项目状态
 
-**核对日期**：2026-08-19
-**阶段**：实时人手合体跟随 Mock 闭环、真机安全验证待开展
+**核对日期**：2026-08-21
+**阶段**：Ego Capture、严格 LeRobot v3 与结构 QA 已完成，设备 Source/物理 QA 与真机安全验证待开展
 
 ## 当前结论
 
@@ -10,8 +10,8 @@
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
-| 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿相对映射、NERO IK、7+6 目标和 Three.js 已闭环；真臂未验证 |
-| VLA 数据管线 | 可开发 | 规范层、映射和回放工具已存在，训练闭环未完成 |
+| 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
+| VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
 | ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
 | 目录与文档 | 已归整 | 源码迁到 `src/`，测试集中到 `src/test/`，第三方资产集中到 `third_party/` |
@@ -34,6 +34,37 @@
 内嵌实验快照或 Web 工作台，不应出现在部署能力清单中。
 
 ## 最近完成
+
+### 2026-08-21
+
+- 审查并收口 Ego Capture、严格 LeRobot v3、异步合体跟随和视频动作时间轴的开发基线
+- 将 451 帧“拿螺丝刀”视频动作包纳入版本库，移除早期 645 帧链路样本，并修正测试与现行文档中的旧文件名
+- Python 编译、三个 Web Node 测试和 `40` 项动作/异步链路定向回归通过
+- 隔离已记录的 P0 限位漂移、旧夹具和测试基础设施阻断后，离线宽回归 `191 passed`；未执行真机运动
+
+### 2026-08-20
+
+- 合体摄像头跟随默认灵巧手速度保持 `1000`，机械臂速度改为 `50%`；独立臂调试仍默认 `20%`
+- 灵巧手目标与机械臂 IK 完成异步解耦：单 IK worker、一个 pending、时效丢弃和 source frame 关联，慢 IK 不再阻塞手目标入队
+- 重锚、冻结、丢手、授权变化、异常或断线会废弃旧 IK；自动测试覆盖 100ms 慢 IK、覆盖、过期和求解途中关闭
+- 新增集中式 `capture_bundle.py`，默认按日期、序号和 UUID 原子创建 Capture Bundle
+- 三个 Canonical 构建器、机器人派生、验收、验证、Rerun 回放和 Web 管线全部改用同一 Capture 路径契约
+- Ego 与 RobotDataset 成为两个独立数据集根；轨迹移入 RobotDataset `exports/workbench/`，报告移入 Capture `reports/`
+- 增加 `bundle.json`、Source/Ego/Robot 元数据、SHA-256 校验表和 Source -> Ego -> RobotDataset 基础血缘
+- Capture 新建时为 `building`，Ego 完整落盘后才标记 `ready`；默认读取跳过 `building/failed`，显式路径仍可诊断或重建
+- Source 层保留原视频、处理结果或已对齐 RGB-D，使用 Parquet 记录原文件名、Source/Ego 帧映射、硬件/派生时间来源和同步残差
+- 旧 `src/out/` 改为仅显式 `--legacy-out`/`VLA_LEGACY_OUT=1` 兼容，不自动移动或删除
+- Gradio、腕部分析和轨迹分析工具改为默认跟随 Capture；混用不同 Capture 的显式根会被拒绝
+- `coordinate_system.json` 升为 2.0：三类构建器逐字段声明坐标 frame，派生、验证、验收、分析和 Rerun 显式读取，不再按目录或来源类型推断
+- 新增 4 个版本化 quality profile；每个 Capture 固化不可变快照，验收按实际帧率、分辨率、时间戳和同步能力判定
+- 将 LeRobot 内部帧间隔一致性与 Source 硬件同步拆开；旧 Kinect 无硬件时间时不再可能误报同步通过
+- quality profile 升至 schema 1.1；手腕绝对精度、静止抖动、位姿连续性和骨长稳定性分项报告，缺真值不再以代理结果代替
+- 用现有数据验证 Ego 780 帧和 RobotDataset 557 帧均可回读；新旧路径数值列最大绝对差为 `0`
+- 建立 Python 3.12.13 + LeRobot 0.6.1 数据集专用环境，`pip check` 通过；旧 Ego 780 帧和 RobotDataset 557 帧由官方类离线回读成功
+- 增加严格 v3 校验器和 Capture 根级生成环境快照；新 3 帧完整 Capture 通过官方加载及 strict-v3，五个 processed 核心字段最大差为 `0`
+- Ego/RobotDataset 增加不覆盖人工审核的 episode annotation；Robot QA 自动检查索引和有限值，物理项缺证据时保持 `not_evaluated`
+- 增加 `verify_dataset.py --capture-bundle`，覆盖 Source、环境、严格 v3、血缘、sidecar 和 SHA-256；四个生成入口显式 finalize 后再写元数据
+- 当前 schema 决定继续使用 `xyzw`；外部若要求 `qwxyz`，只允许新 schema 的显式边界转换，不改写既有 Capture
 
 ### 2026-08-19
 
@@ -98,6 +129,10 @@
    真臂+Mock 手和双真机低速矩阵尚未验收。
 8. 页面内切换可等待硬件复位和断开，但浏览器关闭依赖 `pagehide/sendBeacon` 尽力通知；进程强杀、
    主机断电或断网时没有服务端会话租约兜底，不能保证串口/CAN 一定及时释放。
+9. Source 基础留存和索引已接入，但现有旧 Kinect 帧集没有设备原生 RGB-D 容器、未对齐 raw depth
+   或硬件时间戳；这些数据只能由后续真实采集链提供，不能从文件名或 FPS 反推。
+10. Robot episode QA 的关节限位、碰撞和指尖绝对误差尚无运行证据，当前明确标记为
+    `not_evaluated`；结构通过不能替代物理验收。
 
 ## 验证记录
 
@@ -108,6 +143,9 @@ node src/test/web/hand_tracker_tasks.test.mjs
 node src/test/web/hand_mimic_transport.test.mjs
 node src/test/web/combo_camera.test.mjs
 /usr/bin/python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_wrist_tracking.py -q
+/usr/bin/python3 -m pytest src/test/test_capture_bundle.py src/test/test_compare_dataset_numeric.py -q
+.envs/lerobot-v3/bin/python src/verify_dataset.py --capture-root <capture> --canonical --strict-v3
+.envs/lerobot-v3/bin/python src/verify_dataset.py --capture-bundle --capture-root <capture> --json <report>
 
 cd /home/zhang123/ros2_ws/robot-mcp-server
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mcp_server/tests -v
@@ -130,11 +168,46 @@ python3 src/skills/hand_pose.py --verify
 `filtered_delta=0.0200rad`，定位为大死区累积后的台阶。现行门限已降至
 `0.0005rad`；自动测试通过，等待相同动作真机复测。
 
+2026-08-20 系统 Python 下 Capture/Source、路径、数值及 Web/腕部组合回归为
+`70 passed, 1 skipped`；跳过项仅为系统环境没有 pyarrow。实际 lerobot 环境的 3 帧
+processed Source -> Ego 构建、时间索引、checksum 和 LeRobotDataset 回读通过。另一路手部/腕部
+离线回归此前为 `35 passed`，三个 Web Node 测试通过。坐标契约升级后用同一 3 帧输入重建并
+回读成功，新旧 10 个数值列最大绝对差为 `0`。全仓 pytest 仍在收集阶段被上述 Pinocchio、手势表
+和旧轨迹 fixture 既有问题阻断；本轮未连接或驱动真机。
+
+quality profile 增量完成后，Capture/数值/Web/腕部相关回归为 `89 passed`，三个 Web Node
+测试继续通过；实际 lerobot 环境新建的 profile Capture 为 `ready` 并成功回读 3 帧/1 episode，
+接入前后 10 个数值列最大绝对差仍为 `0`。顶层全量回归还存在既有 `SIM` 测试变量和手势 raw
+限位断言失败，不属于本次数据质量改动。
+
+绝对精度与代理指标拆分后，定向 quality profile 回归为 `12 passed`，隔离硬件、外部语音服务、
+旧轨迹 fixture 和已记录失败后的离线回归为 `169 passed`，三个 Web Node 测试通过。旧 schema 1.0
+Capture 仍可生成报告，缺少手腕真值时绝对精度为不可测；两份 3 帧 Ego 的 10 个数值列最大绝对差
+仍为 `0`。本轮未连接或驱动真机。
+
+Python 3.12.13 + LeRobot 0.6.1 数据集隔离环境完成后，`pip check` 通过；官方
+`LeRobotDataset` 在离线模式下回读旧 Ego 780 帧和 RobotDataset 557 帧。新 3 帧完整 Capture
+同时通过官方加载与 `--strict-v3`，五个 processed 输入核心字段最大数值差为 `0`，根级
+`environment/` 快照完整。旧 0.4.4 数据仍可回读，但旧式匿名列 `tasks.parquet` 不满足严格
+交付校验，数据保持原样。本轮未连接或驱动真机。
+
+最终定向回归为 `38 passed`，隔离既有硬件、外部服务和旧轨迹 fixture 后离线宽回归为
+`174 passed`，三个 Web Node 测试通过。宽回归发现并修复 strict-v3 校验器被技能测试同名
+`schema` 模块污染的问题；RobotSpec 现仅在 CLI 主流程按需导入。本轮未连接或驱动真机。
+
+episode sidecar 与 Capture QA 接入后，Capture/strict 定向测试为 `26 passed`，相关组合回归为
+`50 passed`。Python 3.12 环境重新构建的新 3 帧 Capture 在命令返回时即可通过
+`--capture-bundle`、strict-v3 和官方加载；这同时验证了显式 `finalize()` 已消除对进程析构
+写 Parquet footer 的依赖。本轮未连接或驱动真机。
+
+大数据内存加固后，Capture/strict-v3/quality/numeric 定向回归为 `41 passed`，隔离既有硬件、
+外部服务和旧轨迹 fixture 后最终离线宽回归为 `177 passed`，三个 Web Node 测试通过。
+
 ## 下一步
 
 1. 统一手势安全表与驱动参数，并同步两个仓库。
 2. 轮换和停止跟踪 TLS 私钥。
-3. 修复迁移验收脚本的路径及退出码。
+3. 补齐 Capture Source 原生 RGB-D、raw depth 和硬件时间戳，再接入限位、碰撞与指尖误差的物理 QA 证据。
 4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
 6. 按真手+Mock 臂、真臂+Mock 手、双真机低速顺序验收合体跟随，再接入 RGB-D 米制位置。
