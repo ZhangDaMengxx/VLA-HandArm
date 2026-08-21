@@ -47,7 +47,9 @@
   `hand_feasibility.py`、RH56/Mock Adapter、型号 JSON、原子可恢复 Profile 和安全投影
 - 通用探测器覆盖只读预检、单关节保守扩张、声明式低维 interaction、边界二分以及
   温度/错误/电流/连续缺样硬中止；Mock Profile 默认禁止用于真实运行时
-- 完整 CLI Mock 和投影验收通过，相关新旧手部链定向回归 `37 passed`；未连接真机
+- 完整 CLI Mock 和投影验收通过，相关新旧手部链定向回归 `37 passed`；该离线回归未连接真机
+- 完成 RH56DFX 真机只读 preflight：稳定路径为 `/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0`，
+  5/5 遥测有效，六通道 `ERROR=0`、`CURRENT=0`、最高温度 38℃；本阶段没有写速度、力或角度
 - 审查并收口 Ego Capture、严格 LeRobot v3、异步合体跟随和视频动作时间轴的开发基线
 - 将 451 帧“拿螺丝刀”视频动作包纳入版本库，移除早期 645 帧链路样本，并修正测试与现行文档中的旧文件名
 - Python 编译、三个 Web Node 测试和 `40` 项动作/异步链路定向回归通过

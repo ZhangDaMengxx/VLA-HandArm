@@ -12,7 +12,9 @@
   - [x] 将资产标称 rad、raw 安全包络和可选残差标定拆成独立契约；新增通用型号
     规范、Mock/RH56 Adapter、自动探测 Profile 和安全投影（2026-08-21）
   - [x] 修正旧碰撞扫描脚本顶部 speed=50 与实际 `SCAN_SPEED=15` 的说明冲突
-  - [ ] 用户明确批准后，按自动化 `preflight -> single -> interactions` 分阶段低速验证；
+  - [x] 2026-08-21 完成真机只读 `preflight`：5/5 遥测有效、错误位和电流均为 0、
+    最高温度 38℃；未写速度/力/角度，报告位于本地 `reports/hand_feasibility/`
+  - [ ] 用户明确批准并确认现场安全后，按 `single -> interactions` 分阶段低速验证；
     旧 T5/T6 仅作历史对照，统一 rad 取资产标称值，真机只声明条件化 raw 包络
   - [ ] 参数定案后统一手势、Bridge、Web、ROS writer、动作包和碰撞检查，再做低速回归
   - 同步独立仓库 `robot-mcp-server/robot-bridge/sim/`

@@ -21,7 +21,7 @@
   Mock/真机 Adapter、分阶段 commissioning、边界二分、原子可恢复 Profile 和安全投影
 - 硬件运动必须经过 `--hardware` 与 `--allow-motion CONFIRM_HAND_MOTION` 两级授权；
   Mock Profile 默认不能用于真实运行时，过温/未知故障/过流/连续缺样按 fail-closed 中止
-- 完整 CLI Mock 与投影验收通过，相关新旧手部链定向回归 `37 passed`；未连接真机
+- 完整 CLI Mock 与投影验收通过，相关新旧手部链定向回归 `37 passed`；该离线回归未连接真机
 
 ### Changed (变更)
 
@@ -32,6 +32,8 @@
 
 ### Verification (验证)
 
+- RH56DFX 真机只读 preflight 通过：5/5 遥测有效、六通道错误位和电流为 0、最高温度
+  38℃；`STATUS=2` 仅记录，未写速度、力或角度，尚未执行单关节运动
 - Python 编译、`git diff --check` 和三个 Web Node 测试通过
 - 动作时间轴、播放器、视频导入和异步 IK 定向回归 `40 passed`
 - 隔离已记录的手指限位漂移、旧轨迹夹具、测试变量和 TestClient 后台线程阻断项后，离线宽回归 `191 passed`、3 个既有 `PytestReturnNotNoneWarning`
