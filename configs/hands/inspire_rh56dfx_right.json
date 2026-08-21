@@ -1,0 +1,61 @@
+{
+  "schema_version": "hand_model_spec/1",
+  "model_id": "inspire_rh56dfx_right",
+  "display_name": "Inspire RH56DFX Right",
+  "adapter": "inspire_rh56dfx",
+  "asset": {
+    "urdf": "../../assets/hand/urdf/inspire_hand_right.urdf",
+    "revision": "vendor_2025-04-18",
+    "angle_semantics": "asset_nominal_rad",
+    "source_priority": ["vendor_datasheet", "vendor_urdf", "project_urdf"]
+  },
+  "joints": [
+    {"name": "right_thumb_1_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"},
+    {"name": "right_thumb_2_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"},
+    {"name": "right_index_1_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"},
+    {"name": "right_middle_1_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"},
+    {"name": "right_ring_1_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"},
+    {"name": "right_little_1_joint", "raw_open": 1000, "raw_closed": 0, "nominal_source": "vendor_urdf"}
+  ],
+  "interactions": [
+    {
+      "id": "thumb_index_diagonal",
+      "description": "拇指 yaw/pitch 同步闭合时的食指可行边界",
+      "conditioning_joints": ["right_thumb_1_joint", "right_thumb_2_joint"],
+      "condition_operator": "min",
+      "condition_levels": [0.0, 0.2, 0.4, 0.55, 0.7, 0.8, 0.9, 1.0],
+      "probe_joint": "right_index_1_joint"
+    }
+  ],
+  "probe_policy": {
+    "speed": 15,
+    "force": 250,
+    "single_step_u": 0.1,
+    "interaction_step_u": 0.1,
+    "boundary_resolution_u": 0.01,
+    "min_settle_s": 2.0,
+    "settle_timeout_s": 6.0,
+    "sample_interval_s": 0.08,
+    "stable_samples": 2,
+    "stable_delta_raw": 5,
+    "tracking_tolerance_raw": 60,
+    "contact_force_abs": 200,
+    "max_current_abs": null,
+    "max_temp_c": 55,
+    "max_missing_samples": 3,
+    "stall_error_mask": 1,
+    "fatal_error_mask": 254,
+    "preflight_samples": 5
+  },
+  "mock_constraints": [
+    {
+      "when_all_u_at_least": {
+        "right_thumb_1_joint": 0.7,
+        "right_thumb_2_joint": 0.7
+      },
+      "joint": "right_index_1_joint",
+      "max_u": 0.76,
+      "force_abs": 320
+    }
+  ]
+}

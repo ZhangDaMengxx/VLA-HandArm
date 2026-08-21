@@ -24,14 +24,15 @@
    `hand_pose.py:107` 标注「来自 T3」是**错的** —— 真实来源是一次对角线扫描,
    代码不在本文件里。T5 就是把它补回来。
 
-⚠ 扫描用 SCAN_SPEED=50,不是 init_speed=500:顶死力由速度主导
-   (50→272g · 150→717g · 300→941g)。每点后查 ERROR,过温位(Bit1,**不可清除**)
+⚠ 扫描实际使用 SCAN_SPEED=15,不是 init_speed=500:顶死力由速度主导
+   (已知 50→272g · 150→717g · 300→941g；15 是更低的探索档)。每点后查 ERROR,
+   过温位(Bit1,**不可清除**)
    一置上立刻中止。
 
 用法:
-  python3 src/test_thumb_index_collision.py                 # t1-t4
-  python3 src/test_thumb_index_collision.py --only t5       # 先验方法(~5min)
-  python3 src/test_thumb_index_collision.py --only t6       # 再扫二维(~20min)
+  python3 src/test/hardware/test_thumb_index_collision.py                 # t1-t4
+  python3 src/test/hardware/test_thumb_index_collision.py --only t5       # 先验方法(~5min)
+  python3 src/test/hardware/test_thumb_index_collision.py --only t6       # 再扫二维(~20min)
 """
 from __future__ import annotations
 

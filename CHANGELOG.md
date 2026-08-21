@@ -8,8 +8,25 @@
 
 ## [2026-08-21] - 开发基线收口
 
+### Audit (审计)
+
+- 新增 `src/HAND_LIMIT_AUDIT_2026_08_21.md`，完成灵巧手 span/limit 第一阶段离线审计
+- 确认独立 Bridge 当前先用旧 `hand_pose` 映射检查可行域，再用新驱动映射写入 raw；
+  12 个内置语义姿态中 10 个的实际 raw 与安全检查姿态不同
+- 审计 8 个录制动作包：原样回放通常保持权威 `raw_vendor`，但旧包的 rad/3D 解释及
+  重新保存存在兼容风险
+- 给出 raw 物理标定、安全下发包络、URDF/Three.js 模型限位三层契约和分阶段真机
+  准入方案；本阶段未连接串口、未下发动作、未修改限位
+- 按型号抽象决策将统一角定义为 datasheet/URDF 资产标称 rad；新增 RH56 型号 JSON、
+  Mock/真机 Adapter、分阶段 commissioning、边界二分、原子可恢复 Profile 和安全投影
+- 硬件运动必须经过 `--hardware` 与 `--allow-motion CONFIRM_HAND_MOTION` 两级授权；
+  Mock Profile 默认不能用于真实运行时，过温/未知故障/过流/连续缺样按 fail-closed 中止
+- 完整 CLI Mock 与投影验收通过，相关新旧手部链定向回归 `37 passed`；未连接真机
+
 ### Changed (变更)
 
+- 同步项目入口、开发手册、硬件安全说明和 AI 文档导航，明确资产标称 rad、分阶段真机
+  commissioning、软冻结边界，以及 Profile 尚未接入 Web/Bridge 的当前状态
 - 将最终 451 帧视频动作包以 `data/gestures/拿螺丝刀.json` 纳入版本库，显式使用 `timeline_latest`；删除早期 645 帧链路样本 `episode_000000.json`
 - 测试和现行文档统一引用实际动作包文件名，继续验证 7.507 秒源时间轴和末帧保持语义
 

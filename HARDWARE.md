@@ -2,7 +2,7 @@
 
 本文说明松灵 NERO 七自由度机械臂与因时 RH56DFX-2R 右手在本项目中的硬件规格、通信接口、运行时约束和装配参数。
 
-> 对齐基准：2026-08-19 本地项目。运行时参数以 `src/nero_arm.py` 和
+> 对齐基准：2026-08-21 本地项目。运行时参数以 `src/nero_arm.py` 和
 > `src/inspire_hand.py` 为准；装配参数以 `src/build_nero_inspire.py` 为准。
 
 ---
@@ -504,6 +504,46 @@ python3 src/skills/hand_pose.py --verify
 也存在同一问题。在完成参数决策、同步和真机验证前，可行域检查只能视为未对齐的保护
 逻辑，不能作为硬件安全保证。
 
+### 8.2 通用可行域 commissioning
+
+`src/hand_feasibility.py` 按型号规范自动探测灵巧手的 raw/归一量可行包络。统一动作空间的
+rad 来自 datasheet/URDF 的资产标称角，不要求逐台外部量角；真机探测结果描述的是指定
+设备、固件、速度、力和运动路径下的安全证据，不是独立角度真值。
+
+RH56DFX 当前探测策略为 `speed=15`、`force=250`。只读预检连接时使用
+`initialize_runtime=False`，不会写 `SPEED_SET`、`FORCE_SET` 或角度。`STATUS=2` 只记录，
+不作为到位或接触判据；判定组合使用位置误差、稳态 `FORCE_ACT`、`ERROR`、`TEMP`，并在
+Adapter 能提供时加入电流。连续缺样、过温或未知故障按 fail-closed 中止。
+
+```bash
+# 只读预检，不运动
+python3 src/hand_feasibility.py \
+  --adapter inspire --hardware --phase preflight \
+  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --output reports/hand_feasibility/inspire_preflight.json
+
+# 单关节阶段；现场清空、急停/断电可达后才授权
+python3 src/hand_feasibility.py \
+  --adapter inspire --hardware --phase single \
+  --allow-motion CONFIRM_HAND_MOTION \
+  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --output reports/hand_feasibility/inspire_profile.json
+
+# 联合切片必须续写已有完整单关节证据
+python3 src/hand_feasibility.py \
+  --adapter inspire --hardware --phase interactions --resume \
+  --allow-motion CONFIRM_HAND_MOTION \
+  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --output reports/hand_feasibility/inspire_profile.json
+```
+
+真机禁止 `--phase all`。联合阶段会主动接近自碰撞边界，必须空载、现场有人并可立即断电。
+异常或 `Ctrl+C` 时工具会尝试把当前 `ANGLE_ACT` 写回；这是 best-effort 软冻结，不是硬急停，
+遥测丢失时也可能失败。完整流程和 Profile 接入规则见
+[src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md)，参数漂移及 Bridge
+影响见 [src/HAND_LIMIT_AUDIT_2026_08_21.md](src/HAND_LIMIT_AUDIT_2026_08_21.md)。当前尚未
+生成真机 Profile，也未把该 Profile 接入 Web、Bridge 或 `hand_pose` 运行时。
+
 ---
 
 ## 9. 参考资料与模型来源
@@ -528,6 +568,6 @@ python3 src/skills/hand_pose.py --verify
 
 ---
 
-**最后核对**：2026-08-14
+**最后核对**：2026-08-21
 
 **维护者**：项目团队

@@ -15,7 +15,7 @@
 |------|------|----------|
 | [README.md](README.md) | 项目入口和仓库边界 | 2026-08-21 |
 | [HANDBOOK.md](HANDBOOK.md) | 开发入口、关键模块和验证命令 | 2026-08-21 |
-| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-19 |
+| [HARDWARE.md](HARDWARE.md) | 真机规格、运行时参数和安全约束 | 2026-08-21 |
 | [PROJECT_STATUS.md](PROJECT_STATUS.md) | 当前进度、风险和近期任务 | 2026-08-21 |
 | [TODO.md](TODO.md) | 可执行待办 | 2026-08-21 |
 | [CHANGELOG.md](CHANGELOG.md) | 本仓库变更历史 | 持续维护 |
@@ -57,6 +57,8 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 | [src/HAND_DEBUG.md](src/HAND_DEBUG.md) | 灵巧手调试、实时摄像头控制和真机性能记录 |
 | [src/COMBO_DEBUG.md](src/COMBO_DEBUG.md) | 本地 Web combo 调试；不是 MCP combo |
 | [src/HAND_SAFETY_PLAN.md](src/HAND_SAFETY_PLAN.md) | 灵巧手安全方案和未完成项 |
+| [src/HAND_LIMIT_AUDIT_2026_08_21.md](src/HAND_LIMIT_AUDIT_2026_08_21.md) | 灵巧手 span/limit、Bridge 安全闸、动作包影响与真机校验准入 |
+| [src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md) | 多手型资产规范、自动可行域探测、Profile 和安全投影 |
 | [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md) | VLA 规范层数据契约 |
 | [datasets/captures/README.md](datasets/captures/README.md) | Capture Bundle、quality profile 快照和旧路径兼容边界 |
 | [VISUALIZER_SPEC.md](VISUALIZER_SPEC.md) | 可视化约定 |
@@ -104,7 +106,9 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 ## 当前未闭环文档风险
 
-1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致。
+1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致；离线审计已确认 Bridge
+   使用旧映射检查后再由新映射下发。通用探测自动化已完成，但尚未生成真机 Profile，
+   也未接入 Web/Bridge 运行时安全闸，详见 `src/HAND_LIMIT_AUDIT_2026_08_21.md`。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
 4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；灵巧手与机械臂 IK 已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。

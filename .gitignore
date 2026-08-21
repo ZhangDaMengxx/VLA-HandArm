@@ -74,3 +74,5 @@ FILE_LIST.md
 可视化工作台-提示词.md
 训练端部署.md
 adjust_hand_mount_example.md
+# 真机 commissioning 报告包含设备与现场条件，默认作为本地证据保留。
+/reports/hand_feasibility/*.json

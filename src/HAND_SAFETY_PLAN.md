@@ -3,6 +3,11 @@
 > **当前阻塞（2026-08-14）**：`python3 src/skills/hand_pose.py --verify` 有 10 项与
 > `src/inspire_hand.py` 不一致。本文中的旧可行域数据不能视为已与当前驱动对齐；修复
 > 参数、路径检查和真机验证见根目录 `TODO.md`。
+>
+> **2026-08-21 当前入口：** 型号抽象统一采用 datasheet/URDF 的资产标称 rad，不要求
+> 每台手人工量角。`hand_feasibility.py` 已实现通用 raw/归一量 commissioning、低维
+> interaction 证据和保守投影，详见 `HAND_FEASIBILITY_AUTOMATION.md`。它不是完整三维
+> 可行域真值，本文所述 URDF/FCL 在线逐构型检查仍是后续几何保护层。
 
 **这份文档解决的不是硬件安全,是标签质量。**
 
@@ -171,7 +176,7 @@ FCL 给精确网格-网格 + 穿透深度。FK 自己写(~60 行,串链累乘 UR
 ### 第 2 步:t5 对角线标定 —— ~5min 真机,5 个点,**要你点头**
 
 `test_thumb_index_collision.py --only t5`。脚本已改好(2026-08-10):
-`SCAN_SPEED=50`(顶死力 272g 而非 >941g)、每点前 `go_open`、每点后
+`SCAN_SPEED=15`(低于已测 50 档的 272g)、每点前 `go_open`、每点后
 `check_faults` 查 ERROR/TEMP、过温或 ≥55℃ 立即中止。
 
 **定位是标定,不是验证** —— 产出真实行程端点给几何用,顺带验旧表可不可信
@@ -280,7 +285,7 @@ raw↔rad 定不下来,几何算的是错构型。
 | 碰撞网格 | 跟新手资料来 |
 | 驱动关节 → 通道映射(`PROJECT_TO_VENDOR`) | 跟新手资料来 |
 | raw 约定(`RAW_MAP`,哪头是 0、是否 invert) | 跟新手资料来 |
-| **真实行程(标定)** | **每只手实测一次(第 2 步,5-8 点)** |
+| **条件化可行包络** | 同型号先用共享 Profile；固件/机构状态变化时自动复测，不逐台人工量角 |
 
 `hand_pose.py --verify` 已经用 importlib 按路径核对 `inspire_hand` 的表 ——
 "手型档案"这个概念隐含存在了,第 6 步是把它显式化。

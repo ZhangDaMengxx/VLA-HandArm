@@ -165,6 +165,9 @@ class InspireHandConfig:
     # 否则沿用 flash 里的 DEFAULT_* —— 不设可能出现"发了角度但几乎不动"。
     init_speed: int = 500
     init_force: int = 500
+    # 只读诊断需要打开串口并握手，但不能在 connect() 中写 SPEED_SET/FORCE_SET。
+    # 默认保持旧行为；显式 False 仅供只读探测器使用。
+    initialize_runtime: bool = True
     # True: 弧度按 URDF 限位夹取(与 ros_joint_writer 一致,安全优先)。
     # 代价: 拇指弯曲 URDF 上限 0.6 < xls 实际行程 0.698,写角度只能到实际行程的 86%,
     # 回读满弯也在 0.6 处饱和。要跑满行程就置 False,但那是放宽一条安全限位。
@@ -270,9 +273,10 @@ class InspireHand:
             raise RuntimeError(
                 f"{self.cfg.port} 打开了但读 HAND_ID 无响应:确认 24V 供电、"
                 f"RS485 A/B 未接反、手 ID={self.cfg.hand_id}")
-        # 速度/力控不断电保存,每次连上都要重设(否则沿用 flash 的 DEFAULT_*)
-        self.set_speed(self.cfg.init_speed)
-        self.set_force(self.cfg.init_force)
+        # 速度/力控不断电保存,运动会话每次连上都要重设。只读诊断显式跳过写入。
+        if self.cfg.initialize_runtime:
+            self.set_speed(self.cfg.init_speed)
+            self.set_force(self.cfg.init_force)
         return True
 
     def disconnect(self) -> None:

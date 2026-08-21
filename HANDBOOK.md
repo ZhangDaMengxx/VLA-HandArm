@@ -21,6 +21,8 @@ ros2_ws/
 |------|------|
 | `src/paths.py` | 本仓资产路径常量 |
 | `src/inspire_hand.py` | RH56DFX RS485 驱动和运行时限位 |
+| `src/hand_feasibility.py` | 通用灵巧手 commissioning、Profile 和安全投影 |
+| `configs/hands/*.json` | 手型资产标称角、Adapter 和探测策略 |
 | `src/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
 | `src/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
 | `src/hand_console.py` | 灵巧手调试和动作播放 |
@@ -169,6 +171,30 @@ python3 src/skills/hand_pose.py --verify
 已知差异是拇指弯曲 `0.48` 对 `0.69813/0.6`，以及四指 `1.333` 对
 `1.39626/1.47`，共 10 项。修复必须基于硬件/URDF/动作安全决策，而不是为了让测试变绿
 随意选一组数。
+
+跨手型抽象统一采用 datasheet/URDF 的资产标称 rad，不要求逐台用外部量角器重建模型角。
+设备 commissioning 只验证在指定速度、力、固件和路径下的 raw/归一量可行包络。型号规范
+在 `configs/hands/`，执行和 Profile 契约见
+[src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md)。先用 Mock 验证状态机：
+
+```bash
+python3 src/hand_feasibility.py --phase all \
+  --output /tmp/inspire_mock_profile.json
+```
+
+真机先做不写参数、不运动的只读预检：
+
+```bash
+python3 src/hand_feasibility.py \
+  --adapter inspire --hardware --phase preflight \
+  --port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --output reports/hand_feasibility/inspire_preflight.json
+```
+
+真机运动还必须显式提供 `--allow-motion CONFIRM_HAND_MOTION`，并按 `single`、
+`interactions --resume` 分阶段执行；真机禁止 `--phase all`。Profile 必须匹配型号、URDF
+SHA-256、设备/固件（可读取时）和完整探测条件，Mock Profile 默认禁止用于真机。
+当前自动化没有直接修复旧 `hand_pose` 表，也没有接入 Web/Bridge 运行时安全闸。
 
 ### 修改装配位置
 
@@ -350,4 +376,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ---
 
-**最后核对**：2026-08-20
+**最后核对**：2026-08-21

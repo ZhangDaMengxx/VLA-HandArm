@@ -26,6 +26,7 @@ NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 V
 | 部署 MCP Server 或硬件 Bridge | `/home/zhang123/ros2_ws/robot-mcp-server/README.md` |
 | 查看本项目文档状态 | [README_DOCS.md](README_DOCS.md) |
 | 调试硬件 | [HARDWARE.md](HARDWARE.md) |
+| 建立灵巧手可行域 Profile | [src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md) |
 | 修改本项目代码 | [HANDBOOK.md](HANDBOOK.md) |
 | 查看当前进度和已知问题 | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
 | 部署完整 Web/ROS2 真机主机 | [deploy/README.md](deploy/README.md) |
@@ -127,6 +128,7 @@ assets/                URDF、mesh 和浏览器模型
 data/                  动作包、标定和数据集
 datasets/captures/     Capture Bundle 根目录；真实 Capture 默认不进入 Git
 configs/quality_profiles/  版本化数采能力与验收阈值
+configs/hands/             灵巧手型号、资产标称角和自动探测策略
 third_party/            上游源码、厂商 SDK、外部数据和项目 overlay
 deploy/                完整 Web/ROS2 真机主机部署
 ```
@@ -140,10 +142,12 @@ deploy/                完整 Web/ROS2 真机主机部署
 - 真机运动前必须确认工作区、低速、使能状态和急停可达。
 - `src/skills/hand_pose.py --verify` 当前有 10 项与 `src/inspire_hand.py` 不一致，
   在修复并完成真机验证前，不得把手势可行域表视为已对齐。
+- 通用可行域探测器已经能按 datasheet/URDF 标称角生成条件化 Profile，但尚未运行真机
+  commissioning，也尚未接入 Web、Bridge 或 `hand_pose` 的运行时安全投影。
 - Web 的 7860 端口没有应用层鉴权，不应直接暴露到公网。
 - 浏览器关闭释放是尽力而为；无人值守真机运行不得依赖它替代急停或服务端租约。
 - `ssl/key.pem` 曾被 Git 跟踪。现有私钥不得继续作为共享或生产凭据使用。
 
 ---
 
-**最后核对**：2026-08-20
+**最后核对**：2026-08-21
