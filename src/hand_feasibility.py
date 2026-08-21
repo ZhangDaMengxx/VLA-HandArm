@@ -142,6 +142,7 @@ class ProbePolicy:
     boundary_resolution_u: float = 0.01
     min_settle_s: float = 2.0
     settle_timeout_s: float = 6.0
+    full_stroke_timeout_s: float = 30.0
     sample_interval_s: float = 0.08
     stable_samples: int = 2
     stable_delta_raw: int = 5
@@ -170,7 +171,8 @@ class ProbePolicy:
                 raise SpecError(f"probe_policy.{name} 必须是数值")
             values[name] = int(value) if name not in {
                 "single_step_u", "interaction_step_u", "boundary_resolution_u",
-                "min_settle_s", "settle_timeout_s", "sample_interval_s",
+                "min_settle_s", "settle_timeout_s", "full_stroke_timeout_s",
+                "sample_interval_s",
             } else float(value)
         policy = cls(**values)
         for name in ("single_step_u", "interaction_step_u", "boundary_resolution_u"):
@@ -179,9 +181,11 @@ class ProbePolicy:
         if policy.stable_samples < 1 or policy.max_missing_samples < 0:
             raise SpecError("stable_samples 必须 >=1，max_missing_samples 必须 >=0")
         if (policy.min_settle_s < 0 or policy.settle_timeout_s <= policy.min_settle_s
+                or policy.full_stroke_timeout_s < 0
                 or policy.sample_interval_s < 0):
             raise SpecError(
-                "min_settle_s 必须 >=0 且小于 settle_timeout_s；sample_interval_s 必须 >=0")
+                "min_settle_s 必须 >=0 且小于 settle_timeout_s；"
+                "full_stroke_timeout_s 和 sample_interval_s 必须 >=0")
         return policy
 
 
@@ -864,6 +868,8 @@ class FeasibilityProbe:
     def _wait_target(self, target_raw: list[int], active: set[int], *,
                      judge_contact: bool = True) -> dict[str, Any]:
         start = self.monotonic()
+        timeout_s = self.policy.settle_timeout_s
+        timeout_initialized = False
         previous: list[int] | None = None
         stable = 0
         missing = 0
@@ -872,7 +878,7 @@ class FeasibilityProbe:
         peak_current = 0
         peak_temp = 0
         last: Observation | None = None
-        while self.monotonic() - start <= self.policy.settle_timeout_s:
+        while self.monotonic() - start <= timeout_s:
             obs = self.adapter.observe()
             samples += 1
             fault = self._hard_fault(obs)
@@ -888,6 +894,15 @@ class FeasibilityProbe:
             missing = 0
             last = obs
             assert obs.angle_raw is not None
+            if not timeout_initialized:
+                stroke_fraction = max((
+                    abs(obs.angle_raw[i] - target_raw[i])
+                    / max(1, abs(self.spec.joints[i].raw_closed
+                                 - self.spec.joints[i].raw_open))
+                    for i in active
+                ), default=0.0)
+                timeout_s += stroke_fraction * self.policy.full_stroke_timeout_s
+                timeout_initialized = True
             if obs.force is not None:
                 peak_force = max(peak_force, *(abs(int(obs.force[i])) for i in active))
             if obs.current is not None:
@@ -899,13 +914,10 @@ class FeasibilityProbe:
                 stable = stable + 1 if movement <= self.policy.stable_delta_raw else 0
             previous = list(obs.angle_raw)
             elapsed = self.monotonic() - start
+            errors = [abs(obs.angle_raw[i] - target_raw[i]) for i in active]
+            tracking = max(errors, default=0)
             if stable >= self.policy.stable_samples and elapsed >= self.policy.min_settle_s:
-                errors = [abs(obs.angle_raw[i] - target_raw[i]) for i in active]
-                tracking = max(errors, default=0)
                 reasons: list[str] = []
-                # 恢复动作也必须真的到位；judge_contact 只控制力/堵转是否算边界。
-                if tracking > self.policy.tracking_tolerance_raw:
-                    reasons.append(f"tracking_error_raw={tracking}")
                 if judge_contact and self.policy.contact_force_abs is not None:
                     steady_force = max((abs(int(obs.force[i])) for i in active), default=0) \
                         if obs.force is not None else None
@@ -916,27 +928,38 @@ class FeasibilityProbe:
                                if int(obs.error[i]) & self.policy.stall_error_mask]
                     if stalled:
                         reasons.append(f"stall_error={stalled}")
-                return {
-                    "verdict": "infeasible" if reasons else "feasible",
-                    "reasons": reasons,
-                    "actual_raw": list(obs.angle_raw),
-                    "tracking_error_raw": tracking,
-                    "steady_force": obs.force,
-                    "peak_force_abs": peak_force,
-                    "peak_current_abs": peak_current,
-                    "peak_temp_c": peak_temp,
-                    "error": obs.error,
-                    "status_register": obs.status,
-                    "samples": samples,
-                    "elapsed_s": round(elapsed, 6),
-                }
+                # 接触/堵转可以在目标外形成物理不可行证据；纯跟踪滞后则继续等待。
+                if reasons or tracking <= self.policy.tracking_tolerance_raw:
+                    return {
+                        "verdict": "infeasible" if reasons else "feasible",
+                        "reasons": reasons,
+                        "actual_raw": list(obs.angle_raw),
+                        "tracking_error_raw": tracking,
+                        "steady_force": obs.force,
+                        "peak_force_abs": peak_force,
+                        "peak_current_abs": peak_current,
+                        "peak_temp_c": peak_temp,
+                        "error": obs.error,
+                        "status_register": obs.status,
+                        "samples": samples,
+                        "elapsed_s": round(elapsed, 6),
+                        "timeout_s": round(timeout_s, 6),
+                    }
             self.sleep(self.policy.sample_interval_s)
         actual = last.angle_raw if last is not None else None
+        tracking = max((abs(last.angle_raw[i] - target_raw[i]) for i in active), default=0) \
+            if last is not None and last.angle_raw is not None else None
+        reason = (f"tracking_timeout_raw={tracking}"
+                  if tracking is not None
+                  and tracking > self.policy.tracking_tolerance_raw
+                  else "settle_timeout")
         return {
-            "verdict": "inconclusive", "reasons": ["settle_timeout"],
+            "verdict": "inconclusive", "reasons": [reason],
             "actual_raw": actual, "peak_force_abs": peak_force,
             "peak_current_abs": peak_current, "peak_temp_c": peak_temp,
+            "tracking_error_raw": tracking,
             "samples": samples, "elapsed_s": round(self.monotonic() - start, 6),
+            "timeout_s": round(timeout_s, 6),
         }
 
     def _command_targets(self, targets_u: dict[str, float], *,

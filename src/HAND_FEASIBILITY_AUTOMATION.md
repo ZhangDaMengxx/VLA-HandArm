@@ -22,6 +22,7 @@
 | 从已知安全位保守扩张 | 每个候选点先回张开，先建立 fixture，再移动 probe joint |
 | 多信号 fail-safe | 位置误差、稳态 `FORCE_ACT`、`ERROR`、电流和 `TEMP` 组合判断 |
 | 边界自适应细分 | 粗扫描第一次失败后，二分到 `boundary_resolution_u` |
+| 慢速执行器到位 | 进入目标容差后才判稳定，并按命令行程动态扩展超时 |
 | 结果带条件和来源 | Profile 固化型号、URDF hash、固件可用信息、速度、力和全部探测点 |
 | 中断可审计/可恢复 | 每点原子写 JSON；`--resume` 保留已完成项并重跑未完成项 |
 | 未验证不等于通过 | 超时、缺遥测和 fixture 失败写为 `inconclusive` 或直接安全中止 |
@@ -52,6 +53,11 @@ configs/hands/inspire_rh56dfx_right.json
 
 新手型不得复制 RH56DFX 的阈值。缺少电流或力传感时，相应阈值设为 `null`，但仍必须
 提供位置反馈、错误状态和温度；能力不足的区域在报告中保留未验证状态。
+
+到位判定要求关节进入 `tracking_tolerance_raw` 后持续稳定；仅仅连续几帧变化较小不能
+证明已到位。实际等待上限为基础 `settle_timeout_s` 加上剩余行程比例乘
+`full_stroke_timeout_s`。到期后若没有稳态力或堵转错误等物理证据，只能标记
+`inconclusive`，不得作为安全边界。
 
 ## 4. 执行命令
 

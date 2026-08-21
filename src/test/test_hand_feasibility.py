@@ -83,6 +83,80 @@ def test_single_joint_scan_reaches_asset_endpoint_in_mock(tmp_path):
     adapter.close()
 
 
+def test_slow_motion_is_not_misclassified_as_tracking_failure(tmp_path):
+    spec = hf.HandModelSpec.load(SPEC_PATH)
+    policy = replace(
+        spec.policy,
+        sample_interval_s=0.1,
+        min_settle_s=0.2,
+        settle_timeout_s=0.3,
+        full_stroke_timeout_s=20.0,
+        stable_samples=2,
+        stable_delta_raw=5,
+        tracking_tolerance_raw=3,
+    )
+
+    class SlowAdapter(hf.MockHandAdapter):
+        def command_raw(self, project_raw):
+            self.target = list(project_raw)
+
+        def observe(self):
+            for i, target in enumerate(self.target):
+                delta = target - self.raw[i]
+                self.raw[i] += max(-5, min(5, delta))
+            return super().observe()
+
+    now = [0.0]
+    adapter = SlowAdapter(spec)
+    adapter.connect(read_only=False)
+    recorder = hf.ProfileRecorder(tmp_path / "slow.json", spec, adapter, policy)
+    probe = hf.FeasibilityProbe(
+        spec, adapter, recorder, policy=policy,
+        sleep_fn=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        monotonic_fn=lambda: now[0],
+    )
+    result = probe._command_targets(
+        {"right_index_1_joint": 0.03},
+        active_names=["right_index_1_joint"], label="slow")
+    assert result["verdict"] == "feasible"
+    assert result["tracking_error_raw"] <= policy.tracking_tolerance_raw
+    assert result["elapsed_s"] > policy.min_settle_s
+    adapter.close()
+
+
+def test_tracking_timeout_without_contact_is_inconclusive(tmp_path):
+    spec = hf.HandModelSpec.load(SPEC_PATH)
+    policy = replace(
+        spec.policy,
+        sample_interval_s=0.1,
+        min_settle_s=0.1,
+        settle_timeout_s=0.2,
+        full_stroke_timeout_s=0.0,
+        stable_samples=1,
+        tracking_tolerance_raw=3,
+    )
+
+    class StuckAdapter(hf.MockHandAdapter):
+        def command_raw(self, project_raw):
+            self.target = list(project_raw)
+
+    now = [0.0]
+    adapter = StuckAdapter(spec)
+    adapter.connect(read_only=False)
+    recorder = hf.ProfileRecorder(tmp_path / "stuck.json", spec, adapter, policy)
+    probe = hf.FeasibilityProbe(
+        spec, adapter, recorder, policy=policy,
+        sleep_fn=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        monotonic_fn=lambda: now[0],
+    )
+    result = probe._command_targets(
+        {"right_index_1_joint": 0.1},
+        active_names=["right_index_1_joint"], label="stuck")
+    assert result["verdict"] == "inconclusive"
+    assert result["reasons"] == ["tracking_timeout_raw=100"]
+    adapter.close()
+
+
 def test_interaction_scan_finds_and_refines_mock_collision_boundary(tmp_path):
     _, _, adapter, recorder, probe = _rig(tmp_path)
     probe.preflight()
