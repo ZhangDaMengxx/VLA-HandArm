@@ -106,9 +106,10 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 ## 当前未闭环文档风险
 
-1. `src/skills/hand_pose.py --verify` 有 10 项参数不一致；离线审计已确认 Bridge
-   使用旧映射检查后再由新映射下发。通用探测自动化已完成，但尚未生成真机 Profile，
-   也未接入 Web/Bridge 运行时安全闸，详见 `src/HAND_LIMIT_AUDIT_2026_08_21.md`。
+1. 本仓驱动、手势安全表、ROS writer、正式 URDF及独立 Bridge 的资产标称映射已统一，
+   离线一致性校验通过。2026-08-24 新真机 Profile 已完成六关节空载单关节全行程扫描；
+   interaction commissioning 及 Web/Bridge 条件化安全投影仍未闭环，详见
+   `src/HAND_LIMIT_AUDIT_2026_08_21.md`。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
 4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；灵巧手与机械臂 IK 已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。
@@ -120,4 +121,4 @@ git@github.com:ZhangDaMengxx/Moshu-robot-mcp-server.git
 
 ---
 
-**最后全面审查**：2026-08-21
+**最后全面审查**：2026-08-24

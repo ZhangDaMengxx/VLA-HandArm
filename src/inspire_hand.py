@@ -168,9 +168,9 @@ class InspireHandConfig:
     # 只读诊断需要打开串口并握手，但不能在 connect() 中写 SPEED_SET/FORCE_SET。
     # 默认保持旧行为；显式 False 仅供只读探测器使用。
     initialize_runtime: bool = True
-    # True: 弧度按 URDF 限位夹取(与 ros_joint_writer 一致,安全优先)。
-    # 代价: 拇指弯曲 URDF 上限 0.6 < xls 实际行程 0.698,写角度只能到实际行程的 86%,
-    # 回读满弯也在 0.6 处饱和。要跑满行程就置 False,但那是放宽一条安全限位。
+    # True: 弧度按正式资产标称限位夹取(与 ros_joint_writer 一致,安全优先)。
+    # False 允许使用 RAW_MAP 的完整 span；当前两者相同，但保留该开关供显式实验，
+    # 不得用它绕过绑定设备 Profile 的条件化 raw 安全投影。
     clamp_to_urdf: bool = True
 
 

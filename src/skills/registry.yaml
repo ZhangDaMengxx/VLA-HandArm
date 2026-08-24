@@ -179,7 +179,7 @@ skills:
     # (干涉点 +10),而握拳实测要宽很多(raw 320 vs 235)。
     pose:
       thumb: folded                      # yaw 0.802(raw 198) / pitch 0.833(raw 284)
-      index: 0.68                        # 0.68*1.39626 = 0.949 rad = raw 320
+      index: 0.68                        # 0.68*1.333 = 0.906 rad = raw 320
       middle: closed
       ring: closed
       pinky: closed
@@ -274,10 +274,9 @@ skills:
     # 为什么 index:limit 可行:这是在说"闭到碰上拇指",force 控停在接触瞬间 —— 这
     # 正是捏的语义。limit 本身的余量(+10)已防堵转,不需要清单里再加二层余量。
     #
-    # 临时改(2026-08-10):limit 在 T=141 时算出 0,改成固定 0.24(raw≈235)绕过检查
     pose:
-      thumb: opposed                     # yaw 0.892(raw 108) / pitch 1.0(raw 141)
-      index: 0.24                        # 临时固定值,之前是 limit
+      thumb: opposed                     # yaw 0.892(raw 108) / pitch 1.0(raw 0)
+      index: limit                        # 可行域下界 + LIMIT_MARGIN,当前 raw 235
       # 中指/无名/小指保持张开 —— 捏是拇指+食指两根的事
     action:
       duration: 1.5

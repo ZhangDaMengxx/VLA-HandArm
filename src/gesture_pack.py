@@ -161,12 +161,11 @@ class GestureFrame:
             rv = [int(_clamp(int(v), RAW_MIN, RAW_MAX)) for v in _need6(raw_vendor, "raw_vendor")]
             rad_out = raw_proj_to_rad(vendor_to_proj(rv))
             # ⚠ 再从 rad 折回 raw,让两个字段**表示同一个姿态**。
-            # 不折的话手写/导入的越界 raw 会让两边打架:比如 raw 120 需要
-            # thumb_pitch 0.6144 rad,超过 URDF 上限 0.6 —— rad 字段被夹到 0.6,
-            # raw 字段还留着 120。于是 3D 预览显示 0.6,而回放真的走到 0.6144。
+            # 不折的话手写/导入的越界 raw 会让两边打架:rad 字段会按当前资产限位
+            # 夹取，而 raw 字段仍可能保留另一个姿态，导致 3D 预览与回放不一致。
             # 会不一致是因为 ActionPlayer._send_angles() 在真机上直接 write_shorts
             # ANGLE_SET,**绕过** InspireHand.set_angles 的 URDF 夹取。
-            # 折回之后 raw 变 141(= 0.6 对应的 raw),预览和回放就一致了。
+            # 折回之后预览和回放表示同一姿态。
             rv = proj_to_vendor(rad_to_raw_proj(rad_out))
         elif rad is not None:
             rad_out = [float(x) for x in _need6(rad, "rad")]

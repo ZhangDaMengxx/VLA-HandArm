@@ -46,12 +46,12 @@ NERO_ARM_LIMITS = {
 # 关节限位(rad)——NERO 来自本地 SDK 文档,手用当前 URDF 驱动关节上限。
 JOINT_LIMITS = {
     **NERO_ARM_LIMITS,
-    "right_thumb_1_joint": (0.0, 1.308),
-    "right_thumb_2_joint": (0.0, 0.6),
-    "right_index_1_joint": (0.0, 1.47),
-    "right_middle_1_joint": (0.0, 1.47),
-    "right_ring_1_joint": (0.0, 1.47),
-    "right_little_1_joint": (0.0, 1.47),
+    "right_thumb_1_joint": (0.0, 1.246165),
+    "right_thumb_2_joint": (0.0, 0.48),
+    "right_index_1_joint": (0.0, 1.333),
+    "right_middle_1_joint": (0.0, 1.333),
+    "right_ring_1_joint": (0.0, 1.333),
+    "right_little_1_joint": (0.0, 1.333),
 }
 
 

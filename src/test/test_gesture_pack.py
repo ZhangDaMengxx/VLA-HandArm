@@ -52,10 +52,9 @@ def test_raw_endpoints():
     assert all(abs(r - HAND_LIMITS[n][0]) < 1e-6 for n, r in zip(HAND_JOINTS, rad_open)), \
         f"raw 1000 应该是张开位: {rad_open}"
     # raw 0 = 另一端,落在 min(RAW_MAP span, URDF 上限)。两个界哪个紧由关节而定:
-    #   thumb_yaw   span 1.308  == 限位 1.308   → 两者相等
-    #   thumb_pitch span 0.698  >  限位 0.6     → 限位更紧,夹到 0.6
-    #   四指        span 1.396  <  限位 1.47    → **量程更紧**,停在 1.396,到不了限位
-    # 写成 min() 而不是照抄限位:四指 raw 0 本来就不是 1.47。
+    #   thumb_yaw   span 1.246165 == 限位 1.246165 → 两者相等
+    #   当前正式资产的 thumb_pitch 和四指 span/limit 已统一为 URDF 标称值。
+    # 写成 min() 保持换算对 span 与限位任一侧收紧时都安全。
     rad_closed = gp.raw_proj_to_rad([0] * 6)
     for n, r in zip(HAND_JOINTS, rad_closed):
         want = min(RAW_MAP[n][0], HAND_LIMITS[n][1])
@@ -105,10 +104,10 @@ def test_frame_rad_and_raw_always_agree():
 
 def test_frame_out_of_envelope_raw_is_snapped():
     """越界 raw 被吸附到限位对应的 raw,不是原样留着。
-    thumb_pitch(厂商通道 4)raw 120 → 0.6144 rad,超上限 0.6 → 吸附到 raw 141。"""
+    thumb_pitch(厂商通道 4)raw 120 → 0.4224 rad,仍在当前 0.48 标称上限内。"""
     f = gp.GestureFrame.build(raw_vendor=[1000, 1000, 1000, 180, 120, 100])
-    assert f.raw_vendor[4] == 141, f"应吸附到 141,实为 {f.raw_vendor[4]}"
-    assert abs(f.rad[1] - 0.6) < 1e-6, f"thumb_pitch 应停在上限 0.6: {f.rad[1]}"
+    assert f.raw_vendor[4] == 120, f"当前标称范围内应保持 120,实为 {f.raw_vendor[4]}"
+    assert abs(f.rad[1] - 0.4224) < 1e-4, f"thumb_pitch 映射错误: {f.rad[1]}"
     # 其余通道没越界,不该被动
     assert f.raw_vendor[3] == 180 and f.raw_vendor[5] == 100
 

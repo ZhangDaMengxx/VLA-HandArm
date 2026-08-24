@@ -158,19 +158,20 @@ Ego 和 RobotDataset 会为每个 episode 创建 `annotations/episode_*.json`。
 
 1. `src/inspire_hand.py` 的 `HAND_JOINTS`、`HAND_LIMITS`、`RAW_MAP`
 2. `src/skills/hand_pose.py` 的复制表
-3. `assets/hand/urdf/inspire_hand_right.urdf`
-4. 浏览器模型和 retargeting 配置
-5. `HARDWARE.md`
+3. `src/ros_joint_writer.py` 与 `src/build_inspire_from_vendor.py`
+4. `assets/hand/urdf/inspire_hand_right.urdf`
+5. 浏览器模型和 retargeting 配置
+6. `HARDWARE.md`
 
-当前基线校验会失败，不得忽略：
+当前资产标称基线为拇指弯曲 `0.48`、四指 `1.333`。修改后必须运行：
 
 ```bash
 python3 src/skills/hand_pose.py --verify
+python3 -m pytest src/test/test_hand_limit_consistency.py -q
 ```
 
-已知差异是拇指弯曲 `0.48` 对 `0.69813/0.6`，以及四指 `1.333` 对
-`1.39626/1.47`，共 10 项。修复必须基于硬件/URDF/动作安全决策，而不是为了让测试变绿
-随意选一组数。
+两项都必须通过。资产标称 rad 与设备条件化 raw 包络是不同契约；禁止用未完成或
+`aborted` 的真机 Profile 改写跨设备模型限位。
 
 跨手型抽象统一采用 datasheet/URDF 的资产标称 rad，不要求逐台用外部量角器重建模型角。
 设备 commissioning 只验证在指定速度、力、固件和路径下的 raw/归一量可行包络。型号规范

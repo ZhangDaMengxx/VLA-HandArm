@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """src/skills/hand_pose.py — 手势规格层:五指语义 → 六关节弧度 + 可行域校验。
 
-**为什么要这层**:清单里原来直接写 `hand: [1.112, 0.600, 1.07, 0.0, 0.0, 0.0]`。
+**为什么要这层**:清单里原来直接写 `hand: [1.112, 0.480, 1.07, 0.0, 0.0, 0.0]`。
 这串数字有三个问题:看不出是什么手势、改一个数不知道会不会撞、每个新手势都要
 先上真手量一遍。这层把它换成:
 
@@ -9,9 +9,9 @@
 
 归一量 n ∈ [0,1]:**0 = 张开/伸直,1 = 这台机器实际能到的最闭合**。六个通道统一。
 
-⚠ n=1 不等于 raw 0。拇指弯曲的 URDF 上限(0.6)比 xls 实际行程(0.698)小 14%,
-   所以拇指弯曲 n=1 → raw 141 而不是 0。这是已知的行程损失(见 HAND_DEBUG.md),
-   不是这里的 bug。归一化按 min(span, URDF上限) 做,n=1 的语义才是"实际能到的头"。
+归一量按当前正式 URDF/驱动的资产标称范围计算。拇指弯曲和四指的 span 与
+`inspire_hand.RAW_MAP` 一致；真机可行包络仍须由绑定设备的 Profile 条件化确认，
+不能从这里推断物理极限。
 
 **表为什么抄一份而不是 import inspire_hand**:那个模块在 src/,skills/ 里 import 它
 要把 src/ 塞进 sys.path,而 src/schema.py 和 skills/schema.py 同名 —— 之前踩过这个
@@ -35,21 +35,21 @@ HAND_JOINTS = ["right_thumb_1_joint", "right_thumb_2_joint",
 # (span_rad, invert) —— 抄自 inspire_hand.RAW_MAP,`--verify` 核对。
 RAW_MAP = {
     "right_thumb_1_joint":   (1.246165, True),
-    "right_thumb_2_joint": (0.69813, True),
-    "right_index_1_joint":       (1.39626, True),
-    "right_middle_1_joint":      (1.39626, True),
-    "right_ring_1_joint":        (1.39626, True),
-    "right_little_1_joint":       (1.39626, True),
+    "right_thumb_2_joint": (0.48, True),
+    "right_index_1_joint":       (1.333, True),
+    "right_middle_1_joint":      (1.333, True),
+    "right_ring_1_joint":        (1.333, True),
+    "right_little_1_joint":       (1.333, True),
 }
 
 # URDF 限位上限 —— 抄自 inspire_hand.HAND_LIMITS 的 hi,`--verify` 核对。
 LIMIT_HI = {
     "right_thumb_1_joint": 1.246165,
-    "right_thumb_2_joint": 0.6,      # < span 0.698,少 14% 行程
-    "right_index_1_joint": 1.47,           # > span,所以有效上限是 span
-    "right_middle_1_joint": 1.47,
-    "right_ring_1_joint": 1.47,
-    "right_little_1_joint": 1.47,
+    "right_thumb_2_joint": 0.48,
+    "right_index_1_joint": 1.333,
+    "right_middle_1_joint": 1.333,
+    "right_ring_1_joint": 1.333,
+    "right_little_1_joint": 1.333,
 }
 
 RAW_MIN, RAW_MAX = 0, 1000
@@ -89,8 +89,9 @@ LIMIT_MARGIN = 10
 #
 # 数值不是随手取的,是从**已实测通过的**清单项反算出来的(见 registry.yaml 里
 # hand_pinch / hand_close 的注释):
-#   opposed  ← hand_pinch  的 [1.112, 0.600] → n=[0.892, 1.0]
-#   folded   ← hand_close  的 [1.0,   0.5  ] → n=[0.802, 0.833]
+#   opposed  ← hand_pinch  的 [1.112, 0.480] → n=[0.892, 1.0]
+#   folded   ← hand_close  的旧 [1.0,   0.5] 已按当前资产上限收敛为
+#              [1.0, 0.48] → n=[0.802, 1.0]
 # 所以这两个状态是"真手上跑过、能到位"的,不是纸面推的。改它们要重新上手验。
 #
 # ⚠ yaw 的语义:n=1 是**对掌位**(拇指立起来、指向食指,能捏),n=0 是拇指躺在
@@ -99,7 +100,7 @@ THUMB_STATES = {
     "open": (0.0, 0.0),         # 完全打开:躺在掌面 + 伸直
     "up": (1.0, 0.0),           # 竖起来:对掌位但不弯 —— 点赞手势的拇指
     "opposed": (0.892, 1.0),    # 对掌 + 满弯:捏(实测自 hand_pinch)
-    "folded": (0.802, 0.833),   # 收进掌心:握拳(实测自 hand_close)
+    "folded": (0.802, 1.0),     # 收进掌心:握拳(按当前资产上限)
     "side": (0.5, 0.4),         # 半摆半屈,过渡位,不与食指抢空间
 }
 
@@ -234,12 +235,13 @@ def resolve(pose: dict) -> list[float]:
     tp_raw = rad_to_raw(HAND_JOINTS[1], n_to_rad(HAND_JOINTS[1], tp))
     # 四指:先看是 `limit` 还是常规状态/数值
     out_n = [ty, tp]
+    finger_joint = dict(zip(FINGER_KEYS, HAND_JOINTS[2:]))
     for key in FINGER_KEYS:
         val = pose.get(key)
         if val is None or val == "open":
             out_n.append(0.0)
         elif val == "limit":
-            out_n.append(_limit_n(f"{key}_proximal_joint", ty_raw, tp_raw))
+            out_n.append(_limit_n(finger_joint[key], ty_raw, tp_raw))
         else:
             out_n.append(_finger_n(key, val))
     return [n_to_rad(name, n) for name, n in zip(HAND_JOINTS, out_n)]

@@ -54,14 +54,14 @@ r = hp.resolve({"thumb": [1.0, 1.0], "index": "closed", "middle": "closed",
                 "ring": "closed", "pinky": "closed"})
 check("四指 n=1 → raw 0", raw_of(r)[2:] == [0, 0, 0, 0])
 check("拇指 yaw n=1 → raw 0(对掌位)", raw_of(r)[0] == 0)
-# 拇指弯曲 URDF 上限 0.6 < span 0.698,所以 n=1 打不到 raw 0
-check("拇指弯曲 n=1 → raw 141 而非 0(URDF 少 14% 行程)", raw_of(r)[1] == 141,
+# 当前资产标称 thumb pitch span/limit 都是 0.48,所以 n=1 到 raw 0
+check("拇指弯曲 n=1 → raw 0(资产标称闭合端)", raw_of(r)[1] == 0,
       f"实际 {raw_of(r)[1]}")
 check("n=1 的弧度就是 EFF_HI",
-      abs(hp.n_to_rad("right_thumb_2_joint", 1.0) - 0.6) < 1e-9)
+      abs(hp.n_to_rad("right_thumb_2_joint", 1.0) - 0.48) < 1e-9)
 check("EFF_HI = min(span, URDF上限)",
-      hp.EFF_HI["right_thumb_2_joint"] == 0.6
-      and hp.EFF_HI["right_index_1_joint"] == 1.39626)
+      hp.EFF_HI["right_thumb_2_joint"] == 0.48
+      and hp.EFF_HI["right_index_1_joint"] == 1.333)
 check("缺的通道按张开补", raw_of(hp.resolve({"index": "closed"}))[3:] == [1000] * 3)
 check("raw_to_n 是 n_to_rad+rad_to_raw 的逆(食指 n=0.5)",
       abs(hp.raw_to_n("right_index_1_joint",
@@ -118,12 +118,12 @@ check("中指 limit = 满弯(实测能到 raw 0)",
 
 # ---------------------------------------------------------------- 状态表来源
 print("\n[5] 拇指状态是从实测清单项反算的,不是纸面推的")
-check("opposed 反算自 hand_pinch [1.112, 0.600]",
+check("opposed 反算自 hand_pinch [1.112, 0.480]",
       abs(hp.n_to_rad(hp.HAND_JOINTS[0], hp.THUMB_STATES["opposed"][0]) - 1.112) < 2e-3
-      and abs(hp.n_to_rad(hp.HAND_JOINTS[1], hp.THUMB_STATES["opposed"][1]) - 0.600) < 2e-3)
-check("folded 反算自 hand_close [1.0, 0.5]",
+      and abs(hp.n_to_rad(hp.HAND_JOINTS[1], hp.THUMB_STATES["opposed"][1]) - 0.480) < 2e-3)
+check("folded 按当前资产上限收敛自 hand_close [1.0, 0.48]",
       abs(hp.n_to_rad(hp.HAND_JOINTS[0], hp.THUMB_STATES["folded"][0]) - 1.0) < 2e-3
-      and abs(hp.n_to_rad(hp.HAND_JOINTS[1], hp.THUMB_STATES["folded"][1]) - 0.5) < 2e-3)
+      and abs(hp.n_to_rad(hp.HAND_JOINTS[1], hp.THUMB_STATES["folded"][1]) - 0.48) < 2e-3)
 check("up = 对掌但不弯(点赞)", hp.THUMB_STATES["up"] == (1.0, 0.0))
 
 # ---------------------------------------------------------------- 驱动表同步

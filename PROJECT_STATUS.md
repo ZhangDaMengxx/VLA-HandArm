@@ -1,6 +1,6 @@
 # 项目状态
 
-**核对日期**：2026-08-21
+**核对日期**：2026-08-24
 **阶段**：Ego Capture、严格 LeRobot v3 与结构 QA 已完成，设备 Source/物理 QA 与真机安全验证待开展
 
 ## 当前结论
@@ -126,11 +126,11 @@
 
 ### Critical
 
-1. **手势安全表与驱动不一致**
+1. **真机条件化安全包络尚未闭环**
 
-   `python3 src/skills/hand_pose.py --verify` 报 10 项不一致。离线审计进一步确认 Bridge
-   当前以旧映射检查可行域，再由新驱动映射实际下发；12 个内置姿态中 10 个的 raw
-   因此改变。参数决策、三层契约和真机验证完成前，不能宣称安全表已对齐。详见
+   本仓资产标称映射已对齐，2026-08-24 新 Profile 已完成六关节空载单关节全行程；
+   但规范声明的 thumb-index interaction commissioning 尚未执行，Web/Bridge 运行时
+   安全投影仍待完成。单关节通过不能替代联合姿态和自碰撞证据。详见
    `src/HAND_LIMIT_AUDIT_2026_08_21.md`。
 
 2. **仓库中存在已跟踪 TLS 私钥**
@@ -174,7 +174,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 当前预期失败：
 
 ```bash
-python3 src/skills/hand_pose.py --verify
 /usr/bin/python3 src/test/skills/test_runner_gates.py  # 旧轨迹 NPZ 关节名不兼容
 ```
 
@@ -224,8 +223,8 @@ episode sidecar 与 Capture QA 接入后，Capture/strict 定向测试为 `26 pa
 
 ## 下一步
 
-1. 按自动化准入顺序完成低速真机 commissioning，生成绑定资产/设备/固件/探测条件的
-   Profile，再统一手势安全表、驱动参数和两个仓库；资产标称 rad 不做逐机人工量角。
+1. 在新单关节 Profile 基础上另行批准并完成 thumb-index interaction commissioning，
+   再将完整 Profile 接入 Web/Bridge 条件化安全投影。
 2. 轮换和停止跟踪 TLS 私钥。
 3. 补齐 Capture Source 原生 RGB-D、raw depth 和硬件时间戳，再接入限位、碰撞与指尖误差的物理 QA 证据。
 4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。

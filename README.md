@@ -140,14 +140,14 @@ deploy/                完整 Web/ROS2 真机主机部署
 ## 当前安全约束
 
 - 真机运动前必须确认工作区、低速、使能状态和急停可达。
-- `src/skills/hand_pose.py --verify` 当前有 10 项与 `src/inspire_hand.py` 不一致，
-  在修复并完成真机验证前，不得把手势可行域表视为已对齐。
-- 通用可行域探测器已经能按 datasheet/URDF 标称角生成条件化 Profile，但尚未运行真机
-  commissioning，也尚未接入 Web、Bridge 或 `hand_pose` 的运行时安全投影。
+- 本仓运行驱动、手势安全表、ROS writer、URDF 生成覆盖和正式 URDF 已统一使用
+  `thumb_pitch=0.48`、四指 `1.333`；`src/skills/hand_pose.py --verify` 已通过。
+- 真机 commissioning 的旧 Profile 在小指回张开误差 `73 raw` 时中止，只能用于诊断；
+  尚无可供运行时使用的完整真机 Profile，Web/Bridge 也尚未接入条件化安全投影。
 - Web 的 7860 端口没有应用层鉴权，不应直接暴露到公网。
 - 浏览器关闭释放是尽力而为；无人值守真机运行不得依赖它替代急停或服务端租约。
 - `ssl/key.pem` 曾被 Git 跟踪。现有私钥不得继续作为共享或生产凭据使用。
 
 ---
 
-**最后核对**：2026-08-21
+**最后核对**：2026-08-24

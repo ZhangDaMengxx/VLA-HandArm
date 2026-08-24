@@ -488,21 +488,21 @@ udevadm info -a -n /dev/ttyUSB0 | grep -i serial
 6. 同一 CAN 或串口设备不要被多个控制程序同时占用。
 7. 退出机械臂控制程序只会断开通信，不会自动回零、失能或解除现场风险。
 
-### 8.1 当前已知参数不一致
+### 8.1 资产标称参数一致性
 
-`src/skills/hand_pose.py` 复制了一份用于可行域换算的 `RAW_MAP` 和 `LIMIT_HI`，但它
-目前没有与 `src/inspire_hand.py` 的运行时表同步：
+本仓运行驱动、手势可行域换算、ROS writer、URDF 生成覆盖和正式 URDF 当前统一为：
 
-- 拇指弯曲：驱动 span/limit 为 `0.48`，安全表仍为 `0.69813/0.6`
-- 四指：驱动 span/limit 为 `1.333`，安全表仍为 `1.39626/1.47`
+- 拇指侧摆：span/limit `1.246165`
+- 拇指弯曲：span/limit `0.48`
+- 四指：span/limit `1.333`
 
 ```bash
 python3 src/skills/hand_pose.py --verify
+python3 -m pytest src/test/test_hand_limit_consistency.py -q
 ```
 
-当前会报告 10 项不一致。独立 `robot-mcp-server/robot-bridge` 复制了相同的两份文件，
-也存在同一问题。在完成参数决策、同步和真机验证前，可行域检查只能视为未对齐的保护
-逻辑，不能作为硬件安全保证。
+这两项离线校验当前通过。它们只证明资产标称映射一致，不证明具体设备在指定速度、
+力和运动路径下的物理可行包络；后者必须使用完整、非 `aborted` 的真机 Profile。
 
 ### 8.2 通用可行域 commissioning
 
@@ -541,8 +541,17 @@ python3 src/hand_feasibility.py \
 异常或 `Ctrl+C` 时工具会尝试把当前 `ANGLE_ACT` 写回；这是 best-effort 软冻结，不是硬急停，
 遥测丢失时也可能失败。完整流程和 Profile 接入规则见
 [src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md)，参数漂移及 Bridge
-影响见 [src/HAND_LIMIT_AUDIT_2026_08_21.md](src/HAND_LIMIT_AUDIT_2026_08_21.md)。当前尚未
-生成真机 Profile，也未把该 Profile 接入 Web、Bridge 或 `hand_pose` 运行时。
+影响见 [src/HAND_LIMIT_AUDIT_2026_08_21.md](src/HAND_LIMIT_AUDIT_2026_08_21.md)。
+
+2026-08-24 已在设备 `inspire-rh56dfx-right-local` 上完成新的六关节空载单关节 Profile：
+`speed=15`、`force=250`、60/60 点均为 `feasible`，六关节均达到 `safe_max_u=1.0/raw=0`；
+全程 `ERROR=0`，峰值温度 52℃、峰值力绝对值 84，postflight 回到张开侧。报告位于本地
+`reports/hand_feasibility/inspire_single_2026_08_24.json`，SHA-256 为
+`f66618055e5848a735289ccd6bd9f234e3dfd26f3e60dc1a3a29eed3a55e1b2d`。`raw=0` 是通过判据的
+命令端点；端点采样时拇指侧摆/弯曲反馈为 `0/0`，食/中/无名/小指反馈为 `48/59/55/60`，
+均在既定 `tracking_tolerance_raw=60` 内，小指正好压线。该结果只证明指定条件下的单关节
+自由行程，不证明联合姿态、自碰撞边界或独立物理角真值；interaction 尚未执行，条件化
+安全投影也尚未接入 Web、Bridge 或 `hand_pose` 运行时。
 
 ---
 

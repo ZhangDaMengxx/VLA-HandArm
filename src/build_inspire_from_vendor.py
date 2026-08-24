@@ -12,8 +12,8 @@ mimic 倍率互相矛盾(不修浏览器会在中途饱和)。所以写个脚本
 
 **输出**: 覆盖 assets/inspire_hand/inspire_hand_right.urdf + meshes/。旧版备份 .bak_dexurdf
 
-**厂家新限位未采用**(thumb_pitch 0.48 / 四指 1.333),只同步了 thumb_yaw 1.246165,
-理由见 inspire_hand.py 注释:收紧丢 17%/4.5% 行程。要改就 DRIVEN_LIMIT 和 HAND_LIMITS 同时改。
+驱动关节限位与当前正式 URDF/运行驱动一致；真机 Profile 只用于生成绑定设备的
+条件化 raw 可行包络，不覆盖资产标称 rad。
 
 **下游影响**: 指尖移了 19-27mm,scaling_factor 可能要重调; build_urdf/ 标定脚本失效。
 """
@@ -103,18 +103,17 @@ def _flatten_mimic(root: ET.Element):
 # 驱动关节 limit 覆盖:必须与 src/inspire_hand.py 的 HAND_LIMITS 逐位一致。
 #
 # 为什么要覆盖厂家值:浏览器 urdf_view.js 按 URDF 的 lower/upper 夹取,硬件驱动按
-# HAND_LIMITS 夹取。两边不一致 = **预览骗人** —— 拖到 0.6 时真手收到 0.6、3D 却停在
-# 0.48,而"文件明明改了"和"画面明明没动"两边都成立,这类不一致最难查
+# HAND_LIMITS 夹取。两边不一致 = **预览骗人** —— 上层下发值与 3D 可见值不同，
+# 而"文件明明改了"和"画面明明没动"两边都成立,这类不一致最难查
 # (gesture_pack.py:162 记过同一个坑的另一面)。
-# 厂家新值留在注释里,等真手实测行程后再决定是否收紧;那时**两处同时改**。
-#   thumb_yaw 1.246165(已采用) / thumb_pitch 0.48(未采用) / 四指 1.333(未采用)
+# 这些是资产标称限位；真机探测结果不得反向改写这组跨设备模型参数。
 DRIVEN_LIMIT = {
     "right_thumb_1_joint": (0.0, 1.246165),   # = 厂家新值,已同步
-    "right_thumb_2_joint": (0.0, 0.6),      # 厂家新值 0.48,保留老值待实测
-    "right_index_1_joint": (0.0, 1.47),           # 厂家新值 1.333,同上
-    "right_middle_1_joint": (0.0, 1.47),
-    "right_ring_1_joint": (0.0, 1.47),
-    "right_little_1_joint": (0.0, 1.47),
+    "right_thumb_2_joint": (0.0, 0.48),
+    "right_index_1_joint": (0.0, 1.333),
+    "right_middle_1_joint": (0.0, 1.333),
+    "right_ring_1_joint": (0.0, 1.333),
+    "right_little_1_joint": (0.0, 1.333),
 }
 
 

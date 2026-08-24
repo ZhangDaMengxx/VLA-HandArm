@@ -6,7 +6,8 @@
 ## P0 安全与一致性
 
 - [ ] 统一 `src/inspire_hand.py` 与 `src/skills/hand_pose.py` 的手指 span/limit
-  - 当前 `python3 src/skills/hand_pose.py --verify` 报 10 项不一致
+  - [x] 本仓资产标称映射已统一为拇指弯曲 `0.48`、四指 `1.333`；手势安全表、
+    ROS writer、URDF 生成覆盖和正式 URDF 一致性测试通过（2026-08-24）
   - [x] 2026-08-21 完成第一阶段离线审计：参数来源、Bridge 执行路径、12 个语义
     姿态和 8 个动作包影响已记录到 `src/HAND_LIMIT_AUDIT_2026_08_21.md`
   - [x] 将资产标称 rad、raw 安全包络和可选残差标定拆成独立契约；新增通用型号
@@ -16,18 +17,22 @@
     最高温度 38℃；未写速度/力/角度，报告位于本地 `reports/hand_feasibility/`
   - [x] 首次单关节扫描在小指回张开误差 `73 raw` 时安全中止并软冻结；确认旧逻辑会把
     低速途中短时稳定误判为到位，已改为目标容差感知和按行程动态超时，离线回归 `39 passed`
-  - [ ] 从新 Profile 重新执行全部六关节扫描；旧 aborted Profile 只保留诊断，不得续用
-  - [ ] 用户明确批准并确认现场安全后，按 `single -> interactions` 分阶段低速验证；
-    旧 T5/T6 仅作历史对照，统一 rad 取资产标称值，真机只声明条件化 raw 包络
-  - [ ] 参数定案后统一手势、Bridge、Web、ROS writer、动作包和碰撞检查，再做低速回归
-  - 同步独立仓库 `robot-mcp-server/robot-bridge/sim/`
+  - [x] 2026-08-24 从新 Profile 完成全部六关节空载单关节扫描；60/60 点均为
+    `feasible`，六关节均达到 `safe_max_u=1.0/raw=0`，旧 aborted Profile 只保留诊断
+  - [ ] 用户另行明确批准并确认现场安全后执行 `interactions` 低速验证；旧 T5/T6 仅作
+    历史对照，统一 rad 取资产标称值，真机只声明条件化 raw 包络
+  - [ ] 完整真机 Profile 定案后接入 Web/Bridge 条件化安全投影，再做低速回归
+  - [x] 同步独立仓库 `robot-mcp-server/robot-bridge/sim/`，部署 Bridge 的
+    `hand_pose.py --verify` 和 15 项单测通过（2026-08-24）
 - [ ] 轮换已经进入 Git 的 `ssl/key.pem`
   - 停止把现有私钥用于共享或生产环境
   - 将私钥移出跟踪并加入忽略规则
   - 单独评估是否需要清理 Git 历史及通知所有使用者
 ## P0 真机验证
 
-- [ ] 核验灵巧手连接、只读反馈、单关节低速运动和力控范围
+- [ ] 核验灵巧手连接、只读反馈、运动和力控范围
+  - [x] 只读 preflight/postflight 与六关节空载单关节低速全行程通过（2026-08-24）
+  - [ ] 完成 interaction、自碰撞边界和力控范围专项验证
 - [ ] 核验机械臂固件自动探测、CAN、使能、低速单关节运动、急停和复位
 - [ ] 核验机械臂不可用时 Bridge 的 hand-only 降级
 - [ ] 核验 MCP 心跳断线、恢复、健康状态和运动命令不自动重试

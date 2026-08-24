@@ -138,6 +138,15 @@ Profile 必须绑定型号、资产 revision、URDF hash、测试条件，以及
 身份。换资产、固件、速度、力或探测阈值后只能作为历史证据，不能静默沿用为当前
 运行时安全表。
 
+2026-08-24 的 RH56DFX 真机单关节 Profile 位于本地
+`reports/hand_feasibility/inspire_single_2026_08_24.json`：在 `speed=15`、`force=250`
+和空载条件下，60/60 点均为 `feasible`，六关节均达到 `safe_max_u=1.0/raw=0`；峰值
+温度 52℃、峰值力绝对值 84，全程错误位为零。Profile SHA-256 为
+`f66618055e5848a735289ccd6bd9f234e3dfd26f3e60dc1a3a29eed3a55e1b2d`。端点采样反馈为
+拇指 `0/0`、四指 `48/59/55/60 raw`；`safe_max_raw=0` 表示命令端点通过既定
+`tracking_tolerance_raw=60`，不表示所有反馈都精确到零。该 Profile 尚无 interaction
+结果，不能加载为完整运行时条件化包络，也不能用于声明联合姿态或自碰撞安全。
+
 ## 6. 运行时接入原则
 
 探测器只负责生产证据。后续运行时 Projector 应执行：
