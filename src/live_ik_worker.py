@@ -2,7 +2,8 @@
 """Persistent NERO FK/IK worker for the Web real-time tracking session.
 
 The Web process may run in a lightweight environment without Pinocchio.  This
-worker is launched with ``LEROBOT_PY`` and speaks one JSON object per line.
+The worker is launched with ``VLA_RUNTIME_PY`` (the lerobot-v3 interpreter)
+and speaks one JSON object per line.
 """
 from __future__ import annotations
 

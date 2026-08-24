@@ -6,22 +6,54 @@
 
 ---
 
-## [2026-08-24] - 灵巧手资产映射与单关节验收
+## [2026-08-24] - 灵巧手资产映射一致性
+
+### Added (新增)
+
+- 将命名 Conda 环境 `lerobot-v3` 提升为完整主运行时，固定 MediaPipe、Pinocchio、
+  dex-retargeting、Rerun、Trimesh、MuJoCo、MeshCat、Web、CAN/串口和 pytest 依赖
+- 新增 `src/lerobot_v3/app_web.py`、`src/ros_humble_env.py` 和 `ros-humble` Python 3.10
+  薄环境；实时 IK/live Rerun 使用 V3，rclpy reader/writer/runner 自动加载 Humble
+- 环境迁移保持 Web API、WebSocket、13 轴关节顺序、限位和硬件下发类不变；硬件桥模式
+  继续要求操作者显式选择，避免 Web 启动时自动抢占 CAN/串口
+- 新增 `src/camera/` 相机与标定目录，以及只读式 NERO eye-in-hand 棋盘格标定工具；
+  支持 `next/finish` 交互采样、运动/退化拒绝、样本图像留存、几何一致性误差和
+  `T_gripper_camera` 4x4/`xyzw` 导出。Orbbec 336 原生 SDK Adapter 与真机结果仍待验证
+- 新增 `EGO_DATA_STANDARD.md`，明确眼镜/头戴第一视角 EGO、固定 RGB-D 过渡阶段、
+  `xyzw`/时间/动态 c2w 契约、Ground Truth 质量规则和 LeRobot v3 交付闸
+- Capture Source 新增可选 `streams.parquet`、`samples.parquet` 与
+  `synchronization.json` 长表写入器，保留现行 `stream_index.parquet` 兼容视图
+- 多传感器索引拒绝重复 stream、未知时钟、时间倒退和不安全路径，并覆盖眼镜 RGB 与
+  腕部 IMU 不同原生频率的回归
 
 ### Fixed (修复)
 
+- 补齐 `lerobot-v3` 的 `websockets 16.1` 运行依赖和启动前检查；修复 Uvicorn 因没有
+  WebSocket 协议实现而让 `/ws/hand`、`/ws/arm` 返回 404，导致技能包能驱动真机但
+  Three.js 收不到实际关节角的问题
+- 将滑块 dirty 状态与 Three.js 预览所有权分离；手势包、预设动作、语音入口和 combo
+  回放开始后统一恢复实际遥测驱动，同时保留尚未下发的滑块编辑提示
 - 统一本仓手势安全表、ROS writer 和 URDF 生成覆盖到正式资产/驱动的
-  `thumb_pitch=0.48`、四指 `1.333`。
-- 修复 `limit` 派生状态使用旧关节名而退化为满弯 `raw 0`，捏合与 OK 手势
-  恢复使用可行域下界加 `LIMIT_MARGIN`。
-- 新增驱动、手势表、ROS writer、生成覆盖和正式 URDF 的一致性测试。
+  `thumb_pitch=0.48`、四指 `1.333`
+- 修复 `limit` 派生状态拼接旧关节名而退化为满弯 `raw 0`；`hand_pinch` 与 `hand_ok`
+  恢复使用可行域下界加 `LIMIT_MARGIN`，当前食指命令为 `raw 235`
+- 新增驱动、手势表、ROS writer、生成覆盖和正式 URDF 的一致性测试
 
 ### Verification (验证)
 
+- V3 mock 技能包完整链路通过：`OK.json` 回放收到 4 个 `action_step`、71 帧状态和
+  3 组不同实际角度；页面/播放器相关测试 `78 passed`，Three.js 所有权行为测试通过
+- `lerobot-v3` 的四条离线主命令可加载；MediaPipe 检测器、NERO FK/IK、dex-retargeting
+  配置及 Rerun 装配体初始化通过，23/23 个网格加载成功，环境定向测试 `9 passed`，`pip check` 通过
+- 手眼标定合成真值、矩阵方向、退化拒绝、`xyzw` 导出及现有 NERO 定向测试 `6 passed`；
+  未连接真实相机或机械臂
+- `src/skills/hand_pose.py --verify` 通过，手势规格自检 `78/78` 通过
+- 灵巧手相关离线 pytest `85 passed`；Python 编译和 `git diff --check` 通过
+- Capture/quality/strict-v3 定向回归 `42 passed`
 - RH56DFX 真机在 `speed=15`、`force=250`、空载单关节路径下完成 60/60 个可行点；
-  六关节命令端点均为 `safe_max_u=1.0/raw=0`，端点反馈为拇指 `0/0`、四指
-  `48/59/55/60 raw`；峰值温度 52℃、峰值力绝对值 84，全程错误位为零。
-- interaction 与自碰撞边界尚未执行；旧 `aborted` Profile 只保留诊断。
+  六关节命令端点均达到 `safe_max_u=1.0/raw=0`，端点反馈为拇指 `0/0`、四指
+  `48/59/55/60 raw`；峰值温度 52℃、峰值力绝对值 84，全程错误位为零
+- interaction 与自碰撞边界尚未执行；旧 `aborted` Profile 只保留诊断，不作为现行结论
 
 ## [2026-08-21] - 开发基线收口
 

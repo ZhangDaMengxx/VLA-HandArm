@@ -56,12 +56,12 @@ datasets/captures/capture_<id>/
 ## 端到端
 
 ```bash
-python src/build_nero_inspire.py             # 装配 URDF(一次即可)
-python src/build_canonical.py                # 视频 → 规范层(--video 指定视频,--hand-estimator mediapipe)
-python src/build_canonical_from_processed.py --input hand_result.npz
-python src/build_canonical_from_rgbd.py --input-root third_party/kinect2-middle/kinect2_middle --camera kinect2_middle
-python src/derive_embodiment.py --robot nero_inspire_rgbd --emit-traj  # RGB-D metric 派生 + 轨迹
-python src/replay_rerun.py --robot nero_inspire_rgbd --serve           # Rerun 三面板可视化(带同一 --robot)
+conda activate lerobot-v3
+python src/lerobot_v3/build_canonical.py
+python src/lerobot_v3/build_canonical_from_processed.py --input hand_result.npz
+python src/lerobot_v3/build_canonical_from_rgbd.py --input-root third_party/kinect2-middle/kinect2_middle --camera kinect2_middle
+python src/lerobot_v3/derive_embodiment.py --robot nero_inspire_rgbd --emit-traj
+python src/lerobot_v3/replay_rerun.py --robot nero_inspire_rgbd --serve
 ```
 
 Canonical 构建器默认新建 Capture，后续命令默认读取 `datasets/captures/` 中最新的 `ready` 批次。
@@ -74,9 +74,11 @@ Canonical 构建器默认新建 Capture，后续命令默认读取 `datasets/cap
 `source/quality_profile.json`。验收工具读取该快照；内部 timestamp cadence 不等同硬件同步。
 profile schema 1.1 和验收 JSON 会区分绝对精度、稳定性代理与连续性；需要真值但缺失时
 `value/pass` 均为 null，不用骨长或深度连续性代理替代。
-需要旧 `src/out/` 时必须显式传 `--legacy-out`；旧目录不会自动移动或删除。Web/ROS 仍使用
-Python 3.10 + `lerobot 0.4.4`；数据集生成与严格 v3 验证使用 `.envs/lerobot-v3` 中已验收的
-Python 3.12.13 + `lerobot 0.6.1`。复现安装和离线校验命令见根目录 `HANDBOOK.md`。
+需要旧 `src/out/` 时必须显式传 `--legacy-out`；旧目录不会自动移动或删除。Web、视觉、
+IK、CAN/串口、EGO、RobotDataset、严格 v3 验证和 Rerun 统一使用命名环境 `lerobot-v3`
+中的 Python 3.12.13 + `lerobot 0.6.1`。只有 ROS Humble reader/writer/runner 使用独立
+Python 3.10 `ros-humble` 薄环境，Web 自动通过子进程调用。复现安装和校验命令见根目录
+`HANDBOOK.md`。
 各生成器在 `save_episode()` 后显式 `finalize()`；Ego/Robot 每个 episode 自动建立不覆盖人工
 审核的 annotation，Robot 另有结构 QA。完整 Capture 使用
 `verify_dataset.py --capture-bundle --capture-root <capture>` 校验。
@@ -126,9 +128,9 @@ HTTP fallback 只维持 retarget/预览，不驱动真手。协议、真机数�
 **可视化** `replay_rerun.py`:三面板同一时间轴硬同步——Human(视频 + MediaPipe 骨架)、Robot 3D(装配网格,鼠标轨道旋转)、关节角曲线(游标跟随)。默认读最新 `ready` Capture 中 RobotDataset 的 `exports/workbench/robot_traj.pkl` 回放,不实时 retarget。
 
 ```bash
-python src/replay_rerun.py                 # 存 <capture>/reports/replay.rrd,Rerun 查看器打开
-python src/replay_rerun.py --serve         # 起 web,浏览器开打印的完整 URL
-python src/replay_rerun.py --traj a=/path/to/raw.pkl --traj b=/path/to/filtered.pkl      # A/B 对比
+python src/lerobot_v3/replay_rerun.py                 # 存 <capture>/reports/replay.rrd
+python src/lerobot_v3/replay_rerun.py --serve         # 起 web,浏览器开打印的完整 URL
+python src/lerobot_v3/replay_rerun.py --traj a=/path/to/raw.pkl --traj b=/path/to/filtered.pkl
 ```
 
 默认会在 3D 视图额外画坐标系调试轴:
@@ -149,7 +151,7 @@ Human 2D 面板也会在手腕点叠加 wrist 坐标轴:
 
 **数据结构** `schema.py`:锁定的两层 schema(canonical 帧 / embodiment 帧),含 `STATE_DIM`。
 **手部估计器接口** `hand_estimators.py`:把 MediaPipe / WiLoR 等模型统一成 canonical `HandObservation`。公共输出是 `keypoints_3d`、`keypoints_2d`、`visibility`、`wrist_pose`;WiLoR/MANO 富层走 `mano` 字段。
-**校验** `verify_dataset.py`:回读校验 LeRobotDataset(探正确的属性名)。
+**校验** `src/lerobot_v3/verify_dataset.py`:回读校验 LeRobotDataset，并执行 strict-v3/Capture 完整性检查。
 **学习脚本**(与管线无关,自用):`print_jacobian.py`(把某姿势的雅可比打屏看懂 J)、`solve_qp_step.py`(用雅可比把「末端想这么动」解成关节速度)。
 **路径** `capture_bundle.py`:集中管理正式 Capture 数据路径、manifest、checksum 和血缘；`paths.py` 继续管理项目资产路径。
 

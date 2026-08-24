@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """src/live_rerun.py — stdin 实时关节流 → pinocchio FK → Rerun serve(实时 3D + 关节曲线)。
 
-跑在 **conda lerobot 环境**(有 pinocchio / rerun / trimesh),被 app_web.py 以子进程拉起。
+跑在 **conda lerobot-v3 主环境**(有 pinocchio / rerun / trimesh),被 app_web.py 以子进程拉起。
 它是"实时监控"的 3D 后端:从 stdin 逐行读 JSON 关节状态(由 ros_joint_reader.py 经
 app_web.py 转发过来),每来一帧就算 FK、更新各连杆 Transform、追加关节角曲线,
 Rerun serve 出去让浏览器 iframe 实时刷新。

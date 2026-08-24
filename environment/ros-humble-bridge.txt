@@ -1,0 +1,11 @@
+# Python runtime: 3.10 in the named Conda environment `ros-humble`. ROS Humble
+# and rclpy come from /opt/ros/humble after setup.bash is sourced; do not
+# install rclpy from PyPI.
+
+# Pure-Python hardware/skill dependencies used by nero_arm_bridge.py and the
+# ROS skill runner. Keep this runtime small: images, landmarks and IK never
+# cross this process boundary.
+python-can==4.6.1
+typing-extensions==4.15.0
+pyserial==3.5
+PyYAML==6.0.3

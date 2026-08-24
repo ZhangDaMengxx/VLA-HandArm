@@ -1,5 +1,10 @@
 # Python runtime: 3.12.x
-# Install CPU Torch first to avoid pulling CUDA packages into dataset-only hosts:
+# This file covers the Python 3.12 main runtime: Web, EGO generation, LeRobot
+# v3, retargeting, Pinocchio IK, Rerun replay, direct CAN/serial consoles, and
+# tests. ROS Humble/rclpy stays in the small Python 3.10 bridge runtime defined
+# by environment/ros-humble-bridge.txt.
+#
+# Install CPU Torch first to avoid pulling CUDA packages into offline hosts:
 #   python -m pip install torch==2.7.1+cpu torchvision==0.22.1+cpu \
 #     --index-url https://download.pytorch.org/whl/cpu
 # Then install this file:
@@ -11,5 +16,37 @@ lerobot[dataset]==0.6.1
 # with the minimum supported Torch 2.7 line used by this CPU-only environment.
 torchcodec==0.4.0
 
-# Project canonical builders import scipy for explicit matrix/quaternion input.
-scipy>=1.14,<2
+# Keep the numerical ABI used by the validated LeRobot/Torch/MediaPipe stack.
+numpy==2.2.6
+scipy==1.18.0
+
+# Canonical RGB/RGB-D builders use the legacy MediaPipe solutions API. Do not
+# upgrade this independently: newer releases remove that API or require
+# numpy<2. MediaPipe installs protobuf<5 and its contrib OpenCV runtime.
+mediapipe==0.10.14
+opencv-contrib-python==5.0.0.93
+
+# RobotDataset derivation and visualization.
+pin==4.1.0
+dex_retargeting==0.5.0
+rerun-sdk==0.26.2
+trimesh==4.12.2
+mujoco==3.11.0
+meshcat==0.3.2
+
+# Web workbench and direct hardware consoles. rclpy is intentionally absent:
+# Ubuntu 22.04 ROS Humble provides a CPython 3.10 extension which cannot be
+# imported by this Python 3.12 environment.
+fastapi==0.141.1
+uvicorn==0.52.0
+# Uvicorn itself does not install a WebSocket protocol implementation. Without
+# this package /ws/hand and /ws/arm return 404, so hardware moves but Three.js
+# receives no telemetry.
+websockets==16.1
+python-multipart==0.0.32
+PyYAML==6.0.3
+pyserial==3.5
+python-can==4.6.1
+
+# Offline regression tests for this pipeline.
+pytest==9.1.1

@@ -2641,13 +2641,18 @@ function updateHandState(row) {
     _handActRad = rad.slice();                    // 『读回实际』的数据源
     // 3D 跟实际角度走,但滑块正在被调、还没下发时让 3D 显预览值 —— 否则刚拖的姿态
     // 会被 20Hz 的实际帧立刻抹掉。滑块本身**永不**被反馈覆盖,它是设定值不是读数。
-    if (_hv && !_handDirty) _hv.setDriven(rad);
+    // 所有权单独存,不能直接看 _handDirty:技能包会覆盖真机目标,但未下发的滑块内容
+    // 仍然是 dirty。若把两者绑在一起,真手在播而 Three.js 会一直卡在滑块预览。
+    if (_hv && !_handPreviewOwns3d) _hv.setDriven(rad);
     // 角度和遥测合到同一张逐指表里(列组切换),所以一起交给它渲染。
     // force_act 是每帧那份(1 个寄存器),tel 是 1s 那份(8 个寄存器)。
     if (row.force_act) _telFast.hand = row.force_act;
     _telLast.hand = {tel: row.tel || null, rad: rad, raw: raw};
     renderHandTelem(row.tel, "hand", rad, raw);
   } else if (row.type === "action_step") {
+    // 播放器不论从技能包按钮、预设动作还是语音入口启动,都会经过这里。收到第一条
+    // 已下发步骤后把 3D 交还实际遥测；保留 _handDirty,不谎称滑块已与真机同步。
+    if (row.angle_written && row.ok !== false) _handPreviewOwns3d = false;
     const timing = row.playback_mode === PLAYBACK_TIMELINE
       ? ` · 已发 ${row.sent} · 覆盖 ${row.skipped_total} · 延迟 ${row.lag_ms}ms` : "";
     $("actionProgress").textContent = `步骤 ${row.step}/${row.total}${timing}`;
@@ -2734,6 +2739,7 @@ function initHandTabs() {
 // 之前拖动即发,一次拖拽能打出几十个 POST,每个都要排到 console 的 50ms 主循环里等
 // 串口往返;同时遥测帧又把滑块值刷回实际角度,拖着像在跟橡皮筋拔河。
 let _handDirty = false;     // 滑块被改过、还没下发
+let _handPreviewOwns3d = false; // true 时 Three.js 显示滑块预览,暂不采用实际遥测
 let _handActRad = null;     // 最近一帧实际角度,『读回实际』用它
 function handSliderVals() {
   return HAND_SET_DEFS.map(d => {
@@ -2743,6 +2749,7 @@ function handSliderVals() {
 }
 function setHandDirty(on) {
   _handDirty = on;
+  _handPreviewOwns3d = on;
   const h = $("handSetHint");
   if (h) {
     h.textContent = on ? "已修改 · 未下发" : "已同步";
@@ -4163,6 +4170,7 @@ const CB_RUNTIME_KEY = "comboHandRuntime";
 let _cbArmWs = null, _cbHandWs = null;
 let _cbArmOn = false, _cbHandOn = false;      // 本页认为的在线状态
 let _cbDirty = false;
+let _cbPreviewOwns3d = false;                 // 与 dirty 分开:技能包可接管 3D,编辑仍未保存
 let _cbArmAct = null, _cbHandAct = null;      // 两边最近一帧实际角
 let _cbConnectPose = null, _cbDrift = null;
 let _cbTarget = "arm";                        // 未联动时发给谁
@@ -4955,6 +4963,7 @@ function cbHandVals() {
 }
 function cbSetDirty(on) {
   _cbDirty = on;
+  _cbPreviewOwns3d = on;
   const h = $("cbSetHint");
   if (h) {
     h.textContent = on ? "已修改 · 未下发" : "已同步";
@@ -5094,6 +5103,9 @@ function renderComboActRows() {
 // ---- 臂的遥测帧 ----
 function cbOnArmFrame(row) {
   if (row.type === "state") {
+    // combo 可能由回放栏或语音入口异步启动。臂遥测携带 combo 即表示播放器已接管
+    // 真机目标,此时 3D 必须跟实际角走；不要清 _cbDirty,编辑内容仍可能尚未下发。
+    if (row.combo) _cbPreviewOwns3d = false;
     _cbArmLast = row;
     const rad = row.rad || [];
     const defs = _armLimits
@@ -5117,13 +5129,11 @@ function cbOnArmFrame(row) {
         el.style.color = _cbDrift > ARM_DRIFT_WARN ? "var(--warning)" : "var(--text-3)";
       }
     }
-    // 滑块没被改过时 3D 跟实际走;正在调就显预览值(同调试页)。
+    // 滑块预览持有 3D 时先不覆盖；手动下发或技能包接管后再跟实际走。
     // ⚠ 只刷臂那 7 个 —— setAll 会把手也一起写,手那边的实际角由 /ws/hand 管,
     // 用这里的滑块值去覆盖会和手的遥测打架(两个源轮流写同一批关节 = 抖)。
-    // 滑块没被改过时 3D 跟实际走;正在调就显预览值(同调试页)。
-    // ⚠ `!_cbDirty` 这一句同时管住了录制页 —— 录制页用的是**同一套**滑块
-    // (滑块盒搬过去的),拖它一样置 _cbDirty,所以遥测不会把预览冲回去。
-    if (_cv && !_cbDirty && !comboCameraOwns3d()) _cv.setArm(rad);
+    // 录制页用的是**同一套**滑块(滑块盒搬过去的),拖动同样会让预览取得所有权。
+    if (_cv && !_cbPreviewOwns3d && !comboCameraOwns3d()) _cv.setArm(rad);
     applyComboFlags(row.enabled, row.frozen);
     if (row.speed_percent != null && $("cbArmSpeed").dataset.syncing !== "1") {
       $("cbArmSpeed").value = row.speed_percent;
@@ -5157,7 +5167,7 @@ function cbOnHandFrame(row) {
       if (d2) d2.textContent = (+rad[i]).toFixed(3);
     }
     if (rad.length) _cbHandAct = rad.slice();
-    if (_cv && !_cbDirty && rad.length && !comboCameraOwns3d()) _cv.setHand(rad);
+    if (_cv && !_cbPreviewOwns3d && rad.length && !comboCameraOwns3d()) _cv.setHand(rad);
     // 字段名和调试页那份一致(inspire_hand.telemetry() 的键):
     // temp/current/force_act/voltage/error/status。别写成 force/fault ——
     // 那样不会报错,只是整块遥测**静默空着**。
@@ -5329,7 +5339,7 @@ async function cbStopHand() {
 // 把整个滑块盒搬到当前栏。这是手页 #handSetBox 的做法。
 // 我第一版给录制页新建了 rcas_*/rchs_* 一套,结果是:两套滑块 + 遥测三方抢 3D 预览,
 // 得再发明一个"预览归谁"的所有权判据。搬家没有这个问题 —— 只有一套滑块、
-// 一个 _cbDirty,遥测那句 `!_cbDirty` 本来就挡住了覆盖。
+// 一个预览所有权状态就能挡住遥测覆盖；dirty 另存,用于准确提示编辑尚未下发。
 // ===========================================================================
 let _rcFrames = [];             // [{label, arm_rad[7], hand_rad[6], hand_raw[6], speed, force, hold_ms}]
 let _rcPreviewTimer = null;     // 3D 试播的定时器链

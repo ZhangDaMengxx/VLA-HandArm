@@ -9,7 +9,7 @@
 
 在 app_web.py 新增第三个模式**「灵巧手调试」**,用于单独调试 Inspire RH56DFX 灵巧手：
 - 独立于「实时 Live」模式,不需要机械臂、不需要 ROS2 bridge
-- 只需要 pyserial + conda lerobot 环境,手的 RS485 串口通了就能用
+- 只需要 `lerobot-v3` 主环境中的 pyserial，手的 RS485 串口通了就能用
 - 显示手的 URDF 3D 模型(含 mimic 耦合,手指弯曲看得对)
 - 右侧滑块设定 6 个驱动关节目标角,拖动只动 3D 预览,点『下发』才写串口
 - 进页面即出 3D(离线也能拿滑块预览姿态),接入串口是另一个动作
@@ -51,7 +51,7 @@ MediaPipe → /ws/hand/mimic → retarget → 3D 预览
 500ms 后补读，避免遥测读事务抢占控制写事务。
 
 - `hand_console.py`: Python 3 系统解释器,只依赖 pyserial,独占 `/dev/ttyUSB0`
-- `hand_rerun.py`: conda lerobot 解释器(有 pinocchio / rerun),从 console stdin 读 JSON
+- `hand_rerun.py`: `lerobot-v3` 解释器(有 pinocchio / rerun),从 console stdin 读 JSON
 
 ## 使用步骤
 
@@ -59,7 +59,8 @@ MediaPipe → /ws/hand/mimic → retarget → 3D 预览
 
 ```bash
 source ~/ros2_ws/robot_host_env.sh
-~/gradio_venv/bin/python src/app_web.py
+conda activate lerobot-v3
+python src/lerobot_v3/app_web.py
 ```
 
 浏览器打开 `http://<WSL_IP>:7860`。

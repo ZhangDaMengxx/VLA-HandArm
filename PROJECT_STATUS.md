@@ -11,9 +11,11 @@
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
 | 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
+| 相机与标定 | 工具已建/真机待验 | eye-in-hand 交互工具已具备；Orbbec 336 原生 SDK Adapter、设备内参与物理手眼结果待相机到货后验证 |
 | VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
 | MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
 | ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
+| 运行环境 | 主链已统一 | `lerobot-v3` 承接 Web/视觉/IK/数据/直接硬件；ROS Humble 自动分流到 Python 3.10 薄环境 |
 | 目录与文档 | 已归整 | 源码迁到 `src/`，测试集中到 `src/test/`，第三方资产集中到 `third_party/` |
 
 ## MCP 现行基准
@@ -35,10 +37,34 @@
 
 ## 最近完成
 
+### 2026-08-24
+
+- 将 `lerobot-v3` 提升为主运行时，补齐 FastAPI/Uvicorn、MuJoCo/MeshCat、CAN 和串口依赖；
+  新增 `ros-humble` Python 3.10 薄环境与自动探测/加载 helper，Web API、WebSocket、13 轴
+  关节顺序和硬件控制类保持不变
+- 新增 `src/lerobot_v3/app_web.py` 统一入口；实时 IK/live Rerun 改走 V3，只有 rclpy
+  reader/writer/runner 在后台加载 Humble。ROS 硬件桥的 Mock/只读/控制模式仍显式选择
+- 新增 `src/camera/`：只读 NERO 关节角并以 URDF FK 配对棋盘格位姿，支持交互式
+  `next/finish`、静止闸、退化检测、样本图像留存、误差报告和 `T_gripper_camera`
+  4x4/`xyzw` 输出；合成真值及现有 NERO FK 定向回归通过，尚未连接真实相机或机械臂
+- 将本仓手势安全表、ROS writer 和 URDF 生成覆盖统一到正式资产/驱动的
+  `thumb_pitch=0.48`、四指 `1.333`，`hand_pose.py --verify` 通过
+- 修复 `limit` 派生状态使用旧关节名而退化为满弯 `raw 0` 的问题；`hand_pinch` 和
+  `hand_ok` 恢复为可行域下界加 `LIMIT_MARGIN`，当前食指目标为 `raw 235`
+- 新增驱动、手势表、ROS writer、生成覆盖和正式 URDF 的一致性回归；相关离线测试
+  `85 passed`，手势规格自检 `78/78` 通过；独立 Bridge 同步后 15 项单测通过
+- 完成 RH56DFX 新真机单关节 Profile：`speed=15`、`force=250`，60/60 点均为
+  `feasible`，六关节均达到 `safe_max_u=1.0/raw=0`；峰值温度 52℃、峰值力绝对值 84，
+  全程错误位为零，postflight 回到张开侧。端点反馈为拇指 `0/0`、四指
+  `48/59/55/60 raw`，其中小指正好位于 `60 raw` 跟踪容差边界
+- 上述 Profile 只闭环空载单关节自由行程；thumb-index interaction、自碰撞边界和
+  Web/Bridge 条件化安全投影仍待完成
+
 ### 2026-08-21
 
-- 完成灵巧手限位第一阶段离线审计：确认运行驱动/标准资产使用 `0.48/1.333`，
-  手势安全表仍使用旧 span/limit，Bridge 因而以旧映射检查、再以新映射下发
+- 完成灵巧手限位第一阶段离线审计：当时确认运行驱动/标准资产使用 `0.48/1.333`，
+  手势安全表仍使用旧 span/limit，Bridge 因而以旧映射检查、再以新映射下发；
+  该漂移已于 2026-08-24 修复
 - 量化 12 个语义姿态和 8 个录制动作包的映射影响；确认 10 个语义姿态实际 raw
   发生变化，录制包原样回放通常保持 raw，但 rad/3D 解释和重新保存存在兼容风险
 - 形成 raw 物理标定、安全命令包络和模型限位三层契约建议及分阶段真机准入方案；
@@ -77,7 +103,9 @@
 - 将 LeRobot 内部帧间隔一致性与 Source 硬件同步拆开；旧 Kinect 无硬件时间时不再可能误报同步通过
 - quality profile 升至 schema 1.1；手腕绝对精度、静止抖动、位姿连续性和骨长稳定性分项报告，缺真值不再以代理结果代替
 - 用现有数据验证 Ego 780 帧和 RobotDataset 557 帧均可回读；新旧路径数值列最大绝对差为 `0`
-- 建立 Python 3.12.13 + LeRobot 0.6.1 数据集专用环境，`pip check` 通过；旧 Ego 780 帧和 RobotDataset 557 帧由官方类离线回读成功
+- 将命名环境 `lerobot-v3` 扩充为 Python 3.12.13 + LeRobot 0.6.1 完整离线链；MediaPipe、Pinocchio、dex-retargeting、Rerun 和网格加载实测通过，`pip check` 无冲突
+- 当日先完成离线 V3 与实时 Python 3.10 分流；该过渡架构已在 2026-08-24 进一步收口为
+  V3 主运行时 + 仅 rclpy 使用的 Python 3.10 薄环境
 - 增加严格 v3 校验器和 Capture 根级生成环境快照；新 3 帧完整 Capture 通过官方加载及 strict-v3，五个 processed 核心字段最大差为 `0`
 - Ego/RobotDataset 增加不覆盖人工审核的 episode annotation；Robot QA 自动检查索引和有限值，物理项缺证据时保持 `not_evaluated`
 - 增加 `verify_dataset.py --capture-bundle`，覆盖 Source、环境、严格 v3、血缘、sidecar 和 SHA-256；四个生成入口显式 finalize 后再写元数据
@@ -163,8 +191,8 @@ node src/test/web/hand_mimic_transport.test.mjs
 node src/test/web/combo_camera.test.mjs
 /usr/bin/python3 -m pytest src/test/test_combo_page.py src/test/test_hand_target_mailbox.py src/test/test_live_wrist_tracking.py -q
 /usr/bin/python3 -m pytest src/test/test_capture_bundle.py src/test/test_compare_dataset_numeric.py -q
-.envs/lerobot-v3/bin/python src/verify_dataset.py --capture-root <capture> --canonical --strict-v3
-.envs/lerobot-v3/bin/python src/verify_dataset.py --capture-bundle --capture-root <capture> --json <report>
+conda run -n lerobot-v3 python src/lerobot_v3/verify_dataset.py --capture-root <capture> --canonical --strict-v3
+conda run -n lerobot-v3 python src/lerobot_v3/verify_dataset.py --capture-bundle --capture-root <capture> --json <report>
 
 cd /home/zhang123/ros2_ws/robot-mcp-server
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s mcp_server/tests -v

@@ -1,5 +1,8 @@
 # Capture Bundles
 
+EGO 的眼镜主视角定义、固定相机阶段和质量验收见
+[EGO_DATA_STANDARD.md](../../EGO_DATA_STANDARD.md)。本页只定义存储、生命周期和兼容边界。
+
 正式采集数据按一次 Capture 一个目录保存：
 
 ```text
@@ -39,7 +42,7 @@ Robot QA 自动检查帧索引、state/action 非有限值；关节限位、碰�
 保持 `not_evaluated`。完整 Capture 校验命令为：
 
 ```bash
-.envs/lerobot-v3/bin/python src/verify_dataset.py \
+conda run -n lerobot-v3 python src/lerobot_v3/verify_dataset.py \
   --capture-bundle --capture-root <capture> --json <capture>/reports/capture_integrity_report.json
 ```
 
@@ -48,6 +51,13 @@ Source 文件同盘时优先硬链接，跨盘时复制；两种方式都由 `ch
 Ego。硬件时间仅写入 `rgb_timestamp_hw_us`/`depth_timestamp_hw_us`；没有硬件时间的旧视频或
 帧集保留空值，并把 `timestamp_source` 标记为 `fps_derived`，不能把推算时间当硬件时间。
 
+该宽表是阶段 1--4 单 RGB-D 的现行格式。眼镜、VIO/IMU、左右腕部设备和外部真值构成多个
+异步流时，使用可选的 `streams.parquet`、`samples.parquet` 和 `synchronization.json` 长表；
+`capture_bundle.write_multisensor_source_index()` 已提供厂商无关的逐文件原子写入和基础校验，
+但设备 Adapter 与 Source -> Ego 对齐消费者仍待实现。原 `stream_index.parquet` 保持兼容，
+并将作为派生后的 Source -> Ego 对齐视图。全链完成前，不得把多个设备强行塞入
+`rgb_*`/`depth_*` 固定列或丢弃原生高频采样。
+
 质量 profile 的仓库源文件位于 `configs/quality_profiles/`。构建器把完整内容快照到 Source，
 `acquisition.json` 同时记录 `profile_id` 和 revision；后续验收只读快照，不因仓库默认阈值更新
 而改变旧 Capture 结论。当前 profile 分为：
@@ -55,7 +65,9 @@ Ego。硬件时间仅写入 `rgb_timestamp_hw_us`/`depth_timestamp_hw_us`；没�
 - `legacy_rgb_video_30hz_v1`：既有固定相机 RGB 视频，不声明 Depth 或硬件同步
 - `legacy_aligned_rgbd_30hz_v1`：既有 960×540 对齐帧集，按文件名配对，不声明硬件同步
 - `processed_observations_v1`：外部处理结果，不反推相机能力
-- `ego_fixed_rgbd_60hz_v1`：未来固定相机目标，RGB 1920×1080@60、Depth 至少 640×480@60、硬件时间戳且 RGB-D 残差 <10ms
+- `ego_fixed_rgbd_60hz_v1`：固定 RGB-D 生产 EGO Canonical 的目标，RGB 1920×1080@60、原生 Depth 至少 640×480@60、硬件时间戳且 RGB-D 残差 <10ms
+
+未来眼镜和腕部设备使用独立 profile，不通过补帧或缺失流占位复用固定相机 profile。
 
 每个 profile 还显式记录 `device_class` 和 `sync_mode`；当前同步模式区分单视频流、无硬件时钟
 的文件名配对、外部未声明和成对硬件时间戳，不根据目录名推断。

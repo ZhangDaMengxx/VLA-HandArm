@@ -42,6 +42,12 @@
 
 ## P1 Web 与视觉
 
+- [ ] 在“实时 Live · 合体”的视频跟随区增加连续录制按钮
+  - 录制 WebSocket 已确认的 7 轴机械臂目标、6 轴灵巧手目标和源帧时间，不增加串口/CAN 请求
+  - 复用 `combo_pack/1` 的 `mode=stream`、保存校验和 `timeline_latest` 回放链，不另造协议
+  - 开始录制要求摄像头已启动且联合锚定进入 `following`；冻结、丢手、重锚、关闭摄像头或离页自动停止
+  - 区分 `target` 与后续可选的 `actual` 遥测，记录 Mock/真机、推理后端、锚点和丢帧统计
+  - 首版只录动作时间轴；RGB/landmarks 原始采集单独作为 Capture 数据功能，不塞入动作包
 - [x] 单帧在途和 latest-frame-wins 背压
 - [x] `stop()` 后禁止异步重连
 - [x] MediaPipe Tasks 本地资源和兼容包装层单测
@@ -70,6 +76,14 @@
 - [ ] 验证真臂 + Mock 手的显式授权、使能、急停、限幅和连续 IK 失败冻结
 - [ ] 在清空工作区和低速条件下验证双真机合体跟随，记录初始关节、固件和急停条件
 - [ ] 用对齐 RGB-D 深度替换 `monocular_scale` 腕部位置，并保留同一锚定/协议契约
+  - 上帝视角固定 RGB-D 负责手腕/物体全局米制位置和遮挡恢复
+  - 臂上 RGB-D 负责末端附近的物体相对位姿与局部视觉伺服，不与全局位姿直接平均
+  - 标定并版本化 `T_scene_overhead`、`T_scene_robot_base` 和 `T_flange_wrist_camera`
+  - [x] 建立 `src/camera/` 和 eye-in-hand 棋盘格交互工具；只读关节角、URDF FK、
+    `next/finish` 采样、退化检测、误差报告及 `xyzw`/4x4 输出已具备（2026-08-24）
+  - [ ] 相机具体型号和 Orbbec SDK 确认后实现 336 原生 RGB-D/硬件时间戳 Adapter，并用
+    真机数据验证 `T_flange_wrist_camera`；当前 OpenCV Adapter 不代表设备 Source 已闭环
+  - 深度无效、时间戳过期或两路位姿冲突时冻结机械臂目标并进入重定位
 - [ ] 用相同固定角度阶跃各重复 3 次，对照 `SPEED_SET=500/800/1000` 的 settled、力、电流和温度
 - [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥
 
@@ -120,7 +134,11 @@
   - quality profile schema 1.1 和验收 JSON 显式记录测量类别、依据及真值可用性
   - 缺少 `ground_truth.wrist_pose` 或静止段标注时保持 `pass=null`，不以代理指标冒充通过
 - [x] 建立 Python 3.12.x + `lerobot[dataset]==0.6.1` 隔离环境，补齐并验收严格的 LeRobot v3.0 目录与元数据结构
-  - `.envs/lerobot-v3` 已固定 Python 3.12.13、CPU Torch 2.7.1、LeRobot 0.6.1 和 TorchCodec 0.4.0，`pip check` 通过
+  - 命名环境 `lerobot-v3` 已固定 Python 3.12.13、CPU Torch 2.7.1、LeRobot 0.6.1 和 TorchCodec 0.4.0
+  - 已补齐 MediaPipe 0.10.14、Pinocchio 4.1.0、dex-retargeting 0.5.0、Rerun 0.26.2、Trimesh 和 pytest；四条离线主命令及模型/网格初始化通过，`pip check` 无冲突
+  - [x] 将 `lerobot-v3` 提升为 Web/视觉/IK/数据/直接 CAN 与串口的主运行时；新增
+    `ros-humble` Python 3.10 薄环境，Web 自动为 rclpy reader/writer/runner 加载 Humble
+  - [x] 保持 Web API、WebSocket、13 轴关节顺序与硬件控制类不变；硬件桥模式继续显式选择
   - 新 3 帧 Capture 的 `meta/data/videos`、真实 task 字段和根级 `environment/` 快照通过官方加载及 `verify_dataset.py --strict-v3`
   - 旧 0.4.4 Ego/RobotDataset 可由 0.6.1 回读，但旧 `tasks.parquet` 仅有匿名索引列，不满足 strict-v3；保留原样，不就地改写
   - 四个 LeRobot 生成入口在 `save_episode()` 后显式 `finalize()`，命令返回前完成 Parquet footer、视频和元数据落盘
@@ -138,6 +156,52 @@
   - 保留必要第三方/历史留档，只删除可重建的旧实验输出
   - 移除 `--legacy-out`/`VLA_LEGACY_OUT` 兼容入口前补迁移说明和回归测试
 
+### EGO 眼镜与多传感器演进（2026-08-24）
+
+- [x] 明确 EGO 是以操作者眼镜/头戴第一视角为最终目标的人类演示母带；固定 RGB-D 是
+  阶段性生产源，腕部设备和外部相机是增强或 Ground Truth 来源
+- [x] 定版基础数值契约：米/rad、LeRobot 秒、Source 硬件微秒、同步残差毫秒、四元数
+  `xyzw`，并使用相邻四元数点积非负保证时间连续
+- [x] 建立 [EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)，定义阶段 0--6、固定/头戴设备
+  分档、动态相机变换、真值规则、质量指标和 LeRobot v3 交付闸
+- [ ] 升级 Source 多传感器索引，同时保持现行单 RGB-D `stream_index.parquet` 可读
+  - [x] 新增厂商无关的长表逐文件原子写入与校验入口，拒绝重复 stream、未知时钟、时间倒退和
+    不安全相对路径；现行宽表保持不变（2026-08-24）
+  - [x] 新增 `streams.parquet`：stream、sensor、modality、原生频率和 calibration ID
+  - [x] 新增 `samples.parquet`：设备/主时钟、路径、valid、uncertainty 和原始 sample index
+  - [x] 新增 `synchronization.json`：主时钟及 `t_master = a*t_device+b` 的偏移/漂移模型
+  - 保留原始高频 IMU；Source -> Ego 对齐视图记录选样、插值、残差和来源 sample
+  - 覆盖旧宽表回读、多频率、丢样、重启、时钟回退和跨设备漂移测试
+- [ ] 定义并实现版本化眼镜 Adapter 接口
+  - 原生容器、RGB/Depth、内外参、VIO/c2w、IMU、设备/主时钟和跟踪状态统一进入 Source
+  - 不在 Adapter 内做机器人重定向、补帧或把无真值数据声明为绝对准确
+  - 设备型号/SDK确定后新增 `ego_glasses_rgb*_v1` quality profile，不复用固定相机 60Hz profile
+- [ ] 将动态相机位姿纳入新的 EGO schema revision
+  - 写入 `observation.camera_pose`、valid、confidence、tracking state 和时间残差
+  - 使用 `inv(T_global_camera_0) @ T_global_camera_t @ T_camera_t_hand_t` 统一到
+    `episode0_camera`，补矩阵方向和 `xyzw` 回归
+  - 腕姿增加 valid/confidence/source；缺失值不得用全零冒充
+- [ ] 形成双手 Canonical schema
+  - 明确 left/right 或 hand-slot 稳定语义、21 点顺序、逐手 visibility 和 handedness
+  - 单手旧 Capture 保持只读兼容，不原地改列或猜测槽位
+- [ ] 接入腕部设备的可选能力层
+  - 首选高频 6 轴 IMU + 视觉校正；禁止用 IMU 双积分冒充长期绝对位置
+  - 光学标记、数据手套、触觉、sEMG 分别声明 capability、标定、valid 和独立频率
+  - 未启用的能力不写全零训练特征；触觉/接触指标保持 `not_evaluated`
+- [ ] 建立 Ego-Exo / Motion Capture 小规模 Ground Truth 资格数据
+  - 测量 VIO ATE/RPE、腕部位置/朝向误差、三维尺度、RGB-D 对齐和时钟同步
+  - 固定 demonstrator/scene/object/trajectory 与标定版本，保存真值来源和不确定性
+  - 依据试采冻结头戴检出率、朝向误差和设备专用阈值，不以代理指标替代绝对精度
+- [ ] 完成阶段化验收
+  - 阶段 1：真实固定 RGB-D 原生 Source -> EGO -> strict-v3/Capture/官方回读
+  - 阶段 2：至少 30--100 条多任务 episode，按人/场景/物体分组切 train/val/test
+  - 阶段 3--4：重定向结果单独进入 RobotDataset，伪动作、遥操作命令和实际动作显式区分
+  - 阶段 5：移动/头戴原型完成 c2w、重定位、丢跟踪和静止段验收
+  - 阶段 6：眼镜 + 腕部设备 + 外部真值完成端到端 Capture 和质量报告
+- [ ] 建立眼镜数据治理
+  - 操作者/旁观者许可、音频默认关闭或独立授权、人脸/屏幕处理和发布边界
+  - Source 原始数据与匿名派生数据分别定义 hot/cold/sampled/deleted 留存策略
+
 ---
 
-**最后整理**：2026-08-21
+**最后整理**：2026-08-24

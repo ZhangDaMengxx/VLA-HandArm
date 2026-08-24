@@ -21,20 +21,20 @@ from __future__ import annotations
 import math
 import sys
 import time
-import types
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final
 
 SIM = Path(__file__).resolve().parent
 if str(SIM) not in sys.path:
     sys.path.insert(0, str(SIM))
 
-# lerobot_env 是 ROS 环境特定的工具,非 ROS 使用场景(如 MCP)不需要
+# 旧部署可能把 python-can/typing_extensions 放在 lerobot 环境里。只保留为缺包时的
+# 兼容兜底；当前 ros-humble 环境依赖完整时不得把旧环境注入 sys.path。
 try:
     from lerobot_env import lerobot_site                          # noqa: E402
-    LEROBOT_SITE = lerobot_site()
+    LEGACY_LEROBOT_SITE = lerobot_site()
 except ImportError:
-    LEROBOT_SITE = None
+    LEGACY_LEROBOT_SITE = None
 
 PYAGX_ROOT = SIM.parent / "third_party" / "pyAgxArm" / "pyAgxArm-master"
 
@@ -100,29 +100,32 @@ def _clamp(v, lo, hi):
 
 
 def _prepare_pyagx_imports() -> None:
-    """让本地 pyAgxArm 在 ROS 系统 python 下也能 import。
+    """让本地 pyAgxArm 在主环境或 ROS Humble 薄环境中 import。
 
-    ROS Humble 这边要 /usr/bin/python3,而 SDK 的纯 python 依赖可能装在 lerobot
-    的 3.10 环境里。把那个 site-packages 作为**兜底**加进 sys.path,并给
-    typing_extensions 补一个最小 shim(pyAgxArm 只用到 Literal/Final)。
+    当前环境应直接提供 python-can 与 typing_extensions。旧 lerobot site-packages
+    只在依赖缺失时作为迁移兜底；新部署不会走到该分支。
     """
     if str(PYAGX_ROOT) not in sys.path:
         sys.path.insert(0, str(PYAGX_ROOT))
-    if LEROBOT_SITE is None:
-        # 不是致命错误(下面有 shim 兜),但要说出来:真机缺包时报错会指向
-        # pyAgxArm 内部,不提示很难联想到是这里没找到。
-        print("[nero_arm] warn: 未找到 lerobot site-packages,pyAgxArm 的纯 python "
-              "依赖可能缺失。可设 LEROBOT_SITE=<env>/lib/python3.10/site-packages。",
-              file=sys.stderr, flush=True)
-    elif str(LEROBOT_SITE) not in sys.path:
-        sys.path.append(str(LEROBOT_SITE))
     try:
+        import can  # noqa: F401
         import typing_extensions  # noqa: F401
+        return
     except ImportError:
-        shim = types.ModuleType("typing_extensions")
-        shim.Literal = Literal
-        shim.Final = Final
-        sys.modules["typing_extensions"] = shim
+        pass
+    if LEGACY_LEROBOT_SITE is not None and str(LEGACY_LEROBOT_SITE) not in sys.path:
+        sys.path.append(str(LEGACY_LEROBOT_SITE))
+    try:
+        import can  # noqa: F401
+        import typing_extensions  # noqa: F401
+        print("[nero_arm] warn: 使用旧 lerobot site-packages 补充 pyAgxArm 依赖；"
+              "请安装 environment/ros-humble-bridge.txt 后移除此兼容路径。",
+              file=sys.stderr, flush=True)
+    except ImportError:
+        raise RuntimeError(
+            "pyAgxArm 缺少 python-can/typing-extensions；请在当前运行时安装 "
+            "environment/ros-humble-bridge.txt"
+        )
 
 
 class NeroArm:

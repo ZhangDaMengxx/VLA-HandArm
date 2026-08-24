@@ -3,11 +3,13 @@
 
 布局仿 1.html 的全屏悬浮结构,配色按『可视化工作台-提示词.md』的白色极简科技风。
 后端管线复用 app_gradio.py:subprocess 依次跑 build_canonical / derive_embodiment /
-replay_rerun --serve,用 SSE 把进度/日志/Rerun 地址推给浏览器。本 app 只做编排,
-自己不 import lerobot / rerun / pinocchio(它们装在 lerobot conda 环境,靠 subprocess 调)。
+replay_rerun --serve,用 SSE 把进度/日志/Rerun 地址推给浏览器。Web、视觉、实时 IK 和直接
+CAN/串口控制使用 lerobot-v3；只有 rclpy reader/writer/runner 在后台使用 ROS Humble
+Python 3.10，均靠 subprocess 隔离。
 
-运行(在 gradio venv 里,该 venv 已装 fastapi/uvicorn):
-    ~/gradio_venv/bin/python src/app_web.py
+运行:
+    conda activate lerobot-v3
+    python src/lerobot_v3/app_web.py
 然后 Windows 浏览器打开启动时打印的 http://<WSL_IP>:7860
 """
 from __future__ import annotations
@@ -39,7 +41,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
 from skills.schema import RegistryError, get_registry   # noqa: E402
 # 语音路径:意图解析 + console 执行适配。两者都是纯 Python(不 import rclpy),
-# 所以能直接跑在本进程(gradio venv)里,不必像 runner 那样起 ROS 子进程。
+# 所以能直接跑在 V3 主进程里,不必像 runner 那样起 ROS 子进程。
 # ⚠ 坑:下面这几行会让 backend/runner 在模块级把 src/skills 和 sim 都插进 sys.path,
 #   于是本进程里裸 `import schema` 解析到的是 **skills/schema.py**(backend 先把它
 #   缓存进 sys.modules),不是数据集那份 src/schema.py。app_web 不用数据集 schema,
@@ -50,7 +52,8 @@ from skills.intent import PACK_DEVICES, PACK_KINDS         # noqa: E402
 from skills.intent import PackTarget                       # noqa: E402
 from skills.intent import parse as intent_parse            # noqa: E402
 from skills.runner import _log_invocation, log_parse       # noqa: E402
-from lerobot_env import lerobot_python                  # noqa: E402
+from lerobot_v3.env import lerobot_v3_python            # noqa: E402
+from ros_humble_env import ros_humble_python, ros_humble_setup, ros_log_dir  # noqa: E402
 from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
 from hand_target_filter import OneEuroJointFilter  # noqa: E402
 from live_ik_scheduler import IKTarget, LatestIKScheduler  # noqa: E402
@@ -72,17 +75,16 @@ from capture_bundle import (  # noqa: E402
 REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest"))
 
 
-LEROBOT_PY = lerobot_python()      # 见 src/lerobot_env.py,环境位置探测的唯一真源
+LEROBOT_V3_PY = lerobot_v3_python()
+# 主运行时默认就是 V3；保留 VLA_RUNTIME_PY 仅用于诊断或受控迁移。
+VLA_RUNTIME_PY = os.environ.get("VLA_RUNTIME_PY", LEROBOT_V3_PY)
 WEB_PORT = int(os.environ.get("WEB_PORT", "7860"))
 WEB_DIR = Path(__file__).resolve().parent / "web"
 SIM = Path(__file__).resolve().parent
-# ROS2 侧脚本要先 source humble + 工作区(system python3);conda 侧脚本用 LEROBOT_PY。
-ROS_SETUP = os.environ.get(
-    "ROS_SETUP",
-    "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash")
-# ROS 侧脚本(reader/writer/runner)默认沿用同一个解释器 —— source 过 ROS_SETUP 后
-# PYTHONPATH 会带上 humble 的 dist-packages,3.10 的 conda python 也能 import rclpy。
-ROS_PYTHON = os.environ.get("ROS_PYTHON", LEROBOT_PY)
+# ROS2 子进程固定走 Humble 的 Python 3.10 ABI。解释器与 setup 均可显式覆盖，默认优先
+# 使用命名环境 ros-humble，再回落仓库 venv 或 /usr/bin/python3。
+ROS_SETUP = ros_humble_setup()
+ROS_PYTHON = ros_humble_python()
 
 
 def _ros_cmd(script_argv: list[str]) -> list[str]:
@@ -91,11 +93,10 @@ def _ros_cmd(script_argv: list[str]) -> list[str]:
     每个参数都过 shlex.quote:参数里可能带空格/引号(如技能调用信封的 JSON,内含
     语音原话),不引用会被 bash 拆成多个参数,且构成注入面。
     """
-    ros_log_dir = Path(os.environ.get("ROS_LOG_DIR", "/home/zhang123/ros2_ws/.ros_log"))
-    ros_log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = ros_log_dir()
     argv = " ".join(shlex.quote(a) for a in script_argv)
-    inner = (f"export ROS_LOG_DIR={shlex.quote(str(ros_log_dir))} && {ROS_SETUP} "
-             f"&& exec {ROS_PYTHON} {argv}")
+    inner = (f"export ROS_LOG_DIR={shlex.quote(str(log_dir))} && {ROS_SETUP} "
+             f"&& exec {shlex.quote(ROS_PYTHON)} {argv}")
     return ["bash", "-lc", inner]
 
 _URL_RE = re.compile(r"(https?://\S+\?url=\S+)")   # replay 打印的完整查看器地址
@@ -173,14 +174,16 @@ TRAJ_NPZ = _traj_pkl("nero_inspire_rgb").with_suffix(".npz")
 
 def _primary_ip() -> str:
     """WSL 的非环回 IP —— Windows 浏览器要用它连回来。"""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s: socket.socket | None = None
     try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
-    except Exception:
+    except OSError:
         return "127.0.0.1"
     finally:
-        s.close()
+        if s is not None:
+            s.close()
 
 
 def _stop_replay() -> None:
@@ -263,7 +266,7 @@ def _start_replay(video: str | None, log: list[str], robot: str = "nero_inspire_
     global _replay_proc
     _stop_replay()
     _free_ports(log)                    # 清掉任何孤儿 replay,避免端口占用导致启动失败
-    cmd = [LEROBOT_PY, "src/replay_rerun.py", "--serve",
+    cmd = [LEROBOT_V3_PY, "src/lerobot_v3/replay_rerun.py", "--serve",
            "--grpc-port", str(GRPC_PORT), "--web-port", str(WEB_VIEWER_PORT),
            "--robot", robot,
            "--traj", f"{robot}={_traj_pkl(robot)}"]
@@ -333,26 +336,26 @@ def run_pipeline(input_path: str | None, skip_regen: bool, dataset: str, emit,
         emit({"type": "log", "line": f"Capture: {capture.capture_id}"})
     if not skip_regen:
         if is_rgbd:
-            cmd = [LEROBOT_PY, "src/build_canonical_from_rgbd.py",
+            cmd = [LEROBOT_V3_PY, "src/lerobot_v3/build_canonical_from_rgbd.py",
                    "--input-root", rgbd_root, "--camera", rgbd_cam, *capture_args]
             caption = f"① 规范层 · {ds['label']} 深度反投手部 · {rgbd_root}"
         elif source == "handfile":
-            cmd = [LEROBOT_PY, "src/build_canonical_from_processed.py", "--input", str(input_path),
+            cmd = [LEROBOT_V3_PY, "src/lerobot_v3/build_canonical_from_processed.py", "--input", str(input_path),
                    *capture_args]
             caption = "① 规范层 · 导入外部手部结果"
         else:
-            cmd = [LEROBOT_PY, "src/build_canonical.py", "--video", str(input_path), *capture_args]
+            cmd = [LEROBOT_V3_PY, "src/lerobot_v3/build_canonical.py", "--video", str(input_path), *capture_args]
             caption = "① 规范层 · 检测人手关键点"
         if not _run_step(cmd, log, caption, 6, 42, emit):
             emit({"type": "error", "msg": "① 规范层生成失败 · 看日志"})
             return
-        if not _run_step([LEROBOT_PY, "src/derive_embodiment.py", "--robot", robot,
+        if not _run_step([LEROBOT_V3_PY, "src/lerobot_v3/derive_embodiment.py", "--robot", robot,
                           "--emit-traj", *capture_args],
                          log, f"② 本体层 · {ds['label']} 逐帧逆解 IK", 45, 78, emit):
             emit({"type": "error", "msg": "② 本体层生成失败 · 看日志"})
             return
         # ②' 验收指标:按本体测数据有效性,缓存 JSON 供右侧验收卡显示(失败不阻断管线)
-        _run_step([LEROBOT_PY, "src/measure_acceptance.py",
+        _run_step([LEROBOT_V3_PY, "src/lerobot_v3/measure_acceptance.py",
                    "--robot", robot, "--json", str(data_paths.quality_report), *capture_args],
                   log, f"②' 验收 · {ds['label']} 数据有效性指标", 78, 82, emit)
     TRAJ_NPZ = data_paths.trajectory_npz   # 供 /api/replay/play 定位
@@ -405,7 +408,7 @@ class LiveSession:
         # live_rerun:conda python,serve 3D;stdin 收关节流
         # --view-hz:3D 抽帧上限(100Hz 数据也只按此刷);--mem-limit:Rerun 滑动窗口,防内存无界增长卡死
         self.live = subprocess.Popen(
-            [LEROBOT_PY, "src/live_rerun.py", "--serve",
+            [VLA_RUNTIME_PY, "src/live_rerun.py", "--serve",
              "--grpc-port", str(GRPC_PORT), "--web-port", str(WEB_VIEWER_PORT),
              "--view-hz", "30", "--mem-limit", "500MB"],
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -529,7 +532,7 @@ def _get_live() -> LiveSession:
 # ---------------------------------------------------------------------------
 class HandDebugSession:
     """灵巧手调试会话:console 独占串口,rerun 显示 3D,都走子进程。
-    和 LiveSession 的区别:不走 ROS,不需要臂,只要 pyserial + conda lerobot。"""
+    和 LiveSession 的区别:不走 ROS,不需要臂,只要 V3 主环境里的 pyserial。"""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -959,7 +962,7 @@ class LiveIKClient:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.process = subprocess.Popen(
-            [LEROBOT_PY, "src/live_ik_worker.py"],
+            [VLA_RUNTIME_PY, "src/live_ik_worker.py"],
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1,
         )

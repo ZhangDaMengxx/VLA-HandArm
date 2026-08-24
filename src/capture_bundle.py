@@ -143,8 +143,231 @@ def _write_stream_index(paths: "CapturePaths", rows: list[dict[str, Any]]) -> Pa
     return destination
 
 
+def _optional_int(value: Any, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer or null")
+    return value
+
+
+def _optional_nonnegative_float(value: Any, label: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError(f"{label} must be a non-negative number or null")
+    return float(value)
+
+
+def _optional_source_path(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty relative path or null")
+    path = Path(value)
+    if value in {".", ".."} or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"unsafe {label}: {value!r}")
+    return path.as_posix()
+
+
+def write_multisensor_source_index(
+    paths: "CapturePaths",
+    *,
+    streams: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+    master_clock: str,
+    clock_models: dict[str, dict[str, Any]],
+) -> tuple[Path, Path, Path]:
+    """Write additive long-form indexes for asynchronous EGO Source streams.
+
+    The existing stream_index.parquet remains the stage 1--4 compatibility and
+    Source-to-Ego alignment view. These tables retain each sensor's native
+    sample timeline before a builder selects or interpolates model frames.
+    """
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as error:
+        raise RuntimeError(
+            "multisensor Source indexes require pyarrow; use the documented lerobot environment"
+        ) from error
+
+    if not streams:
+        raise ValueError("multisensor Source index requires at least one stream")
+    if not samples:
+        raise ValueError("multisensor Source index requires at least one sample")
+    master_clock = _safe_component(master_clock, "master clock")
+    if not isinstance(clock_models, dict) or master_clock not in clock_models:
+        raise ValueError("clock_models must contain the master clock")
+
+    normalized_clocks: dict[str, dict[str, Any]] = {}
+    for clock_id, model in clock_models.items():
+        clock_id = _safe_component(clock_id, "clock ID")
+        if not isinstance(model, dict):
+            raise ValueError(f"clock model {clock_id!r} must be an object")
+        scale = model.get("scale")
+        offset_us = model.get("offset_us")
+        uncertainty_us = model.get("uncertainty_us")
+        method = model.get("method")
+        if isinstance(scale, bool) or not isinstance(scale, (int, float)) or scale <= 0:
+            raise ValueError(f"clock model {clock_id!r} scale must be positive")
+        if isinstance(offset_us, bool) or not isinstance(offset_us, (int, float)):
+            raise ValueError(f"clock model {clock_id!r} offset_us must be numeric")
+        if (
+            isinstance(uncertainty_us, bool)
+            or not isinstance(uncertainty_us, (int, float))
+            or uncertainty_us < 0
+        ):
+            raise ValueError(f"clock model {clock_id!r} uncertainty_us must be non-negative")
+        if not isinstance(method, str) or not method:
+            raise ValueError(f"clock model {clock_id!r} method must be non-empty")
+        normalized_clocks[clock_id] = {
+            "model": "linear",
+            "scale": float(scale),
+            "offset_us": float(offset_us),
+            "uncertainty_us": float(uncertainty_us),
+            "method": method,
+        }
+
+    stream_rows = []
+    stream_ids: set[str] = set()
+    for row in streams:
+        if not isinstance(row, dict):
+            raise ValueError("each stream row must be an object")
+        stream_id = _safe_component(row.get("stream_id"), "stream ID")
+        if stream_id in stream_ids:
+            raise ValueError(f"duplicate stream ID: {stream_id!r}")
+        stream_ids.add(stream_id)
+        sensor_id = _safe_component(row.get("sensor_id"), "sensor ID")
+        modality = _safe_component(row.get("modality"), "modality")
+        clock_id = _safe_component(row.get("clock_id"), "clock ID")
+        if clock_id not in normalized_clocks:
+            raise ValueError(f"stream {stream_id!r} references unknown clock {clock_id!r}")
+        rate = row.get("nominal_rate_hz")
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
+            raise ValueError(f"stream {stream_id!r} nominal_rate_hz must be positive")
+        calibration_id = row.get("calibration_id")
+        if calibration_id is not None:
+            calibration_id = _safe_component(calibration_id, "calibration ID")
+        stream_rows.append({
+            "stream_id": stream_id,
+            "sensor_id": sensor_id,
+            "modality": modality,
+            "nominal_rate_hz": float(rate),
+            "calibration_id": calibration_id,
+            "clock_id": clock_id,
+            "source_path": _optional_source_path(
+                row.get("source_path"), f"stream {stream_id} source_path"
+            ),
+        })
+
+    sample_rows = []
+    seen_samples: set[tuple[int, str, int]] = set()
+    last_values: dict[tuple[int, str], tuple[int, int | None, int | None]] = {}
+    for row in samples:
+        if not isinstance(row, dict):
+            raise ValueError("each sample row must be an object")
+        episode_index = _optional_int(row.get("episode_index"), "episode_index")
+        sample_index = _optional_int(row.get("sample_index"), "sample_index")
+        if episode_index is None or episode_index < 0:
+            raise ValueError("episode_index must be a non-negative integer")
+        if sample_index is None or sample_index < 0:
+            raise ValueError("sample_index must be a non-negative integer")
+        stream_id = _safe_component(row.get("stream_id"), "stream ID")
+        if stream_id not in stream_ids:
+            raise ValueError(f"sample references unknown stream {stream_id!r}")
+        key = (episode_index, stream_id, sample_index)
+        if key in seen_samples:
+            raise ValueError(f"duplicate sample: {key!r}")
+        seen_samples.add(key)
+        device_timestamp = _optional_int(row.get("device_timestamp_us"), "device_timestamp_us")
+        master_timestamp = _optional_int(row.get("master_timestamp_us"), "master_timestamp_us")
+        valid = row.get("valid")
+        if not isinstance(valid, bool):
+            raise ValueError("sample valid must be boolean")
+        sequence_key = (episode_index, stream_id)
+        previous = last_values.get(sequence_key)
+        if previous is not None:
+            previous_index, previous_device, previous_master = previous
+            if sample_index <= previous_index:
+                raise ValueError(f"sample indexes must increase for {sequence_key!r}")
+            if (
+                device_timestamp is not None
+                and previous_device is not None
+                and device_timestamp <= previous_device
+            ):
+                raise ValueError(f"device timestamps must increase for {sequence_key!r}")
+            if (
+                master_timestamp is not None
+                and previous_master is not None
+                and master_timestamp <= previous_master
+            ):
+                raise ValueError(f"master timestamps must increase for {sequence_key!r}")
+        last_values[sequence_key] = (
+            sample_index,
+            device_timestamp if device_timestamp is not None else (previous[1] if previous else None),
+            master_timestamp if master_timestamp is not None else (previous[2] if previous else None),
+        )
+        sample_rows.append({
+            "episode_index": episode_index,
+            "stream_id": stream_id,
+            "sample_index": sample_index,
+            "device_timestamp_us": device_timestamp,
+            "master_timestamp_us": master_timestamp,
+            "timestamp_uncertainty_us": _optional_nonnegative_float(
+                row.get("timestamp_uncertainty_us"), "timestamp_uncertainty_us"
+            ),
+            "path": _optional_source_path(row.get("path"), "sample path"),
+            "valid": valid,
+        })
+
+    stream_schema = pa.schema([
+        ("stream_id", pa.string()),
+        ("sensor_id", pa.string()),
+        ("modality", pa.string()),
+        ("nominal_rate_hz", pa.float64()),
+        ("calibration_id", pa.string()),
+        ("clock_id", pa.string()),
+        ("source_path", pa.string()),
+    ])
+    sample_schema = pa.schema([
+        ("episode_index", pa.int32()),
+        ("stream_id", pa.string()),
+        ("sample_index", pa.int64()),
+        ("device_timestamp_us", pa.int64()),
+        ("master_timestamp_us", pa.int64()),
+        ("timestamp_uncertainty_us", pa.float64()),
+        ("path", pa.string()),
+        ("valid", pa.bool_()),
+    ])
+
+    def write_table(name: str, rows: list[dict[str, Any]], schema: Any) -> Path:
+        destination = paths.source / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        tmp = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+        pq.write_table(pa.Table.from_pylist(rows, schema=schema), tmp)
+        tmp.replace(destination)
+        return destination
+
+    streams_path = write_table("streams.parquet", stream_rows, stream_schema)
+    samples_path = write_table("samples.parquet", sample_rows, sample_schema)
+    synchronization_path = paths.source / "synchronization.json"
+    _write_json(synchronization_path, {
+        "schema_version": "1.0",
+        "master_clock": master_clock,
+        "clock_model": "t_master_us = scale * t_device_us + offset_us",
+        "clocks": normalized_clocks,
+    })
+    return streams_path, samples_path, synchronization_path
+
+
 def _safe_component(value: str, label: str) -> str:
-    if not value or value in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", value)
+    ):
         raise ValueError(f"invalid {label}: {value!r}")
     return value
 

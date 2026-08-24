@@ -11,7 +11,7 @@
 #
 # 分步(推荐,出错好定位):
 #   bash deploy/deploy_robot_host.sh --check     # 只体检,不改系统
-#   bash deploy/deploy_robot_host.sh --env       # 建 conda + venv(不需 sudo)
+#   bash deploy/deploy_robot_host.sh --env       # 建 V3 主环境 + ROS 薄环境(不需 sudo)
 #   bash deploy/deploy_robot_host.sh --ros       # colcon build(不需 sudo)
 #   bash deploy/deploy_robot_host.sh --hw        # CAN/udev/dialout(**需 sudo**)
 #   bash deploy/deploy_robot_host.sh --verify    # mock 链路 + 安全闸自检
@@ -24,9 +24,9 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DEPLOY_DIR/.." && pwd)"          # .../lerobotTest
 WS="$(cd "$REPO/.." && pwd)"                  # .../ros2_ws
 ROS_DISTRO_WANT="humble"
-PY_WANT="3.10"                                # 必须与 ROS Humble 的 python 一致
-CONDA_ENV_NAME="lerobot"
-GRADIO_VENV="$HOME/gradio_venv"
+V3_PY_WANT="3.12"
+CONDA_ENV_NAME="lerobot-v3"
+ROS_ENV_NAME="ros-humble"
 WEB_PORT="${WEB_PORT:-7860}"
 
 # 手的 RS485 串口:udev 会做成固定别名 /dev/inspire_hand,避免插拔后 ttyUSB 号对调
@@ -192,7 +192,7 @@ do_check_repo_assets() {
 
 # ═══════════════════════════════════════════════ 建环境(不需 sudo,只动 $HOME)
 do_env() {
-  step "建 python 环境:conda lerobot + gradio venv"
+  step "建 python 环境:lerobot-v3 主运行时 + ROS Humble 薄桥"
 
   local conda_bin
   conda_bin="$(find_conda)" || {
@@ -204,62 +204,58 @@ do_env() {
   }
   ok "用 conda: $conda_bin"
 
-  # --- conda lerobot:python 必须 3.10 ---
-  # 不是随便挑的版本:sim 的 ROS 脚本用这个解释器跑,靠 source humble 注入的
-  # PYTHONPATH 去 import rclpy。rclpy 的 .so 是给 cp310 编的,3.11/3.12 直接 import 失败,
-  # 而报错会指向别处,极难查。
+  # 主环境使用 Python 3.12。ROS Humble 的 CPython 3.10 ABI 由下面独立薄环境承接。
   local cbase; cbase="$("$conda_bin" info --base)"
   # shellcheck disable=SC1091
   source "$cbase/etc/profile.d/conda.sh" 2>/dev/null || true
 
   if "$conda_bin" env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
     local have; have="$("$conda_bin" run -n "$CONDA_ENV_NAME" python -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo '?')"
-    if [[ "$have" == "$PY_WANT" ]]; then
+    if [[ "$have" == "$V3_PY_WANT" ]]; then
       ok "conda env '$CONDA_ENV_NAME' 已存在,python $have"
     else
-      err "conda env '$CONDA_ENV_NAME' 是 python $have,必须 $PY_WANT(rclpy ABI 要对齐)"
+      err "conda env '$CONDA_ENV_NAME' 是 python $have,必须 $V3_PY_WANT"
       echo "      重建: conda env remove -n $CONDA_ENV_NAME && 重跑本步"
       return 1
     fi
   else
-    run "$conda_bin" create -y -n "$CONDA_ENV_NAME" "python=$PY_WANT"
-    ok "conda env '$CONDA_ENV_NAME' 建好(python $PY_WANT)"
+    run "$conda_bin" create -y -n "$CONDA_ENV_NAME" "python=$V3_PY_WANT" pip
+    ok "conda env '$CONDA_ENV_NAME' 建好(python $V3_PY_WANT)"
   fi
 
-  echo "  装 requirements.txt(mujoco/pin/lerobot/rerun 等,较慢)"
-  run "$conda_bin" run -n "$CONDA_ENV_NAME" python -m pip install -q -r "$REPO/requirements.txt"
-  ok "conda 依赖装完"
+  echo "  装 V3 主运行时(LeRobot/Web/视觉/IK/CAN/串口)"
+  run "$conda_bin" run -n "$CONDA_ENV_NAME" python -m pip install -q \
+    torch==2.7.1+cpu torchvision==0.22.1+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+  run "$conda_bin" run -n "$CONDA_ENV_NAME" python -m pip install -q \
+    -r "$REPO/environment/lerobot-v3-dataset.txt"
+  run "$conda_bin" run -n "$CONDA_ENV_NAME" python -m pip check
+  ok "V3 主运行时依赖装完"
 
-  # 验证 conda python + ROS 能一起用:这是整个架构的关键假设
-  if ros_bash "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && '$cbase/envs/$CONDA_ENV_NAME/bin/python3' -c 'import rclpy'" 2>/dev/null; then
-    ok "conda python + source humble → rclpy 可见(ABI 对齐)"
-  else
-    err "conda python 看不到 rclpy — 检查 conda python 是否为 $PY_WANT"
-    FAILED=1
-  fi
-
-  do_env_venv
+  do_env_ros_env "$conda_bin" "$cbase"
   do_env_urdf
 }
 
-# ---- 第三个环境:app_web 自己跑在这里 ----
-# 为什么不塞进 conda:app_web 只 import fastapi/uvicorn/yaml/numpy,不碰 lerobot/rerun/
-# pinocchio/mediapipe(那些重的全是 subprocess 调 $LEROBOT_PY 跑的)。单独一个瘦 venv,
-# 前端崩了不牵连算法环境;反过来算法环境降级(如 mediapipe 钉版本)也不影响网页起不起来。
-do_env_venv() {
-  if [[ -x "$GRADIO_VENV/bin/python" ]]; then
-    ok "web venv 已存在: $GRADIO_VENV"
+# ---- ROS Humble 薄环境:只装纯 Python 硬件依赖,rclpy 由系统 ROS 提供 ----
+do_env_ros_env() {
+  local conda_bin="$1" cbase="$2" ros_py
+  ros_py="$cbase/envs/$ROS_ENV_NAME/bin/python3"
+  if "$conda_bin" env list | awk '{print $1}' | grep -qx "$ROS_ENV_NAME"; then
+    local have; have="$("$conda_bin" run -n "$ROS_ENV_NAME" python -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo '?')"
+    [[ "$have" == "3.10" ]] || { err "ROS 环境必须是 Python 3.10,当前 $have"; return 1; }
+    ok "ROS 薄环境已存在:$ROS_ENV_NAME(Python $have)"
   else
-    # 用系统 python3(3.10):conda base 可能是 3.13/3.14,fastapi/uvicorn 的轮子未必齐
-    run "$SYS_PY" -m venv "$GRADIO_VENV"
-    ok "web venv 建好: $GRADIO_VENV"
+    run "$conda_bin" create --override-channels -c conda-forge -y \
+      -n "$ROS_ENV_NAME" python=3.10 pip
+    ok "ROS 薄环境建好:$ROS_ENV_NAME(Python 3.10)"
   fi
-  run "$GRADIO_VENV/bin/python" -m pip install -q --upgrade pip
-  run "$GRADIO_VENV/bin/python" -m pip install -q fastapi uvicorn pyyaml python-multipart numpy
-  # python-multipart 是 FastAPI 收 UploadFile 表单要的,不装的话上传接口 500
-  # numpy 是 /api/traj/frames 要的:它在进程内 np.load 读 robot_traj_*.npz(app_web.py:507),
-  # 不是 subprocess,所以瘦 venv 里也得有,否则该接口 500 ModuleNotFoundError。
-  ok "web 依赖装完(fastapi/uvicorn/pyyaml/python-multipart/numpy)"
+  run "$ros_py" -m pip install -q \
+    -r "$REPO/environment/ros-humble-bridge.txt"
+  if ros_bash "source /opt/ros/$ROS_DISTRO_WANT/setup.bash && '$ros_py' -c 'import rclpy,can,serial,yaml'" 2>/dev/null; then
+    ok "ROS 薄环境:Python 3.10 + rclpy + 硬件依赖可用"
+  else
+    err "ROS 薄环境自检失败"; FAILED=1
+  fi
 }
 
 # ---- 重建装配 URDF ----
@@ -427,25 +423,15 @@ do_envfile() {
   cbase="${cbase:-$HOME/miniconda3}"
   cat > "$f" <<EOF
 # robot_host_env.sh — 由 deploy_robot_host.sh 生成。跑任何东西前先 source 它。
-# 这些变量让代码不依赖写死的用户名/路径(见 nero_arm_bridge.py 的 _find_lerobot_site)。
-
-# 先剥掉 conda:bridge/writer/reader/runner 都直接 import rclpy,必须跑在**系统 python3**
-# (它们只是借 conda 的 site-packages 补 lerobot,见 _find_lerobot_site)。
-# 若 .bashrc 自动激活了 conda base,PATH 里的 python3 是 conda 的 → import rclpy 直接失败。
-while [ -n "\$CONDA_PREFIX" ]; do conda deactivate 2>/dev/null || break; done
-export PATH="\$(printf '%s' "\$PATH" | tr ':' '\n' | grep -vE '/(miniconda3|anaconda3|miniforge3|condabin|enter)(/|\$)' | paste -sd:)"
-unset PYTHONPATH CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PYTHON_EXE CONDA_SHLVL
+# 这里只声明解释器与 setup，不全局 source ROS，避免 cp310 路径污染 V3 主进程。
 
 # WSL2 无 GPU:RViz / Gazebo 必须走软件渲染(llvmpipe),否则 GUI 开得起来但场景不渲染
 export LIBGL_ALWAYS_SOFTWARE=1
 
-source /opt/ros/$ROS_DISTRO_WANT/setup.bash
-source $WS/install/setup.bash
-
 export LEROBOT_REPO=$REPO
-export LEROBOT_PY=$cbase/envs/$CONDA_ENV_NAME/bin/python3
-export ROS_PYTHON=\$LEROBOT_PY
-# LEROBOT_SITE 不用设:bridge 会从 LEROBOT_PY 自动推出同环境的 site-packages
+export LEROBOT_V3_PY=$cbase/envs/$CONDA_ENV_NAME/bin/python3
+export VLA_RUNTIME_PY=\$LEROBOT_V3_PY
+export ROS_PYTHON=$cbase/envs/$ROS_ENV_NAME/bin/python3
 export ROS_SETUP="source /opt/ros/$ROS_DISTRO_WANT/setup.bash && source $WS/install/setup.bash"
 export WEB_PORT=$WEB_PORT
 
@@ -454,8 +440,7 @@ if [ -e /dev/$HAND_SYMLINK ]; then export INSPIRE_HAND_PORT=/dev/$HAND_SYMLINK
 else export INSPIRE_HAND_PORT=/dev/ttyUSB0; fi
 export CAN_IFACE=$CAN_IFACE
 
-# 启动 web:  \$GRADIO_VENV/bin/python \$LEROBOT_REPO/src/app_web.py
-export GRADIO_VENV=$GRADIO_VENV
+# 启动 web:  conda activate lerobot-v3 && python src/lerobot_v3/app_web.py
 EOF
   ok "环境变量文件: $f"
   echo "      用法: source $f"
@@ -500,7 +485,7 @@ do_verify_bridge() {
   local envf="$WS/robot_host_env.sh"
   echo "  3) bridge mock 模式(臂发正弦、手回读占位,不碰 CAN/串口)"
   local log; log="$(mktemp)"
-  ros_bash "source '$envf' && timeout 6 $SYS_PY '$REPO/src/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && eval \"\$ROS_SETUP\" && timeout 6 \"\$ROS_PYTHON\" '$REPO/src/nero_arm_bridge.py' --mock" >"$log" 2>&1 || true
   if grep -q '桥接启动' "$log"; then
     ok "bridge mock 启动成功"
     echo "      $(grep -m1 '桥接启动' "$log" | sed 's/^.*\]: //')"
@@ -509,7 +494,7 @@ do_verify_bridge() {
   fi
 
   echo "  4) mock 下 /joint_states 有没有真在发(13 个关节)"
-  ros_bash "source '$envf' && (timeout 8 $SYS_PY '$REPO/src/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
+  ros_bash "source '$envf' && eval \"\$ROS_SETUP\" && (timeout 8 \"\$ROS_PYTHON\" '$REPO/src/nero_arm_bridge.py' --mock >/dev/null 2>&1 &) ; sleep 3; timeout 4 ros2 topic echo /joint_states --once" >"$log" 2>&1 || true
   if grep -q 'name:' "$log"; then
     ok "/joint_states 正常发布($(grep -c '^- ' "$log" || echo '?') 个关节名)"
   else
@@ -522,7 +507,7 @@ do_verify_bridge() {
     ok "mock 链路通了。真机步骤(按顺序,别跳):"
     echo "      a) source $WS/robot_host_env.sh"
     echo "      b) candump \$CAN_IFACE          # 确认臂在 CAN 上有回包"
-    echo "      c) python3 src/nero_arm_bridge.py --no-mock   # 只读,先不控制"
+    echo "      c) python src/ros_humble_env.py --run src/nero_arm_bridge.py --no-mock"
     echo "      d) 确认 /joint_states 是真实角度后,再加 --enable-control"
   else
     err "有失败项,先解决再上真机"
@@ -534,12 +519,13 @@ do_hint_run() {
   step "怎么跑起来"
   cat <<EOF
   source $WS/robot_host_env.sh
+  conda activate $CONDA_ENV_NAME
 
   # 终端 1:真机桥(先 --mock 验,再 --no-mock)
-  python3 $REPO/src/nero_arm_bridge.py --mock --enable-control
+  python $REPO/src/ros_humble_env.py --run src/nero_arm_bridge.py --mock --enable-control
 
   # 终端 2:Web 工作台
-  \$GRADIO_VENV/bin/python $REPO/src/app_web.py
+  python $REPO/src/lerobot_v3/app_web.py
 
   开发机浏览器打开: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$WEB_PORT
 

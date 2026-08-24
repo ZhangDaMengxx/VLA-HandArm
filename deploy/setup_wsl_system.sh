@@ -192,7 +192,7 @@ main() {
   cat <<EOF
     cd $(dirname "$(dirname "$(readlink -f "$0")")")
     bash deploy/deploy_robot_host.sh --check
-    bash deploy/deploy_robot_host.sh --env     # conda lerobot + web venv
+    bash deploy/deploy_robot_host.sh --env     # lerobot-v3 主环境 + ros-humble 薄环境
     bash deploy/deploy_robot_host.sh --ros     # colcon build
 
   ${C_WARN}注意:如果刚被加进 dialout 组,先 wsl --shutdown 再继续。${C_END}

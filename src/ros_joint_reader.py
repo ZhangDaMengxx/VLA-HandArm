@@ -4,7 +4,7 @@
 跑在 **ROS2 系统 python3**(需先 source /opt/ros/humble + 工作区),被 app_web.py 以
 子进程方式拉起。它是"实时监控"的数据源前端:订阅唯一真相源 /joint_states
 (假真臂 fake_real_arm 或真臂驱动都往这发),把每条消息压成一行 JSON 打到 stdout,
-上游 app_web.py(gradio venv)读管道即可 —— 两个 python 环境不互相 import,只靠 stdout 契约。
+上游 app_web.py(V3 主环境)读管道即可 —— 两个 python 环境不互相 import,只靠 stdout 契约。
 
 输出格式(每行):
   {"t": 1721.53, "names": [...13...], "pos": [...13...], "vel": [...] }

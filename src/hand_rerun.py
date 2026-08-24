@@ -6,7 +6,7 @@
   · 手动补算 mimic 耦合关节(6 驱动 + 6 耦合 = 12 revolute 都动起来)
   · stdin 输入是 hand_console.py 的 {"type":"state","rad":[6],...},不是 ros_joint_reader
 
-跑在 **conda lerobot 环境**(有 pinocchio / rerun)。
+跑在 **conda lerobot-v3 主环境**(有 pinocchio / rerun)。
 
 用法(一般由 app_web.py 调):
   python3 src/hand_console.py | python3 src/hand_rerun.py --serve

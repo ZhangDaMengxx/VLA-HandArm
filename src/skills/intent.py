@@ -7,7 +7,7 @@
                                       ↑ 只产出 skill_id + params,不执行
 
 **纯 Python**,只依赖 schema.py(不碰 ROS / numpy / 硬件),所以 app_web
-(gradio venv)和执行侧都能 import,也能脱机单测。
+(V3 主环境)和执行侧都能 import,也能脱机单测。
 
 三条设计原则:
 

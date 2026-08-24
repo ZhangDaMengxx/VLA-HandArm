@@ -32,14 +32,14 @@ ros2_ws/
 | `src/live_wrist_tracking.py` | 单目腕姿、联合锚定、相对映射和末端限幅 |
 | `src/live_ik_worker.py` | 与轻量 Web 环境隔离的 NERO FK/IK 子进程 |
 | `src/live_ik_scheduler.py` | 单 worker、latest-only 实时 IK 调度和过期结果失效 |
+| `src/camera/` | 相机 Adapter、棋盘格检测和只读式 NERO 手眼标定 |
 | `src/app_web.py` | Web 工作台和 WebSocket 后端 |
 | `src/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
 | `src/web/combo_camera.js` | 合体页摄像头与锚定/冻结单按钮状态机 |
 | `src/skills/` | 技能清单、执行后端和安全闸 |
 | `src/build_nero_inspire.py` | 生成臂、法兰、手装配 URDF |
 | `src/build_combo_viz.py` | 生成本地 Web 合体模型 |
-| `src/build_canonical.py` | 视频到规范层 |
-| `src/derive_embodiment.py` | 规范层到本体轨迹/数据集 |
+| `src/lerobot_v3/` | Python 3.12 + LeRobot 0.6.1 主运行时入口 |
 | `src/capture_bundle.py` | Capture 路径、版本目录、manifest、checksum 和血缘入口 |
 | `src/quality_profiles.py` | 质量 profile 校验、阈值比较和 Capture 快照入口 |
 | `src/compare_dataset_numeric.py` | 新旧 LeRobotDataset 数值列等价比较 |
@@ -49,32 +49,47 @@ ros2_ws/
 
 ## 开发环境
 
-Web、retargeting 与 ROS Python ABI 继续使用当前 Python 3.10 环境。2026-08-20
-实测版本为 Python `3.10.20`、`lerobot 0.4.4`：
+命名 Conda 环境 `lerobot-v3` 是主运行时，覆盖 Web、RGB/RGB-D EGO、RobotDataset、
+实时/离线 IK、Rerun、直接 CAN/串口控制和离线测试。已验收版本为
+Python `3.12.13`、`lerobot 0.6.1`、CPU Torch `2.7.1`、`torchcodec 0.4.0`、
+MediaPipe `0.10.14`、Pinocchio `4.1.0`、dex-retargeting `0.5.0` 和 Rerun `0.26.2`：
 
-```bash
-conda activate lerobot
-python --version
-python src/app_web.py
-```
-
-仅做纯 Python mock 单测时，可按测试文件要求使用系统 Python。不要用是否能 import
-来推断真机驱动已经可用。
-
-LeRobot v3 数据集生成和严格交付验证使用仓库内独立环境 `.envs/lerobot-v3`。已验收版本为
-Python `3.12.13`、`lerobot 0.6.1`、CPU Torch `2.7.1` 和 `torchcodec 0.4.0`：
+Web 实时遥测还固定使用 `websockets 16.1`。仅安装裸 `uvicorn` 不包含 WebSocket 协议
+实现，会让 `/ws/hand`、`/ws/arm` 返回 404，表现为真机能动但 Three.js 不跟随。
 
 ```bash
 conda create --override-channels -c conda-forge \
-  -p .envs/lerobot-v3 python=3.12 pip -y
+  -n lerobot-v3 python=3.12 pip -y
+conda activate lerobot-v3
 
-.envs/lerobot-v3/bin/python -m pip install \
+python -m pip install \
   torch==2.7.1+cpu torchvision==0.22.1+cpu \
   --index-url https://download.pytorch.org/whl/cpu
 
-.envs/lerobot-v3/bin/python -m pip install \
+python -m pip install \
   -r environment/lerobot-v3-dataset.txt
+python -m pip check
+
+python src/lerobot_v3/app_web.py
 ```
+
+ROS Humble 是唯一例外。Ubuntu 22.04 的 `rclpy` 是 CPython 3.10 扩展，因此使用独立的
+`ros-humble` 薄环境，只包含 ROS reader/writer/runner 与硬件 SDK 所需的纯 Python 依赖：
+
+```bash
+conda create --override-channels -c conda-forge -n ros-humble python=3.10 pip -y
+conda run -n ros-humble python -m pip install -r environment/ros-humble-bridge.txt
+python src/ros_humble_env.py --check
+```
+
+`app_web.py` 自动在后台为 ROS 子进程加载 `/opt/ros/humble/setup.bash` 和工作区
+`install/setup.bash`，用户不需要切换环境。手动启动桥时也从 V3 入口转交：
+
+```bash
+python src/ros_humble_env.py --run src/nero_arm_bridge.py --mock --enable-control
+```
+
+不要用是否能 import 来推断真机已经可用；CAN、串口、使能、急停和工作区仍需单独确认。
 
 严格验证时给 Hugging Face 指定可写缓存，并显式离线运行：
 
@@ -82,10 +97,10 @@ conda create --override-channels -c conda-forge \
 HF_HOME=/tmp/lerobot-v3-hf \
 HF_DATASETS_CACHE=/tmp/lerobot-v3-hf/datasets \
 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-.envs/lerobot-v3/bin/python src/verify_dataset.py \
+python src/lerobot_v3/verify_dataset.py \
   --capture-root datasets/captures/capture_<id> --canonical --strict-v3
 
-.envs/lerobot-v3/bin/python src/verify_dataset.py \
+python src/lerobot_v3/verify_dataset.py \
   --capture-bundle --capture-root datasets/captures/capture_<id> \
   --json datasets/captures/capture_<id>/reports/capture_integrity_report.json
 ```
@@ -104,11 +119,11 @@ Parquet footer、视频编码和元数据已经落盘，不依赖 Python 进程�
 Capture；需要绑定指定批次时，整条链都传相同的 `--capture-root`：
 
 ```bash
-python src/build_canonical.py --capture-root datasets/captures/capture_<id>
-python src/derive_embodiment.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --emit-traj
-python src/measure_acceptance.py --capture-root datasets/captures/capture_<id> --robot nero_inspire
-python src/verify_dataset.py --capture-root datasets/captures/capture_<id> --canonical
-python src/replay_rerun.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --serve
+python src/lerobot_v3/build_canonical.py --capture-root datasets/captures/capture_<id>
+python src/lerobot_v3/derive_embodiment.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --emit-traj
+python src/lerobot_v3/measure_acceptance.py --capture-root datasets/captures/capture_<id> --robot nero_inspire
+python src/lerobot_v3/verify_dataset.py --capture-root datasets/captures/capture_<id> --canonical
+python src/lerobot_v3/replay_rerun.py --capture-root datasets/captures/capture_<id> --robot nero_inspire --serve
 ```
 
 `<capture>/ego/` 与
@@ -118,6 +133,10 @@ python src/replay_rerun.py --capture-root datasets/captures/capture_<id> --robot
 
 `source/stream_index.parquet` 记录原始帧到 Ego 帧的可空映射及时间来源。当前旧视频/RGB-D
 帧集没有硬件时间时使用 `fps_derived`，只表示处理时间轴，不作为相机同步精度证据。
+该宽表服务当前单 RGB-D；眼镜、VIO/IMU、腕部设备和外部真值的异步多流将使用
+`streams.parquet`/`samples.parquet` 长表并保留 `stream_index.parquet` 兼容视图。当前已提供
+`write_multisensor_source_index()` 写入与基础校验，设备 Adapter 和 Source -> Ego 对齐尚未
+接入；实施顺序与质量闸见 [EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)。
 
 质量口径位于 `configs/quality_profiles/*.json`，构建时完整复制到
 `source/quality_profile.json`，同一 Capture 不允许静默替换。三个构建器的默认 profile 分别是
@@ -125,7 +144,7 @@ python src/replay_rerun.py --capture-root datasets/captures/capture_<id> --robot
 `processed_observations_v1`。正式 60 Hz RGB-D 目标使用：
 
 ```bash
-python src/build_canonical_from_rgbd.py --input-root <rgbd_root> \
+python src/lerobot_v3/build_canonical_from_rgbd.py --input-root <rgbd_root> \
   --quality-profile ego_fixed_rgbd_60hz_v1
 ```
 

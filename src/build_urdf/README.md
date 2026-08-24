@@ -61,7 +61,7 @@ VLA/retargeting 映射，不应只更新可视化。
 
 ## 跑法
 
-必须**在本目录内**跑(中间缓存写 `_cache/`),用 conda lerobot 环境
+必须**在本目录内**跑(中间缓存写 `_cache/`),用 conda `lerobot-v3` 主环境
 (需 numpy / scipy / trimesh):
 
 ```bash

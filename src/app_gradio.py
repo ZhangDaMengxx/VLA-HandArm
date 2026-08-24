@@ -3,8 +3,8 @@
 把 Rerun 的三面板 web 查看器(人手视频+骨架 / 机器人3D / 关节角曲线)嵌进同一个网页。
 
 架构要点(为什么这么分):
-  本 app 只做【编排】,自己不 import lerobot / rerun / pinocchio。它用 lerobot 环境的
-  python 以 subprocess 调 src/ 下三个脚本。因此本 app 装在**独立 venv**(~/gradio_venv):
+  本 app 只做【编排】,自己不 import lerobot / rerun / pinocchio。它用 lerobot-v3 环境的
+  python 以 subprocess 调 src/lerobot_v3/ 下三个入口。因此本 app 应装在**独立 venv**(~/gradio_venv):
   gradio 依赖新版 huggingface-hub,和 lerobot 需要的旧版天然冲突,隔离开互不影响。
 
 数据流(路径全自动串,见各脚本):
@@ -36,10 +36,10 @@ REPO = Path(os.environ.get("LEROBOT_REPO", "/home/zhang123/ros2_ws/lerobotTest")
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lerobot_env import lerobot_python                  # noqa: E402
+from lerobot_v3.env import lerobot_v3_python            # noqa: E402
 from capture_bundle import create_capture, latest_capture  # noqa: E402
 
-LEROBOT_PY = lerobot_python()      # 见 src/lerobot_env.py,环境位置探测的唯一真源
+LEROBOT_V3_PY = lerobot_v3_python()
 GRADIO_PORT = int(os.environ.get("GRADIO_PORT", "7860"))
 CAPTURES_ROOT = REPO / "datasets/captures"
 
@@ -119,7 +119,7 @@ def _start_replay(video: str | None, log: list[str], capture_root: Path) -> str 
     """后台起 replay_rerun --serve,读 stdout 直到解析出 web 地址,返回 URL(拿到即返回,进程留活)。"""
     global _replay_proc
     _stop_replay()
-    cmd = [LEROBOT_PY, "src/replay_rerun.py", "--serve",
+    cmd = [LEROBOT_V3_PY, "src/lerobot_v3/replay_rerun.py", "--serve",
            "--capture-root", str(capture_root)]
     if video:
         cmd += ["--video", str(video)]
@@ -160,7 +160,7 @@ def pipeline(video: str | None, skip_regen: bool):
         capture_args = ["--capture-root", str(capture.root)]
         # ① 规范层
         ok = None
-        for out in _run_bar([LEROBOT_PY, "src/build_canonical.py", "--video", str(video),
+        for out in _run_bar([LEROBOT_V3_PY, "src/lerobot_v3/build_canonical.py", "--video", str(video),
                              *capture_args],
                             log, "① 规范层 · 检测人手关键点", 6, 42, gr.update()):
             if out[0] == "__ok__":
@@ -172,7 +172,7 @@ def pipeline(video: str | None, skip_regen: bool):
             return
         # ② 本体层
         ok = None
-        for out in _run_bar([LEROBOT_PY, "src/derive_embodiment.py", "--emit-traj",
+        for out in _run_bar([LEROBOT_V3_PY, "src/lerobot_v3/derive_embodiment.py", "--emit-traj",
                              *capture_args],
                             log, "② 本体层 · 逐帧逆解 IK", 45, 80, gr.update()):
             if out[0] == "__ok__":

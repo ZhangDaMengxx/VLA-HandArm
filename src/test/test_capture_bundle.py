@@ -34,6 +34,7 @@ from capture_bundle import (  # noqa: E402
     resolve_data_paths,
     write_ego_frame_mapping,
     write_ego_metadata,
+    write_multisensor_source_index,
     write_robot_metadata,
 )
 
@@ -462,3 +463,231 @@ def test_aligned_rgbd_source_is_archived_and_indexed_without_fake_timestamps(
     )
     assert depth_meta["raw_depth"]["available"] is False
     assert depth_meta["aligned_to_rgb"]["frame_count"] == 1
+
+
+def test_multisensor_source_index_preserves_native_stream_timelines(tmp_path: Path) -> None:
+    pq = pytest.importorskip("pyarrow.parquet")
+    capture = create_capture(tmp_path, datetime(2026, 8, 20))
+    legacy_index = capture.source / "stream_index.parquet"
+    legacy_index.write_bytes(b"compatibility-view")
+
+    streams_path, samples_path, synchronization_path = write_multisensor_source_index(
+        capture,
+        streams=[
+            {
+                "stream_id": "glasses_rgb",
+                "sensor_id": "glasses_cam0",
+                "modality": "rgb",
+                "nominal_rate_hz": 30,
+                "calibration_id": "rig_v001",
+                "clock_id": "glasses_clock",
+                "source_path": "recordings/glasses/session.vrs",
+            },
+            {
+                "stream_id": "wrist_imu_right",
+                "sensor_id": "wrist_right",
+                "modality": "imu",
+                "nominal_rate_hz": 200,
+                "calibration_id": "wrist_v001",
+                "clock_id": "wrist_clock",
+                "source_path": "recordings/wrist_right/session.bin",
+            },
+        ],
+        samples=[
+            {
+                "episode_index": 0,
+                "stream_id": "glasses_rgb",
+                "sample_index": 0,
+                "device_timestamp_us": 1_000_000,
+                "master_timestamp_us": 2_000_000,
+                "timestamp_uncertainty_us": 100,
+                "path": None,
+                "valid": True,
+            },
+            {
+                "episode_index": 0,
+                "stream_id": "wrist_imu_right",
+                "sample_index": 0,
+                "device_timestamp_us": 500_000,
+                "master_timestamp_us": 2_000_100,
+                "timestamp_uncertainty_us": 250,
+                "path": None,
+                "valid": True,
+            },
+            {
+                "episode_index": 0,
+                "stream_id": "wrist_imu_right",
+                "sample_index": 1,
+                "device_timestamp_us": 505_000,
+                "master_timestamp_us": 2_005_100,
+                "timestamp_uncertainty_us": 250,
+                "path": None,
+                "valid": False,
+            },
+        ],
+        master_clock="host_monotonic",
+        clock_models={
+            "host_monotonic": {
+                "scale": 1.0,
+                "offset_us": 0,
+                "uncertainty_us": 0,
+                "method": "identity",
+            },
+            "glasses_clock": {
+                "scale": 1.0,
+                "offset_us": 1_000_000,
+                "uncertainty_us": 100,
+                "method": "hardware_sync",
+            },
+            "wrist_clock": {
+                "scale": 1.0,
+                "offset_us": 1_500_100,
+                "uncertainty_us": 250,
+                "method": "event_fit",
+            },
+        },
+    )
+
+    assert legacy_index.read_bytes() == b"compatibility-view"
+    assert [row["stream_id"] for row in pq.read_table(streams_path).to_pylist()] == [
+        "glasses_rgb",
+        "wrist_imu_right",
+    ]
+    samples = pq.read_table(samples_path).to_pylist()
+    assert [row["stream_id"] for row in samples] == [
+        "glasses_rgb",
+        "wrist_imu_right",
+        "wrist_imu_right",
+    ]
+    assert samples[-1]["valid"] is False
+    sync = json.loads(synchronization_path.read_text(encoding="utf-8"))
+    assert sync["master_clock"] == "host_monotonic"
+    assert sync["clocks"]["wrist_clock"]["method"] == "event_fit"
+
+
+@pytest.mark.parametrize(
+    ("streams", "samples", "error"),
+    [
+        (
+            [
+                {
+                    "stream_id": "rgb",
+                    "sensor_id": "cam",
+                    "modality": "rgb",
+                    "nominal_rate_hz": 30,
+                    "calibration_id": None,
+                    "clock_id": "missing_clock",
+                    "source_path": None,
+                }
+            ],
+            [
+                {
+                    "episode_index": 0,
+                    "stream_id": "rgb",
+                    "sample_index": 0,
+                    "device_timestamp_us": 1,
+                    "master_timestamp_us": 1,
+                    "timestamp_uncertainty_us": 0,
+                    "path": None,
+                    "valid": True,
+                }
+            ],
+            "unknown clock",
+        ),
+        (
+            [
+                {
+                    "stream_id": "rgb",
+                    "sensor_id": "cam",
+                    "modality": "rgb",
+                    "nominal_rate_hz": 30,
+                    "calibration_id": None,
+                    "clock_id": "host",
+                    "source_path": None,
+                }
+            ],
+            [
+                {
+                    "episode_index": 0,
+                    "stream_id": "rgb",
+                    "sample_index": 0,
+                    "device_timestamp_us": 10,
+                    "master_timestamp_us": 10,
+                    "timestamp_uncertainty_us": 0,
+                    "path": "../outside.bin",
+                    "valid": True,
+                }
+            ],
+            "unsafe sample path",
+        ),
+        (
+            [
+                {
+                    "stream_id": "rgb",
+                    "sensor_id": "cam",
+                    "modality": "rgb",
+                    "nominal_rate_hz": 30,
+                    "calibration_id": None,
+                    "clock_id": "host",
+                    "source_path": None,
+                }
+            ],
+            [
+                {
+                    "episode_index": 0,
+                    "stream_id": "rgb",
+                    "sample_index": 0,
+                    "device_timestamp_us": 10,
+                    "master_timestamp_us": 10,
+                    "timestamp_uncertainty_us": 0,
+                    "path": None,
+                    "valid": True,
+                },
+                {
+                    "episode_index": 0,
+                    "stream_id": "rgb",
+                    "sample_index": 1,
+                    "device_timestamp_us": None,
+                    "master_timestamp_us": None,
+                    "timestamp_uncertainty_us": None,
+                    "path": None,
+                    "valid": False,
+                },
+                {
+                    "episode_index": 0,
+                    "stream_id": "rgb",
+                    "sample_index": 2,
+                    "device_timestamp_us": 9,
+                    "master_timestamp_us": 11,
+                    "timestamp_uncertainty_us": 0,
+                    "path": None,
+                    "valid": True,
+                },
+            ],
+            "device timestamps must increase",
+        ),
+    ],
+)
+def test_multisensor_source_index_rejects_invalid_contract(
+    tmp_path: Path,
+    streams: list[dict],
+    samples: list[dict],
+    error: str,
+) -> None:
+    pytest.importorskip("pyarrow")
+    capture = create_capture(tmp_path, datetime(2026, 8, 20))
+    with pytest.raises(ValueError, match=error):
+        write_multisensor_source_index(
+            capture,
+            streams=streams,
+            samples=samples,
+            master_clock="host",
+            clock_models={
+                "host": {
+                    "scale": 1.0,
+                    "offset_us": 0,
+                    "uncertainty_us": 0,
+                    "method": "identity",
+                }
+            },
+        )

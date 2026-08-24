@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """src/skills/schema.py — 技能清单的加载 + 校验 + 参数归一。
 
-纯 Python,只依赖 PyYAML(system python3 5.4.1 / gradio_venv 6.0.3 都有)。
-**不 import rclpy / numpy / rerun**,所以 app_web.py(gradio venv)和
+纯 Python,只依赖 PyYAML(V3 主环境与 ros-humble 薄环境都有)。
+**不 import rclpy / numpy / rerun**,所以 app_web.py(V3 主环境)和
 执行器(ROS2 system python3)可以共用这一个模块,清单不会出现两份解释。
 
 职责边界:

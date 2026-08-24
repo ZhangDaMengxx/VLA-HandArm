@@ -76,6 +76,24 @@ def test_combo_camera_exclusively_owns_threejs_while_active():
     assert "onStop: () => finishComboTrackingDevices()" in _INDEX
 
 
+def test_skill_playback_releases_slider_preview_without_losing_dirty_state():
+    """技能包接管真机后,Three.js 应改跟遥测,但不能谎报滑块已经同步。"""
+    assert "let _handPreviewOwns3d = false" in _INDEX
+    assert "if (_hv && !_handPreviewOwns3d) _hv.setDriven(rad)" in _INDEX
+    action_step = _INDEX[_INDEX.index('row.type === "action_step"'):
+                         _INDEX.index('row.type === "action_done"')]
+    assert "_handPreviewOwns3d = false" in action_step
+    assert "setHandDirty(false)" not in action_step
+
+
+def test_combo_playback_releases_combo_slider_preview_for_all_entrypoints():
+    """combo 按钮和语音都以 row.combo 为统一的 Three.js 所有权切换信号。"""
+    assert "let _cbPreviewOwns3d = false" in _INDEX
+    assert "if (row.combo) _cbPreviewOwns3d = false" in _INDEX
+    assert "if (_cv && !_cbPreviewOwns3d && !comboCameraOwns3d()) _cv.setArm(rad)" in _INDEX
+    assert "if (_cv && !_cbPreviewOwns3d && rad.length && !comboCameraOwns3d())" in _INDEX
+
+
 def test_combo_camera_homes_tracked_hand_on_stop():
     assert "function prepareComboTrackingHand()" in _INDEX
     assert "function finishComboTrackingHand()" in _INDEX

@@ -38,12 +38,16 @@ NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 V
 ## Web 工作台
 
 ```bash
-conda activate lerobot
-python src/app_web.py
+conda activate lerobot-v3
+python src/lerobot_v3/app_web.py
 ```
 
 服务监听 `0.0.0.0:7860`。若本机存在 `ssl/key.pem` 和 `ssl/cert.pem` 会启用 HTTPS，
 否则使用 HTTP。`localhost` 开发可以使用 HTTP；局域网摄像头访问需要可信 HTTPS。
+Web、视觉、实时 IK、数据集和直接 CAN/串口控制统一使用 Python 3.12 主环境；ROS reader、
+writer 和技能 runner 会自动在后台加载 Humble，并使用独立 `ros-humble` Python 3.10
+环境。页面接口、WebSocket 和 13 轴关节顺序不变。ROS 硬件桥仍需显式选择 Mock、只读真机
+或允许控制，Web 不会在未知硬件状态下自动抢占 CAN/串口。
 
 主要能力：
 
@@ -80,11 +84,11 @@ IK 失败、急停/冻结、未使能或断线都会停止机械臂目标投递�
 ## VLA 数据管线
 
 ```bash
-pip install -r requirements.txt
-python src/build_nero_inspire.py
-python src/build_canonical.py                         # 新建 Capture，Ego 写入 <capture>/ego/
-python src/derive_embodiment.py --emit-traj           # 默认读取最新 ready Capture
-python src/replay_rerun.py --serve                    # 默认回放最新 ready Capture
+conda activate lerobot-v3
+python src/lerobot_v3/build_canonical.py              # 新建 Capture，Ego 写入 <capture>/ego/
+python src/lerobot_v3/derive_embodiment.py --emit-traj
+python src/lerobot_v3/verify_dataset.py --canonical --strict-v3
+python src/lerobot_v3/replay_rerun.py --serve
 ```
 
 管线将人手视频转换为规范层，再映射到 NERO + Inspire 的关节轨迹和
@@ -93,6 +97,9 @@ LeRobotDataset。正式数据默认保存在
 LeRobotDataset，机器人数据集位于
 `robot_datasets/<target>/target_revision_v001/retarget_v001/`。一次 Web 管线运行也固定使用
 同一个 Capture，避免规范层、轨迹和验收报告串到不同批次。
+EGO 的最终目标是眼镜/头戴第一视角人类演示；当前固定相机 RGB/RGB-D 是阶段性生产源，
+腕部设备和外部相机属于增强或 Ground Truth。阶段与验收规范见
+[EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)。
 Source 层会保留原视频、处理结果原文件或参与构建的原分辨率 RGB/对齐深度，并记录
 Source -> Ego 帧映射；缺失的硬件时间戳保持为空，不会用 FPS 推算值冒充。
 每次构建还会把所选版本化质量口径固化为 `source/quality_profile.json`。默认 profile 按
@@ -107,15 +114,17 @@ Ego `meta/coordinate_system.json` 使用 2.0 契约逐字段声明坐标语义�
 每个新 Ego/RobotDataset 还会按 episode 建立 `annotations/episode_*.json`；默认状态是
 `unreviewed`，后续构建不会覆盖人工审核。RobotDataset 的 `qa/episode_*.json` 记录帧索引、
 state/action 有限值等自动检查，缺少碰撞、限位或指尖真值时明确标为 `not_evaluated`。
-整个 Capture 可用 `src/verify_dataset.py --capture-bundle --capture-root <capture>` 校验 Source、
+整个 Capture 可用 `src/lerobot_v3/verify_dataset.py --capture-bundle --capture-root <capture>` 校验 Source、
 环境快照、严格 v3、血缘、sidecar 覆盖和 SHA-256。
 
 旧 `src/out/` 不会自动移动或删除；只有显式传 `--legacy-out`（Web 使用
 `VLA_LEGACY_OUT=1`）才会读取旧产物。当前迁移只改变路径并保留既有 `xyzw` 四元数和数值
-运算。数据集专用 Python 3.12.13 + `lerobot[dataset]==0.6.1` 环境和严格 v3 校验已通过；
+运算。命名环境 `lerobot-v3` 已扩充为 Python 3.12.13 + `lerobot[dataset]==0.6.1` 的完整
+离线 EGO/RobotDataset/回放链，严格 v3 校验已通过；
 完整 Source RGB-D 原始流与真实硬件微秒时间戳仍需由后续采集设备提供。目录说明见
 [datasets/captures/README.md](datasets/captures/README.md)，字段约定见
-[src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)。
+[src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)，V3 代码入口见
+[src/lerobot_v3/README.md](src/lerobot_v3/README.md)。
 
 ## 目录
 
