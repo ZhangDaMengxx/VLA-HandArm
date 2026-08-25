@@ -271,10 +271,11 @@ python3 -m pytest src/test/test_stdin_lines.py
 `pagehide -> sendBeacon('/api/hardware/release')`，不要改成无法保证送达的普通异步请求。
 `sendBeacon` 仍只是浏览器尽力通知：进程强杀、主机断电和断网可能使请求无法到达后端。
 服务端使用按标签页 owner 的硬件租约补足这条路径：页面每 2 秒调用 heartbeat，租约默认
-8 秒。硬件 start/stop/command 和 release 请求必须携带 `X-Hardware-Lease`；当前 owner 有效时
-其他标签页返回 409。正常主动释放仍复位手并让臂回零；watchdog 超时则保持最后位置，只
-停止会话并释放串口/CAN，避免网络抖动触发新运动。此时手可能继续夹持；机械臂退出路径
-不调用 `disable()`，只关闭当前 SDK/CAN 会话并保持原使能状态。watchdog 不是急停替代品。
+8 秒。hand/arm 使用独立 owner；硬件 start/stop/command、联合回放、语音执行、实时跟随和
+release 都校验 `X-Hardware-Lease`。新标签页点击普通“接入”按钮时会原子替换对应通道 owner，
+以不复位/不回零方式断开旧连接后再接入，不影响另一通道，也不显示额外“接管”文案。
+正常主动释放仍复位手并让臂回零；watchdog 超时只保持最后位置并释放通道。机械臂退出不
+调用 `disable()`，只关闭 SDK/CAN 会话并保持原使能状态。watchdog 不是急停替代品。
 
 ### 修改合体实时跟随
 

@@ -1105,7 +1105,10 @@ def _get_arm_target_mailbox() -> LatestTargetMailbox:
 # FastAPI
 # ---------------------------------------------------------------------------
 app = FastAPI(title="NERO·Inspire 回放工作台")
-_hardware_lease = HardwareLease(ttl_s=8.0)
+_hardware_leases = {
+    "hand": HardwareLease(ttl_s=8.0),
+    "arm": HardwareLease(ttl_s=8.0),
+}
 _hardware_release_lock: asyncio.Lock | None = None
 _hardware_watchdog_task: asyncio.Task | None = None
 
@@ -1114,9 +1117,10 @@ def _lease_owner(owner: str | None) -> str:
     return str(owner or "").strip()
 
 
-def _lease_error(owner: str | None, *, acquire: bool = False) -> JSONResponse | None:
-    result = (_hardware_lease.acquire(owner) if acquire
-              else _hardware_lease.heartbeat(owner))
+def _lease_error(channel: str, owner: str | None,
+                 *, acquire: bool = False) -> JSONResponse | None:
+    lease = _hardware_leases[channel]
+    result = lease.acquire(owner) if acquire else lease.heartbeat(owner)
     if result.ok:
         return None
     status = 409 if result.reason == "owner_busy" else 428
@@ -1124,6 +1128,7 @@ def _lease_error(owner: str | None, *, acquire: bool = False) -> JSONResponse | 
                          if result.reason == "owner_busy"
                          else "缺少有效硬件会话租约",
                          "reason": result.reason,
+                         "channel": channel,
                          "owner": result.owner,
                          "expires_at": result.expires_at}, status_code=status)
 
@@ -1135,104 +1140,170 @@ def _request_owner(header_owner: str | None, payload: dict | None = None,
     return _lease_owner(header_owner or body_owner or query_owner)
 
 
-def _require_lease(header_owner: str | None, payload: dict | None = None,
+def _lease_channel(payload: dict | None = None,
+                   query_channel: str | None = None) -> str | None:
+    channel = str((payload or {}).get("channel") or query_channel or "").strip()
+    return channel if channel in _hardware_leases else None
+
+
+def _require_lease(channel: str, header_owner: str | None,
+                   payload: dict | None = None,
                    *, query_owner: str | None = None,
                    acquire: bool = False) -> tuple[str, JSONResponse | None]:
     owner = _request_owner(header_owner, payload, query_owner)
-    return owner, _lease_error(owner, acquire=acquire)
+    return owner, _lease_error(channel, owner, acquire=acquire)
 
 
-def _lease_response(result) -> JSONResponse:
+def _lease_response(channel: str, result) -> JSONResponse:
     return JSONResponse({
         "ok": result.ok,
+        "channel": channel,
         "owner": result.owner,
         "expires_at": result.expires_at,
-        "ttl_ms": int(_hardware_lease.ttl_s * 1000),
+        "ttl_ms": int(_hardware_leases[channel].ttl_s * 1000),
+        "taken_over": bool(result.previous_owner),
         **({"reason": result.reason} if not result.ok else {}),
     }, status_code=200 if result.ok else (409 if result.reason == "owner_busy" else 428))
 
 
-def _release_lease_if_hardware_idle(owner: str) -> None:
-    hand_alive = bool(_hand is not None and _hand.ready and _hand.console
-                      and _hand.console.poll() is None)
-    arm_alive = bool(_arm is not None and _arm.ready and _arm.console
-                     and _arm.console.poll() is None)
-    if not hand_alive and not arm_alive:
-        _hardware_lease.release(owner)
+def _release_lease_if_channel_idle(channel: str, owner: str) -> None:
+    session = _hand if channel == "hand" else _arm
+    alive = bool(session is not None and session.ready and session.console
+                 and session.console.poll() is None)
+    if not alive:
+        _hardware_leases[channel].release(owner)
+
+
+def _stop_combo_for_owner_change() -> None:
+    """Stop coupled playback before either hardware channel changes owner."""
+    global _combo_pending
+    with _combo_pending_lock:
+        pending = _combo_pending is not None
+        _combo_pending = None
+    playing = bool(((_arm.latest or {}) if _arm else {}).get("combo"))
+    if not (pending or playing):
+        return
+    if _arm and _arm.console and _arm.console.poll() is None:
+        _arm.command({"cmd": "combo_stop"})
+    if _hand and _hand.console and _hand.console.poll() is None:
+        _hand.command({"cmd": "action_cancel"})
 
 
 @app.post("/api/hardware/lease/acquire")
 async def hardware_lease_acquire(payload: dict | None = None,
                                  owner: str | None = Header(default=None,
                                                             alias="X-Hardware-Lease"),
-                                 lease_id: str | None = None) -> JSONResponse:
+                                 lease_id: str | None = None,
+                                 channel: str | None = None) -> JSONResponse:
+    selected = _lease_channel(payload, channel)
+    if selected is None:
+        return JSONResponse({"ok": False, "reason": "channel_required",
+                             "msg": "channel 只支持 hand 或 arm"}, status_code=400)
     requested = _request_owner(owner, payload, lease_id)
-    return _lease_response(_hardware_lease.acquire(requested))
+    takeover = bool((payload or {}).get("takeover", False))
+    result = _hardware_leases[selected].acquire(requested, takeover=takeover)
+    if result.ok and result.previous_owner:
+        print(f"[hardware-lease] channel={selected} owner={result.previous_owner} "
+              f"被 owner={requested} 接替", flush=True)
+        _stop_combo_for_owner_change()
+        await _hardware_release_impl(
+            home=False,
+            release_hand=selected == "hand",
+            release_arm=selected == "arm",
+        )
+    return _lease_response(selected, result)
 
 
 @app.post("/api/hardware/lease/heartbeat")
 async def hardware_lease_heartbeat(payload: dict | None = None,
                                    owner: str | None = Header(default=None,
                                                               alias="X-Hardware-Lease"),
-                                   lease_id: str | None = None) -> JSONResponse:
+                                   lease_id: str | None = None,
+                                   channel: str | None = None) -> JSONResponse:
+    selected = _lease_channel(payload, channel)
+    if selected is None:
+        return JSONResponse({"ok": False, "reason": "channel_required"}, status_code=400)
     requested = _request_owner(owner, payload, lease_id)
-    return _lease_response(_hardware_lease.heartbeat(requested))
+    return _lease_response(selected, _hardware_leases[selected].heartbeat(requested))
 
 
 @app.post("/api/hardware/lease/release")
 async def hardware_lease_release(payload: dict | None = None,
                                  owner: str | None = Header(default=None,
                                                             alias="X-Hardware-Lease"),
-                                 lease_id: str | None = None) -> JSONResponse:
+                                 lease_id: str | None = None,
+                                 channel: str | None = None) -> JSONResponse:
+    selected = _lease_channel(payload, channel)
+    if selected is None:
+        return JSONResponse({"ok": False, "reason": "channel_required"}, status_code=400)
     requested = _request_owner(owner, payload, lease_id)
-    return _lease_response(_hardware_lease.release(requested))
+    return _lease_response(selected, _hardware_leases[selected].release(requested))
 
 
 @app.get("/api/hardware/lease/status")
 async def hardware_lease_status(owner: str | None = Header(default=None,
                                                            alias="X-Hardware-Lease"),
-                                lease_id: str | None = None) -> JSONResponse:
-    current = _hardware_lease.owner
-    expires_at = _hardware_lease.expires_at
+                                lease_id: str | None = None,
+                                channel: str | None = None) -> JSONResponse:
+    selected = _lease_channel(query_channel=channel)
+    if selected is None:
+        return JSONResponse({"ok": False, "reason": "channel_required"}, status_code=400)
+    lease = _hardware_leases[selected]
+    current = lease.owner
+    expires_at = lease.expires_at
     requested = _request_owner(owner, query_owner=lease_id)
     return JSONResponse({
         "ok": True,
+        "channel": selected,
         "owner": current,
         "expires_at": expires_at,
-        "ttl_ms": int(_hardware_lease.ttl_s * 1000),
+        "ttl_ms": int(lease.ttl_s * 1000),
         "is_owner": bool(requested and requested == current),
     })
 
 
-async def _hardware_release_impl(*, home: bool = True) -> dict:
+async def _hardware_release_impl(*, home: bool = True,
+                                 release_hand: bool = True,
+                                 release_arm: bool = True) -> dict:
     """Release hardware, optionally moving to the normal safe home poses first."""
     global _hardware_release_lock
     if _hardware_release_lock is None:
         _hardware_release_lock = asyncio.Lock()
     async with _hardware_release_lock:
-        if _hand_target_mailbox is not None:
+        if release_hand and _hand_target_mailbox is not None:
             _hand_target_mailbox.reset()
-        hand_result = {"online": False, "released": True}
-        try:
-            if _hand is not None:
-                alive = bool(_hand.ready and _hand.console and _hand.console.poll() is None)
-                hand_result["online"] = alive
-                await asyncio.get_event_loop().run_in_executor(
-                    _executor, lambda: _hand.stop(home=home)
-                )
-        except Exception as error:  # noqa: BLE001
-            hand_result.update(ok=False, error=str(error), released=False)
-        arm_result = await _stop_arm_session(home=home)
+        hand_result = {"online": False, "released": False, "skipped": not release_hand}
+        if release_hand:
+            hand_result.update(released=True, skipped=False)
+            try:
+                if _hand is not None:
+                    alive = bool(_hand.ready and _hand.console
+                                 and _hand.console.poll() is None)
+                    hand_result["online"] = alive
+                    await asyncio.get_event_loop().run_in_executor(
+                        _executor, lambda: _hand.stop(home=home)
+                    )
+            except Exception as error:  # noqa: BLE001
+                hand_result.update(ok=False, error=str(error), released=False)
+        arm_result = (await _stop_arm_session(home=home) if release_arm else
+                      {"ok": True, "released": False, "skipped": True})
         return {"ok": True, "hand": hand_result, "arm": arm_result}
 
 
 async def _hardware_watchdog() -> None:
     while True:
         await asyncio.sleep(1.0)
-        expired_owner = _hardware_lease.expired()
-        if expired_owner is not None:
-            print(f"[hardware-lease] owner={expired_owner} 超时,保持姿态并释放", flush=True)
-            await _hardware_release_impl(home=False)
+        for channel, lease in _hardware_leases.items():
+            expired_owner = lease.expired()
+            if expired_owner is None:
+                continue
+            print(f"[hardware-lease] channel={channel} owner={expired_owner} "
+                  "超时,保持姿态并释放", flush=True)
+            await _hardware_release_impl(
+                home=False,
+                release_hand=channel == "hand",
+                release_arm=channel == "arm",
+            )
 
 
 @app.on_event("startup")
@@ -2091,7 +2162,9 @@ async def voice_parse(payload: dict) -> JSONResponse:
 
 
 @app.post("/api/voice/invoke")
-async def voice_invoke(payload: dict):
+async def voice_invoke(payload: dict,
+                       lease_id: str | None = Header(default=None,
+                                                      alias="X-Hardware-Lease")):
     """SSE:执行一个已确认的意图,走 console 路。
 
     source 一律**强制** voice,前端说了不算 —— 这样清单里的语音白名单
@@ -2099,12 +2172,32 @@ async def voice_invoke(payload: dict):
     confirmed 由前端点按钮给;need_confirm 的技能缺它会被安全闸拒。
     """
     global _voice_exec
+    kind = str((payload or {}).get("kind") or "skill")
+    # 保持既有安全错误优先级：需要确认的包先由确认闸拒绝，不用租约错误遮住原因。
+    if kind in PACK_KINDS and not bool((payload or {}).get("confirmed")):
+        return _voice_play_pack(payload or {})
+    try:
+        if kind in PACK_KINDS:
+            devices = set(PACK_DEVICES[kind])
+        else:
+            registry = get_registry()
+            devices = set(console_targets(
+                registry.get((payload or {}).get("skill_id")), registry
+            ))
+    except Exception:  # noqa: BLE001 - lease discovery must not mask executor errors
+        devices = set()
+    for channel in ("hand", "arm"):
+        if channel not in devices:
+            continue
+        _, lease_error = _require_lease(channel, lease_id, payload)
+        if lease_error:
+            return lease_error
     # ⚠ **所有包**都走 _voice_play_pack(它内部再按 kind 分流到手势/联合)。
     # 判据用 PACK_KINDS,不逐处写字符串。只认 gesture_pack 的话 combo 包会掉进
     # 下面的技能执行器,而它 skill_id 是 None —— 闸把它当「查不到的技能」拒掉,
     # 报的理由和真实原因(该走包那条路)完全不搭,排查时会往清单里找一个根本
     # 不存在的技能。
-    if str((payload or {}).get("kind") or "skill") in PACK_KINDS:
+    if kind in PACK_KINDS:
         return _voice_play_pack(payload or {})
     env = {
         "skill_id": (payload or {}).get("skill_id"),
@@ -2228,7 +2321,7 @@ async def hand_start(mock: bool = False,
     **默认接真手**(mock=False)。ok 反映的是**串口真的打开了**,不是"进程起来了" ——
     串口打不开时返回 ok=false + 原因,前端据此保持"离线",不能显示成在线。
     """
-    owner, error = _require_lease(lease_id, acquire=True)
+    owner, error = _require_lease("hand", lease_id, acquire=True)
     if error:
         return error
     hand = _get_hand()
@@ -2236,7 +2329,7 @@ async def hand_start(mock: bool = False,
     await asyncio.get_event_loop().run_in_executor(_executor, hand.wait_ready)
     if hand.error:
         hand.stop()                                   # 起不来就收干净,别留半开的会话
-        _release_lease_if_hardware_idle(owner)
+        _release_lease_if_channel_idle("hand", owner)
         return JSONResponse({"ok": False, "msg": hand.error, "mock": mock},
                             status_code=503)
     return JSONResponse({"ok": True, "mock": hand.mock, "port": hand.port})
@@ -2246,7 +2339,7 @@ async def hand_start(mock: bool = False,
 async def hand_stop(lease_id: str | None = Header(default=None,
                                                   alias="X-Hardware-Lease")) -> JSONResponse:
     """断开:console 先复位手到安全张开位,再关串口。"""
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("hand", lease_id)
     if error:
         return error
     if _hand_target_mailbox is not None:
@@ -2282,7 +2375,7 @@ async def hand_command(payload: dict,
                                                       alias="X-Hardware-Lease")) -> JSONResponse:
     """手部控制指令:{cmd:"angles",rad:[6]} | {cmd:"speed",value:500} | {cmd:"home"} 等。
     协议见 hand_console.py 的 handle()。"""
-    _, error = _require_lease(lease_id, payload)
+    _, error = _require_lease("hand", lease_id, payload)
     if error:
         return error
     import time
@@ -2335,7 +2428,7 @@ async def hand_actions() -> JSONResponse:
 async def hand_action_start(slot: int, lease_id: str | None = Header(default=None,
                                                                        alias="X-Hardware-Lease")) -> JSONResponse:
     """开始播放指定动作序列。slot = 列表位置(唯一);index 在文件里有重复,不能用来定位。"""
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("hand", lease_id)
     if error:
         return error
     hand = _get_hand()
@@ -2348,7 +2441,7 @@ async def hand_action_start(slot: int, lease_id: str | None = Header(default=Non
 @app.post("/api/hand/action/pause")
 async def hand_action_pause(lease_id: str | None = Header(default=None,
                                                           alias="X-Hardware-Lease")) -> JSONResponse:
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("hand", lease_id)
     if error:
         return error
     hand = _get_hand()
@@ -2358,7 +2451,7 @@ async def hand_action_pause(lease_id: str | None = Header(default=None,
 @app.post("/api/hand/action/resume")
 async def hand_action_resume(lease_id: str | None = Header(default=None,
                                                            alias="X-Hardware-Lease")) -> JSONResponse:
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("hand", lease_id)
     if error:
         return error
     hand = _get_hand()
@@ -2369,7 +2462,7 @@ async def hand_action_resume(lease_id: str | None = Header(default=None,
 async def hand_action_stop(lease_id: str | None = Header(default=None,
                                                          alias="X-Hardware-Lease")) -> JSONResponse:
     """停止当前动作,并复位手到初始张开位。技能包回放也走这个(同一个播放器)。"""
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("hand", lease_id)
     if error:
         return error
     hand = _get_hand()
@@ -2497,13 +2590,19 @@ async def combo_check(path: str) -> JSONResponse:
 
 
 @app.post("/api/combo/play")
-async def combo_play(payload: dict) -> JSONResponse:
+async def combo_play(payload: dict,
+                     lease_id: str | None = Header(default=None,
+                                                    alias="X-Hardware-Lease")) -> JSONResponse:
     """回放录制包。{"path":"..."}
 
     ⚠ 这个端点**会同时驱动臂和手**。7860 没有认证 —— 同一网段的任何人都能调。
     能力上和已有的 /api/arm/command 同级(那个也让臂动),差别是这里发的是**一串**
     而不是一个点。把 preflight 做足是唯一的防线:未使能 / 急停中 / 未接入一律拒。
     """
+    for channel in ("hand", "arm"):
+        _, lease_error = _require_lease(channel, lease_id, payload)
+        if lease_error:
+            return lease_error
     import combo_pack as cbp
     rel = str((payload or {}).get("path") or "").strip()
     if not rel:
@@ -2563,23 +2662,38 @@ def _combo_ctl(arm_cmd: str, hand_cmd: str) -> JSONResponse:
 
 
 @app.post("/api/combo/play/pause")
-async def combo_play_pause() -> JSONResponse:
+async def combo_play_pause(lease_id: str | None = Header(default=None,
+                                                         alias="X-Hardware-Lease")) -> JSONResponse:
+    for channel in ("hand", "arm"):
+        _, error = _require_lease(channel, lease_id)
+        if error:
+            return error
     return _combo_ctl("combo_pause", "action_pause")
 
 
 @app.post("/api/combo/play/resume")
-async def combo_play_resume() -> JSONResponse:
+async def combo_play_resume(lease_id: str | None = Header(default=None,
+                                                          alias="X-Hardware-Lease")) -> JSONResponse:
+    for channel in ("hand", "arm"):
+        _, error = _require_lease(channel, lease_id)
+        if error:
+            return error
     return _combo_ctl("combo_resume", "action_resume")
 
 
 @app.post("/api/combo/play/stop")
-async def combo_play_stop() -> JSONResponse:
+async def combo_play_stop(lease_id: str | None = Header(default=None,
+                                                        alias="X-Hardware-Lease")) -> JSONResponse:
     """停止回放。臂停在最后收到的目标位,**不回零**(回零路径未知)。
 
     ⚠ 手侧用 action_stop,那个会 set_angles(HOME_RAD) 把手张开 —— 和臂「停在
     原地」不一致。这是有意的:手张开是安全姿态(不夹东西),臂回零反而危险
     (回零路径可能扫过障碍)。
     """
+    for channel in ("hand", "arm"):
+        _, error = _require_lease(channel, lease_id)
+        if error:
+            return error
     return _combo_ctl("combo_stop", "action_stop")
 
 
@@ -2823,6 +2937,7 @@ async def hand_mimic(payload: dict) -> JSONResponse:
 async def ws_hand_mimic(websocket: WebSocket):
     """MediaPipe hand retargeting plus anchored arm/hand combo tracking."""
     await websocket.accept()
+    lease_id = _lease_owner(websocket.query_params.get("lease_id"))
     owner = f"mimic-ws-{id(websocket)}"
     target_filter = OneEuroJointFilter()
     wrist_position_filter = OneEuroVectorFilter(
@@ -2898,6 +3013,7 @@ async def ws_hand_mimic(websocket: WebSocket):
         }
         valid_session = bool(
             session_active
+            and _hardware_leases["arm"].owner == lease_id
             and target.session_generation == session_generation
             and target.anchor_revision == mapper.anchor_revision
             and mapper.state == "following"
@@ -2999,7 +3115,9 @@ async def ws_hand_mimic(websocket: WebSocket):
             frame_id = data.get("frame_id")
             tracking_control = data.get("tracking_control")
             tracking_control_applied = False
-            requested_drive_arm = bool(data.get("drive_arm"))
+            hand_authorized = bool(lease_id and _hardware_leases["hand"].owner == lease_id)
+            arm_authorized = bool(lease_id and _hardware_leases["arm"].owner == lease_id)
+            requested_drive_arm = bool(data.get("drive_arm") and arm_authorized)
             requested_allow_real_arm = bool(data.get("allow_real_arm_tracking"))
             if (
                 requested_drive_arm != current_drive_arm
@@ -3189,7 +3307,12 @@ async def ws_hand_mimic(websocket: WebSocket):
                 hardware = {"queued": False, "reason": "disabled"}
                 drive_hand = bool(data.get("drive_hand", data.get("drive_hardware")))
                 hand_gate = not combo_mode or mapper.state == "following"
-                if drive_hand and hand_gate:
+                if drive_hand and not hand_authorized:
+                    target_filter.reset()
+                    if _hand_target_mailbox is not None:
+                        _hand_target_mailbox.release(owner)
+                    hardware = {"queued": False, "reason": "not_owner"}
+                elif drive_hand and hand_gate:
                     hand = _hand
                     online = bool(
                         hand and hand.ready and hand.console
@@ -3539,7 +3662,7 @@ async def gesture_play(payload: dict,
     让调用方拿 path 再来一次。猜一个的话,同名两个包哪个被执行取决于文件系统
     遍历顺序,那是不可预期的机械动作。
     """
-    _, lease_error = _require_lease(lease_id, payload)
+    _, lease_error = _require_lease("hand", lease_id, payload)
     if lease_error:
         return lease_error
     import gesture_pack as gp
@@ -3622,7 +3745,7 @@ async def arm_start(mock: bool = True, speed: int = 20,
     ⚠ **默认 mock=True**(和手页相反)。臂是 7 自由度工业臂,伤害量级不同,
     要接真机得显式传 mock=false。ok 反映的是 CAN 真的通了且读到关节角。
     """
-    owner, error = _require_lease(lease_id, acquire=True)
+    owner, error = _require_lease("arm", lease_id, acquire=True)
     if error:
         return error
     arm = _get_arm()
@@ -3630,7 +3753,7 @@ async def arm_start(mock: bool = True, speed: int = 20,
     await asyncio.get_event_loop().run_in_executor(_executor, arm.wait_ready)
     if arm.error:
         arm.stop()
-        _release_lease_if_hardware_idle(owner)
+        _release_lease_if_channel_idle("arm", owner)
         return JSONResponse({"ok": False, "msg": arm.error, "mock": mock},
                             status_code=503)
     return JSONResponse({"ok": True, "mock": arm.mock, "channel": arm.channel,
@@ -3701,7 +3824,7 @@ async def arm_stop(home: bool = False,
     原样把臂交回给原来的控制方(常态是松灵客户端)。想回接入位姿走
     {cmd:"goto_connect_pose"},那是显式动作。理由见 ARM_DEBUG.md。
     """
-    _, error = _require_lease(lease_id)
+    _, error = _require_lease("arm", lease_id)
     if error:
         return error
     return JSONResponse(await _stop_arm_session(home=home))
@@ -3716,10 +3839,19 @@ async def hardware_release(payload: dict | None = None,
     回位条件不满足或超时也必须继续断开，避免浏览器退出后长期占用设备通道。
     """
     owner = _request_owner(lease_id, payload)
-    release_result = _hardware_lease.release(owner)
-    if not release_result.ok:
-        return _lease_response(release_result)
-    return JSONResponse(await _hardware_release_impl(home=True))
+    owned: dict[str, bool] = {}
+    for channel, lease in _hardware_leases.items():
+        was_owner = bool(owner and lease.owner == owner)
+        result = lease.release(owner)
+        owned[channel] = bool(was_owner and result.ok)
+    if not any(owned.values()):
+        return JSONResponse({"ok": True, "hand": {"released": False},
+                             "arm": {"released": False}})
+    return JSONResponse(await _hardware_release_impl(
+        home=True,
+        release_hand=owned["hand"],
+        release_arm=owned["arm"],
+    ))
 
 
 @app.get("/api/arm/status")
@@ -3759,7 +3891,7 @@ async def arm_command(payload: dict,
     响应反映不出来 —— 前端若信那个 ok=true 会显示"下发成功"而实际被拒。
     console 侧的检查保留(纵深防御),它才是最终把关的那道。
     """
-    _, error = _require_lease(lease_id, payload)
+    _, error = _require_lease("arm", lease_id, payload)
     if error:
         return error
     arm = _get_arm()
@@ -3784,7 +3916,7 @@ async def arm_camera_pose(payload: dict,
 
     先清空 latest-target 并退出 CPV，确保旧跟随目标不会覆盖本次姿态切换。
     """
-    _, error = _require_lease(lease_id, payload)
+    _, error = _require_lease("arm", lease_id, payload)
     if error:
         return error
     pose = str((payload or {}).get("pose") or "")

@@ -107,6 +107,21 @@ def test_fast_write_does_not_wait_for_reply():
         "reset", "write", "flush"]
 
 
+def test_action_cancel_stops_player_without_writing_hand_target():
+    hand = FakeHand()
+    player = SimpleNamespace(stopped=False)
+
+    def stop():
+        player.stopped = True
+
+    player.stop = stop
+    hc._player = player
+    result = hc.handle(hand, {"cmd": "action_cancel"}, [])
+    assert result == {"type": "ack", "cmd": "action_cancel", "ok": True}
+    assert player.stopped
+    assert hand.normal == [] and hand.fast == []
+
+
 def test_screwdriver_451_frames_finishes_on_source_timeline(monkeypatch):
     """最终 JSON 在 200Hz 无阻塞调度下保持 7.507s 源时轴，不累计 16/17ms。"""
     from gesture_pack import GesturePack, to_action_sequence

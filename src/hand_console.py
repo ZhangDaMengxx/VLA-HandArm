@@ -338,6 +338,11 @@ def handle(hand: InspireHand, cmd: dict, sequences: list[ActionSequence]) -> dic
             return {"type": "ack", "cmd": c, "ok": False, "msg": "没有在播的动作"}
         _player.resume()
         return {"type": "ack", "cmd": c, "ok": True}
+    if c == "action_cancel":
+        if _player is not None:
+            _player.stop()
+            _player = None
+        return {"type": "ack", "cmd": c, "ok": True}
     if c == "action_stop":
         if _player is not None:
             _player.stop()

@@ -384,7 +384,10 @@ export class HandMimicController {
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       let socket;
       try {
-        socket = new WebSocket(`${protocol}//${location.host}/ws/hand/mimic`);
+        const leaseId = encodeURIComponent(window.HARDWARE_LEASE_ID || "");
+        socket = new WebSocket(
+          `${protocol}//${location.host}/ws/hand/mimic?lease_id=${leaseId}`
+        );
       } catch (error) {
         console.warn("[HandMimic] WebSocket 不可用，暂用 HTTP:", error);
         resolve();

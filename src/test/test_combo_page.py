@@ -68,8 +68,8 @@ def test_page_navigation_and_close_release_hardware_channels():
     assert 'window.addEventListener("pagehide"' in _INDEX
     assert 'navigator.sendBeacon?.("/api/hardware/release")' in _INDEX
     assert '@app.post("/api/hardware/release")' in _APP
-    assert "arm_result = await _stop_arm_session(home=home)" in _APP
-    assert "_hardware_release_impl(home=True)" in _APP
+    assert "await _stop_arm_session(home=home)" in _APP
+    assert "home=True," in _APP
 
 
 def test_hardware_lease_is_per_tab_and_heartbeats():
@@ -78,8 +78,19 @@ def test_hardware_lease_is_per_tab_and_heartbeats():
     assert "/api/hardware/lease/acquire" in _INDEX
     assert "/api/hardware/lease/heartbeat" in _INDEX
     assert "X-Hardware-Lease" in _INDEX and "HARDWARE_LEASE_ID" in _INDEX
+    assert 'const _hardwareLeaseHeld = { hand: false, arm: false }' in _INDEX
+    assert 'takeover: true' in _INDEX
+    assert 'ensureHardwareLease("hand")' in _INDEX
+    assert 'ensureHardwareLease("arm")' in _INDEX
+    assert "markHardwareLeaseLost(channel)" in _INDEX
+    assert "接管灵巧手" not in _INDEX and "接管机械臂" not in _INDEX
     assert '@app.post("/api/hardware/lease/acquire")' in _APP
     assert '@app.post("/api/hardware/lease/heartbeat")' in _APP
+    assert '"hand": HardwareLease(ttl_s=8.0)' in _APP
+    assert '"arm": HardwareLease(ttl_s=8.0)' in _APP
+    assert "result.previous_owner" in _APP
+    assert '_hand.command({"cmd": "action_cancel"})' in _APP
+    assert 'if c == "action_cancel":' in _HAND_CONSOLE
     assert "_hardware_watchdog" in _APP
 
 
@@ -88,8 +99,10 @@ def test_watchdog_disconnects_without_commanding_home_pose():
                     _APP.index('@app.on_event("startup")')]
     explicit_release = _APP[_APP.index('@app.post("/api/hardware/release")'):
                             _APP.index('@app.get("/api/arm/status")')]
-    assert "_hardware_release_impl(home=False)" in watchdog
-    assert "_hardware_release_impl(home=True)" in explicit_release
+    assert "home=False," in watchdog
+    assert 'release_hand=channel == "hand"' in watchdog
+    assert 'release_arm=channel == "arm"' in watchdog
+    assert "home=True," in explicit_release
     assert 'json.dumps({"cmd": "quit", "home": home})' in _APP
     assert 'home_on_exit = bool(cmd.get("home", True))' in _HAND_CONSOLE
     assert "if home_on_exit:" in _HAND_CONSOLE

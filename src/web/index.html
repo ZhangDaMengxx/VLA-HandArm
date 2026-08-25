@@ -1755,49 +1755,82 @@ const $ = id => document.getElementById(id);
 const HARDWARE_LEASE_ID = sessionStorage.getItem("hardwareLeaseId") ||
   (crypto.randomUUID ? crypto.randomUUID() : `lease-${Date.now()}-${Math.random()}`);
 sessionStorage.setItem("hardwareLeaseId", HARDWARE_LEASE_ID);
-let _hardwareLeaseHeld = false;
+window.HARDWARE_LEASE_ID = HARDWARE_LEASE_ID;
+const _hardwareLeaseHeld = { hand: false, arm: false };
 let _hardwareLeaseTimer = null;
-async function ensureHardwareLease() {
-  if (_hardwareLeaseHeld) return true;
+function markHardwareLeaseLost(channel) {
+  _hardwareLeaseHeld[channel] = false;
+  if (channel === "hand") {
+    _handActive = false;
+    _cbHandOn = false;
+    if (_handWs) { try { _handWs.close(); } catch (_) {} _handWs = null; }
+    if (_cbHandWs) { try { _cbHandWs.close(); } catch (_) {} _cbHandWs = null; }
+    if ($("handToggle")) { $("handToggle").textContent = "接入灵巧手"; $("handToggle").classList.remove("active"); }
+    if ($("handStatus")) $("handStatus").innerHTML = '<span class="dot"></span>离线';
+    if ($("cbHandToggle")) { $("cbHandToggle").textContent = "接入"; $("cbHandToggle").classList.remove("active"); }
+    if ($("cbHandStatus")) cbDot("cbHandStatus", "", "离线");
+  } else {
+    _armActive = false;
+    _cbArmOn = false;
+    if (_armWs) { try { _armWs.close(); } catch (_) {} _armWs = null; }
+    if (_cbArmWs) { try { _cbArmWs.close(); } catch (_) {} _cbArmWs = null; }
+    if ($("armToggle")) { $("armToggle").textContent = "接入机械臂"; $("armToggle").classList.remove("active"); }
+    if ($("armStatus")) $("armStatus").innerHTML = '<span class="dot"></span>离线';
+    if ($("cbArmToggle")) { $("cbArmToggle").textContent = "接入"; $("cbArmToggle").classList.remove("active"); }
+    if ($("cbArmStatus")) cbDot("cbArmStatus", "", "离线");
+  }
+  if (_comboCamera?.active) void _comboCamera.stop({ returnDevices: false });
+  if (!_hardwareLeaseHeld.hand && !_hardwareLeaseHeld.arm && _hardwareLeaseTimer) {
+    clearInterval(_hardwareLeaseTimer);
+    _hardwareLeaseTimer = null;
+  }
+}
+function startHardwareLeaseHeartbeat() {
+  if (_hardwareLeaseTimer) return;
+  _hardwareLeaseTimer = setInterval(async () => {
+    for (const channel of ["hand", "arm"]) {
+      if (!_hardwareLeaseHeld[channel]) continue;
+      try {
+        const hb = await _nativeFetch("/api/hardware/lease/heartbeat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ owner: HARDWARE_LEASE_ID, channel })
+        });
+        if (!hb.ok) markHardwareLeaseLost(channel);
+      } catch (_) { /* watchdog handles a vanished browser/network */ }
+    }
+  }, 2000);
+}
+async function ensureHardwareLease(channel) {
+  if (_hardwareLeaseHeld[channel]) return true;
   try {
-    const r = await fetch("/api/hardware/lease/acquire", {
+    const r = await _nativeFetch("/api/hardware/lease/acquire", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
+      body: JSON.stringify({ owner: HARDWARE_LEASE_ID, channel, takeover: true })
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) {
-      showHint('<span style="font-size:12px;color:var(--danger)">硬件已被另一个标签页占用</span>', true);
+      showHint('<span style="font-size:12px;color:var(--danger)">硬件接入失败</span>', true);
       return false;
     }
-    _hardwareLeaseHeld = true;
-    if (!_hardwareLeaseTimer) {
-      _hardwareLeaseTimer = setInterval(async () => {
-        if (!_hardwareLeaseHeld) return;
-        try {
-          const hb = await fetch("/api/hardware/lease/heartbeat", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
-          });
-          if (!hb.ok) _hardwareLeaseHeld = false;
-        } catch (_) { /* watchdog handles a vanished browser/network */ }
-      }, 2000);
-    }
+    _hardwareLeaseHeld[channel] = true;
+    startHardwareLeaseHeartbeat();
     return true;
   } catch (_) {
     showHint('<span style="font-size:12px;color:var(--danger)">无法取得硬件会话租约</span>', true);
     return false;
   }
 }
-async function releaseHardwareLeaseIfIdle() {
-  if (_handActive || _cbHandOn || _armActive || _cbArmOn || !_hardwareLeaseHeld) return;
+async function releaseHardwareLeaseIfIdle(channel) {
+  const active = channel === "hand" ? (_handActive || _cbHandOn) : (_armActive || _cbArmOn);
+  if (active || !_hardwareLeaseHeld[channel]) return;
   try {
     await _nativeFetch("/api/hardware/lease/release", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
+      body: JSON.stringify({ owner: HARDWARE_LEASE_ID, channel })
     });
   } catch (_) {}
-  _hardwareLeaseHeld = false;
-  if (_hardwareLeaseTimer) {
+  _hardwareLeaseHeld[channel] = false;
+  if (!_hardwareLeaseHeld.hand && !_hardwareLeaseHeld.arm && _hardwareLeaseTimer) {
     clearInterval(_hardwareLeaseTimer);
     _hardwareLeaseTimer = null;
   }
@@ -1805,7 +1838,9 @@ async function releaseHardwareLeaseIfIdle() {
 const _nativeFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
   const url = typeof input === "string" ? input : input?.url || "";
-  if (/^\/api\/(hand|arm)\//.test(url) || url === "/api/hardware/release") {
+  if (/^\/api\/(hand|arm)\//.test(url) || /^\/api\/combo\/play(?:\/|$)/.test(url)
+      || url === "/api/voice/invoke"
+      || url === "/api/hardware/release") {
     const headers = new Headers(init.headers || (typeof input !== "string" ? input.headers : undefined));
     headers.set("X-Hardware-Lease", HARDWARE_LEASE_ID);
     init = { ...init, headers };
@@ -2426,7 +2461,7 @@ let _handActions = [], _playingAction = null;
 let _handMock = false, _hand3d = true;      // 默认真手 + 开 3D
 
 async function startHandDebug() {
-  if (!await ensureHardwareLease()) return;
+  if (!await ensureHardwareLease("hand")) return;
   $("center").classList.add("has-data");
   $("handStatus").innerHTML = '<span class="dot busy"></span>打开串口…';
   // 3D 进页面就已经加载了,这里别再整块盖住 —— 底部飘一行就够
@@ -2478,7 +2513,7 @@ async function stopHandDebug() {
   _telFast.hand = null;
   _telLast.hand = {tel: null, rad: null, raw: null};
   _handActRad = null;                     // 断开后『读回实际』没数据源了
-  await releaseHardwareLeaseIfIdle();
+  await releaseHardwareLeaseIfIdle("hand");
   if (S.mode === "hand" && _hv) {         // 3D 留着,退回离线预览
     showHint('<span style="font-size:12px;opacity:.7">'
            + '离线预览 · 点右侧『接入灵巧手』打开串口</span>', true);
@@ -4033,7 +4068,7 @@ function connectArmWS() {
 }
 
 async function startArmDebug() {
-  if (!await ensureHardwareLease()) return;
+  if (!await ensureHardwareLease("arm")) return;
   $("center").classList.add("has-data");
   $("armStatus").innerHTML = '<span class="dot busy"></span>打开 CAN…';
   showHint('<span style="font-size:12px;opacity:.7">正在打开 CAN…</span>', true);
@@ -4117,7 +4152,7 @@ async function stopArmDebug(opts) {
   _armActRad = null;
   _armConnectPose = null;
   _armDrift = null;
-  await releaseHardwareLeaseIfIdle();
+  await releaseHardwareLeaseIfIdle("arm");
   const dr = $("armDriftRow");
   if (dr) { dr.textContent = "与接入位姿偏差:—"; dr.style.color = "var(--text-3)"; }
   applyArmFlags(false, false);
@@ -5260,7 +5295,7 @@ function cbDot(id, cls, text) {
 }
 async function cbStartArm() {
   if (_cbArmOn) return true;
-  if (!await ensureHardwareLease()) return false;
+  if (!await ensureHardwareLease("arm")) return false;
   cbDot("cbArmStatus", "busy", "打开 CAN…");
   try {
     const spd = +$("cbArmSpeed").value || 50;
@@ -5304,7 +5339,7 @@ async function cbStartArm() {
 }
 async function cbStartHand() {
   if (_cbHandOn) return true;
-  if (!await ensureHardwareLease()) return false;
+  if (!await ensureHardwareLease("hand")) return false;
   cbDot("cbHandStatus", "busy", "打开串口…");
   try {
     const r = await fetch(`/api/hand/start?mock=${$("cbHandMock").checked}`,
@@ -5372,7 +5407,7 @@ async function cbStopArm(opts) {
   _cbArmAct = null; _cbArmLast = null; _cbConnectPose = null; _cbDrift = null;
   const dr = $("cbDriftRow");
   if (dr) { dr.textContent = "与接入位姿偏差:—"; dr.style.color = "var(--text-3)"; }
-  await releaseHardwareLeaseIfIdle();
+  await releaseHardwareLeaseIfIdle("arm");
   cbRefreshFlags();
   cbUpdateBoth();
 }
@@ -5397,7 +5432,7 @@ async function cbStopHand() {
   _telFast.cbHand = null;
   _telLast.cbHand = {tel: null, rad: null, raw: null};
   _cbHandAct = null;
-  await releaseHardwareLeaseIfIdle();
+  await releaseHardwareLeaseIfIdle("hand");
   cbRefreshFlags();
   cbUpdateBoth();
 }

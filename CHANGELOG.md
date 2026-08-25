@@ -14,8 +14,8 @@
   每 2 秒 heartbeat，默认租约 8 秒
 - 新增 `/api/hardware/lease/acquire`、`heartbeat`、`status` 和 `release`；手/臂直接硬件
   start、stop、command、手势动作回放、臂相机姿态和统一释放均校验 `X-Hardware-Lease`
-- 新增手/臂直接控制的多标签页所有权：有效 owner 存在时拒绝其他标签页控制；同 owner
-  可续租，释放与 watchdog 清理保持幂等
+- 新增 hand/arm 独立的多标签页所有权：新标签页点击原“接入”按钮会替换对应 owner，
+  保持位置断开旧通道后建立新连接；另一硬件通道不受影响，页面不增加接管文案
 - 新增租约获取、续期、争抢、过期、重复/并发释放及页面 owner/heartbeat 静态回归
 
 ### Changed (变更)
@@ -29,6 +29,8 @@
   发送新的手复位或臂回零目标，只保持最后目标并释放串口/CAN
 - 机械臂超时退出只调用 `arm.disconnect()` 关闭当前 SDK/CAN 会话，不调用 `disable()`，
   不改变真机原有使能状态
+- heartbeat、联合回放、语音执行和实时跟随按目标通道校验 owner；旧标签页失去 owner 后
+  停止投递，下一次 heartbeat 自动切换为离线状态
 
 ### Fixed (修复)
 
@@ -37,6 +39,8 @@
 - 修正 Web 机械臂会话中“退出会去使能”的遗留注释；增加回归约束，禁止退出 `finally`
   路径调用 `arm.disable()`
 - 浏览器正常停止最后一个硬件通道后立即释放页面租约，避免其他标签页额外等待 8 秒
+- 修复到期后的迟到 heartbeat 先清空 owner、导致 watchdog 无法消费过期会话的竞态；现在
+  只有 watchdog 或显式 owner 替换能消费过期租约
 
 ### Safety (安全)
 
@@ -44,8 +48,8 @@
   夹持目标，机械臂保持原使能状态，因此 watchdog 仍不是急停替代品
 - 本次只执行 Mock、静态和单元测试，未连接真机、未发送真实运动命令；断网、进程强杀和
   双真机超时释放仍需在低速、净空和急停可用条件下现场验证
-- `/api/combo/play` 与 `/api/voice/invoke` 仍通过已接入的全局硬件会话执行，尚未独立校验
-  页面 lease header；在这两个入口补齐 owner 透传前，多标签页所有权不能视为全入口闭环
+- owner 替换只在 Mock/单元测试验证，尚未用两个真实浏览器标签页连接真手或真臂；现场
+  验证前仍需保持低速、净空和急停可用
 
 ### Verification (验证)
 

@@ -12,6 +12,7 @@ class LeaseResult:
     reason: str | None = None
     owner: str | None = None
     expires_at: float | None = None
+    previous_owner: str | None = None
 
 
 class HardwareLease:
@@ -34,31 +35,38 @@ class HardwareLease:
     @property
     def owner(self) -> str | None:
         with self._lock:
-            self._clear_if_expired_locked()
             return self._owner
 
     @property
     def expires_at(self) -> float | None:
         with self._lock:
-            self._clear_if_expired_locked()
             return self._expires_at
 
-    def acquire(self, owner: str) -> LeaseResult:
+    def acquire(self, owner: str, *, takeover: bool = False) -> LeaseResult:
         owner = str(owner or "").strip()
         if not owner:
             return LeaseResult(False, "owner_required")
         with self._lock:
-            self._clear_if_expired_locked()
-            if self._owner not in (None, owner):
+            expired = self._is_expired_locked()
+            if expired and not takeover:
+                return LeaseResult(False, "lease_expired", self._owner,
+                                   self._expires_at)
+            if self._owner not in (None, owner) and not takeover:
                 return LeaseResult(False, "owner_busy", self._owner, self._expires_at)
+            previous_owner = self._owner if takeover and (
+                expired or self._owner not in (None, owner)
+            ) else None
             self._owner = owner
             self._expires_at = self._clock() + self.ttl_s
-            return LeaseResult(True, owner=owner, expires_at=self._expires_at)
+            return LeaseResult(True, owner=owner, expires_at=self._expires_at,
+                               previous_owner=previous_owner)
 
     def heartbeat(self, owner: str) -> LeaseResult:
         owner = str(owner or "").strip()
         with self._lock:
-            self._clear_if_expired_locked()
+            if self._is_expired_locked():
+                return LeaseResult(False, "lease_expired", self._owner,
+                                   self._expires_at)
             if not owner or owner != self._owner:
                 return LeaseResult(False, "not_owner", self._owner, self._expires_at)
             self._expires_at = self._clock() + self.ttl_s
@@ -67,7 +75,6 @@ class HardwareLease:
     def release(self, owner: str | None) -> LeaseResult:
         owner = str(owner or "").strip()
         with self._lock:
-            self._clear_if_expired_locked()
             if self._owner is None:
                 return LeaseResult(True, owner=owner or None)
             if owner != self._owner:
@@ -88,8 +95,6 @@ class HardwareLease:
             self._expires_at = None
             return owner
 
-    def _clear_if_expired_locked(self) -> None:
-        if (self._owner is not None and self._expires_at is not None
-                and self._clock() >= self._expires_at):
-            self._owner = None
-            self._expires_at = None
+    def _is_expired_locked(self) -> bool:
+        return bool(self._owner is not None and self._expires_at is not None
+                    and self._clock() >= self._expires_at)
