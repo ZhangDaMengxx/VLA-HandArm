@@ -47,6 +47,30 @@ def test_video_tracking_has_one_combo_entrypoint():
     assert 'data-mode="local_right"' not in _INDEX
 
 
+def test_top_navigation_has_no_dead_task_selector():
+    assert 'id="taskDrop"' not in _INDEX
+    assert "任务 · 抓取" not in _INDEX
+
+
+def test_settings_menu_persists_and_applies_interface_language():
+    assert 'id="settingsButton"' in _INDEX
+    assert 'id="settingsMenu"' in _INDEX
+    assert 'id="languageSelect"' in _INDEX
+    assert '<option value="zh-CN">简体中文</option>' in _INDEX
+    assert '<option value="en-US">English</option>' in _INDEX
+    assert 'const UI_LOCALE_KEY = "neroUiLocale"' in _INDEX
+    assert "function applyUiLocale(locale, persist=true)" in _INDEX
+    assert "localStorage.setItem(UI_LOCALE_KEY, uiLocale)" in _INDEX
+    assert 'document.documentElement.lang = uiLocale' in _INDEX
+    assert "const UI_TEXT_EN = {" in _INDEX
+    assert '"灵巧手遥测": "Hand telemetry"' in _INDEX
+    assert '"机械臂遥测": "Arm telemetry"' in _INDEX
+    assert '"合体接入": "Combo connection"' in _INDEX
+    assert "function translateDocumentUi()" in _INDEX
+    assert "new MutationObserver(records =>" in _INDEX
+    assert "translateUiElement(node)" in _INDEX
+
+
 def test_acceptance_card_distinguishes_truth_and_proxy_metrics():
     assert "m.measurement_class" in _INDEX
     assert "m.ground_truth_available" in _INDEX

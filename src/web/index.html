@@ -201,6 +201,18 @@ body {
   background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 15px;
   display: flex; align-items: center; justify-content: center; transition: all .18s ease; }
 .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.settings-wrap { position: relative; }
+.settings-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 240px;
+  padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0,0,0,.18); display: none; }
+.settings-menu.open { display: block; }
+.settings-head { margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--text); }
+.settings-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px;
+  color: var(--text-2); }
+.settings-select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.settings-select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.settings-note { margin-top: 9px; font-size: 10px; line-height: 1.5; color: var(--text-3); }
 
 /* ===== 中央文案(空闲态,加载后淡出上移)===== */
 .center { position: fixed; top: 50%; left: calc(50% - 122px); transform: translate(-50%,-60%);
@@ -575,8 +587,9 @@ body {
 }
 @media (max-width: 600px) {
   .top-nav { padding: 0 10px; justify-content: center; }
-  .brand, .nav-right { display: none; }
-  .seg-nav { width: 100%; justify-content: space-between; overflow-x: auto;
+  .brand, #robotDropWrap, .serve-dot { display: none; }
+  .nav-right { position: absolute; right: 10px; display: flex; }
+  .seg-nav { width: calc(100% - 44px); margin-right: 44px; justify-content: space-between; overflow-x: auto;
     border-radius: 8px; }
   .seg-btn { flex: 0 0 auto; padding: 6px 10px; font-size: 11px; }
 }
@@ -588,9 +601,9 @@ body {
 <div class="stage">
   <div class="screen" id="screen">
     <div class="viewport-tools" id="vtools">
-      <div class="vtool" id="vFull" title="全屏">⤢</div>
-      <div class="vtool" id="vReconnect" title="重连">↺</div>
-      <div class="vtool" id="vCopy" title="复制当前连接 URL">⧉</div>
+      <div class="vtool" id="vFull" title="全屏" data-i18n-title="fullscreen">⤢</div>
+      <div class="vtool" id="vReconnect" title="重连" data-i18n-title="reconnect">↺</div>
+      <div class="vtool" id="vCopy" title="复制当前连接 URL" data-i18n-title="copyUrl">⧉</div>
     </div>
     <!-- 灵巧手 3D:three.js 直接渲染,不走 Rerun 的 WASM 查看器(那个在 iframe 里很卡)。
          只在灵巧手调试页显示;canvas 由 hand3d.js 插进来。 -->
@@ -618,58 +631,72 @@ body {
     <div class="brand-mark">◈</div>
     <div>
       <div class="brand-name">NERO · Inspire</div>
-      <div class="brand-sub">回放工作台</div>
+      <div class="brand-sub" data-i18n="workbench">回放工作台</div>
     </div>
   </a>
   <div class="seg-nav">
-    <button class="seg-btn active" data-view="replay">回放 Replay</button>
-    <button class="seg-btn" data-view="live" title="臂 + 手 合体控制(走 console 路,不走 ROS bridge)">实时 Live · 合体</button>
-    <button class="seg-btn" data-view="hand">灵巧手调试</button>
-    <button class="seg-btn" data-view="arm">机械臂调试</button>
+    <button class="seg-btn active" data-view="replay" data-i18n="replayTab">回放 Replay</button>
+    <button class="seg-btn" data-view="live" data-i18n="liveTab" data-i18n-title="liveTitle"
+      title="臂 + 手 合体控制(走 console 路,不走 ROS bridge)">实时 Live · 合体</button>
+    <button class="seg-btn" data-view="hand" data-i18n="handDebug">灵巧手调试</button>
+    <button class="seg-btn" data-view="arm" data-i18n="armDebug">机械臂调试</button>
   </div>
   <div class="nav-right">
     <div class="drop" id="robotDropWrap">
-      <button class="drop-btn" id="robotDrop">本体 · NERO+inspire ▾</button>
+      <button class="drop-btn" id="robotDrop" data-i18n="inspireDrop">本体 · NERO+inspire ▾</button>
       <div class="drop-menu" id="robotMenu">
-        <button class="drop-opt sel" data-hand="inspire">NERO + inspire 灵巧手<small>7-DoF 臂 + 6 驱动手 · state(13)</small></button>
-        <button class="drop-opt" data-hand="gripper">NERO + 平行夹爪<small>7-DoF 臂 + 1 夹爪开合 · state(8)</small></button>
+        <button class="drop-opt sel" data-hand="inspire"><span data-i18n="inspireName">NERO + inspire 灵巧手</span><small data-i18n="inspireMeta">7-DoF 臂 + 6 驱动手 · state(13)</small></button>
+        <button class="drop-opt" data-hand="gripper"><span data-i18n="gripperName">NERO + 平行夹爪</span><small data-i18n="gripperMeta">7-DoF 臂 + 1 夹爪开合 · state(8)</small></button>
       </div>
     </div>
-    <div class="drop"><button class="drop-btn" id="taskDrop">任务 · 抓取 ▾</button></div>
-    <div class="serve-dot"><span class="dot" id="serveDot"></span><span id="serveText">离线</span></div>
-    <button class="icon-btn" title="设置">⚙</button>
+    <div class="serve-dot"><span class="dot" id="serveDot"></span><span id="serveText" data-i18n="offline" data-state="offline">离线</span></div>
+    <div class="settings-wrap" id="settingsWrap">
+      <button class="icon-btn" id="settingsButton" title="设置" aria-label="设置"
+        aria-expanded="false" aria-controls="settingsMenu">⚙</button>
+      <div class="settings-menu" id="settingsMenu" role="dialog" aria-label="设置">
+        <div class="settings-head" data-i18n="settings">设置</div>
+        <label class="settings-field" for="languageSelect">
+          <span data-i18n="interfaceLanguage">界面语言</span>
+          <select class="settings-select" id="languageSelect">
+            <option value="zh-CN">简体中文</option>
+            <option value="en-US">English</option>
+          </select>
+        </label>
+        <div class="settings-note" data-i18n="languageNote">选择会保存在当前浏览器中。</div>
+      </div>
+    </div>
   </div>
 </nav>
 
 <!-- 中央文案(空闲态) -->
 <div class="center" id="center">
-  <h1 class="title">手势,<em>映射</em></h1>
-  <p class="subtitle">上传</p>
-  <div class="pill"><span class="dot" id="centerDot"></span><span id="centerStatus">等待视频输入…</span></div>
+  <h1 class="title"><span data-i18n="gesture">手势,</span><em data-i18n="mapping">映射</em></h1>
+  <p class="subtitle" data-i18n="upload">上传</p>
+  <div class="pill"><span class="dot" id="centerDot"></span><span id="centerStatus" data-i18n="waitingVideo">等待视频输入…</span></div>
 </div>
 
 <!-- 左侧快捷控制栏 -->
 <div class="left-panel">
-  <button class="ctrl primary" id="btnUpload">↑<span class="tip">上传视频</span></button>
-  <button class="ctrl" id="btnUploadHand">⎇<span class="tip">上传手部结果</span></button>
-  <button class="ctrl" id="btnRgbd">▦<span class="tip">RGB-D 源 · 手动设目录</span></button>
-  <button class="ctrl" id="btnReplay">↺<span class="tip">重新生成</span></button>
-  <button class="ctrl" id="btnFull2">⤢<span class="tip">视口全屏</span></button>
+  <button class="ctrl primary" id="btnUpload">↑<span class="tip" data-i18n="uploadVideo">上传视频</span></button>
+  <button class="ctrl" id="btnUploadHand">⎇<span class="tip" data-i18n="uploadHandResult">上传手部结果</span></button>
+  <button class="ctrl" id="btnRgbd">▦<span class="tip" data-i18n="rgbdSource">RGB-D 源 · 手动设目录</span></button>
+  <button class="ctrl" id="btnReplay">↺<span class="tip" data-i18n="regenerate">重新生成</span></button>
+  <button class="ctrl" id="btnFull2">⤢<span class="tip" data-i18n="viewportFullscreen">视口全屏</span></button>
 </div>
 
 <!-- 右侧遥测面板 -->
 <aside class="right-panel" id="rightPanel">
   <div class="card">
     <div class="card-head"><span>本体 RobotSpec</span><span class="live"></span></div>
-    <div class="spec-name">NERO + inspire</div>
-    <div class="spec-meta">7-DoF 臂 + inspire 灵巧手</div>
-    <span class="spec-badge">state(13) = 7 臂 + 6 手</span>
+    <div class="spec-name" data-i18n="inspireName">NERO + inspire</div>
+    <div class="spec-meta" data-i18n="inspireSpecMeta">7-DoF 臂 + inspire 灵巧手</div>
+    <span class="spec-badge" data-i18n="inspireBadge">state(13) = 7 臂 + 6 手</span>
   </div>
   <div class="card">
     <div class="card-head"><span>数据有效性 · 验收</span><span id="mxSummary" class="mx-sum">—</span></div>
     <div class="jgroup" id="mxCanonicalTitle">采集 / 规范层</div>
     <div id="mxCanonical"><div class="mx-empty">未测 · 跑一次管线生成</div></div>
-    <div class="jgroup" style="margin-top:12px" id="mxEmbTitle">本体专属</div>
+    <div class="jgroup" style="margin-top:12px" id="mxEmbTitle" data-i18n="inspireMetrics">本体专属 · 灵巧手</div>
     <div id="mxEmbodiment"></div>
   </div>
   <div class="card">
@@ -1726,10 +1753,10 @@ body {
 <div class="upload-zone" id="uploadZone">
   <div class="upload-card">
     <div class="upload-ic">↗</div>
-    <div class="upload-title" id="uploadTitle">拖入视频或手部结果</div>
-    <div class="upload-sub" id="uploadSub">MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON</div>
-    <button class="upload-btn" id="selectFileBtn">选择文件</button>
-    <div class="upload-hint" id="uploadHint">手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭</div>
+    <div class="upload-title" id="uploadTitle" data-i18n="uploadAnyTitle">拖入视频或手部结果</div>
+    <div class="upload-sub" id="uploadSub" data-i18n="uploadAnySub">MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON</div>
+    <button class="upload-btn" id="selectFileBtn" data-i18n="chooseFile">选择文件</button>
+    <div class="upload-hint" id="uploadHint" data-i18n="uploadAnyHint">手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭</div>
   </div>
 </div>
 <input type="file" id="fileInput" accept="video/mp4,video/*,.npz,.pkl,.pickle,.json">
@@ -1784,6 +1811,386 @@ const S = { video:null, name:null, source:"video", uploadMode:"any",
             dataset:"rgb", hand:"inspire", running:false, hasData:false,
             mode:"replay", ws:null, live:false };
 const $ = id => document.getElementById(id);
+
+// 全局壳层国际化。设备日志和底层错误保留后端原文，避免翻译掩盖诊断信息。
+const UI_LOCALE_KEY = "neroUiLocale";
+const UI_MESSAGES = {
+  "zh-CN": {
+    documentTitle: "NERO · Inspire — 回放工作台",
+    workbench: "回放工作台", replayTab: "回放 Replay", liveTab: "实时 Live · 合体",
+    handDebug: "灵巧手调试", armDebug: "机械臂调试",
+    liveTitle: "臂 + 手 合体控制(走 console 路,不走 ROS bridge)",
+    fullscreen: "全屏", reconnect: "重连", copyUrl: "复制当前连接 URL",
+    settings: "设置", interfaceLanguage: "界面语言", languageNote: "选择会保存在当前浏览器中。",
+    gesture: "手势,", mapping: "映射", upload: "上传", waitingVideo: "等待视频输入…",
+    uploadVideo: "上传视频", uploadHandResult: "上传手部结果",
+    rgbdSource: "RGB-D 源 · 手动设目录", regenerate: "重新生成", viewportFullscreen: "视口全屏",
+    chooseFile: "选择文件", online: "在线", busy: "处理中", offline: "离线",
+    inspireDrop: "本体 · NERO+inspire ▾", inspireName: "NERO + inspire 灵巧手",
+    inspireMeta: "7-DoF 臂 + 6 驱动手 · state(13)", inspireSpecMeta: "7-DoF 臂 + inspire 灵巧手",
+    inspireBadge: "state(13) = 7 臂 + 6 手", inspireMetrics: "本体专属 · 灵巧手",
+    gripperDrop: "本体 · NERO+夹爪 ▾", gripperName: "NERO + 平行夹爪",
+    gripperMeta: "7-DoF 臂 + 1 夹爪开合 · state(8)", gripperSpecMeta: "7-DoF 臂 + 二指平行夹爪",
+    gripperBadge: "state(8) = 7 臂 + 1 夹爪开合", gripperMetrics: "本体专属 · 夹爪",
+    uploadHandTitle: "拖入手部处理结果", uploadHandSub: "支持 NPZ / PKL / JSON,可来自 MediaPipe 或 WiLoR",
+    uploadHandHint: "最低字段: hand_keypoints(N,21,3) + wrist_pose(N,7)",
+    uploadVideoTitle: "拖入你的视频", uploadVideoSub: "MP4 格式,第一视角人手操作",
+    uploadVideoHint: "上传后会在本机运行手部估计和重定向",
+    uploadAnyTitle: "拖入视频或手部结果",
+    uploadAnySub: "MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON",
+    uploadAnyHint: "手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭",
+    handReady: "外部手部结果已就绪 · 点『生成』", videoReady: "视频已就绪 · 点『生成』",
+    rgbdReady: "RGB-D 源 · 设好目录点『生成』",
+  },
+  "en-US": {
+    documentTitle: "NERO · Inspire — Replay Workbench",
+    workbench: "Replay Workbench", replayTab: "Replay", liveTab: "Live · Combo",
+    handDebug: "Hand Debug", armDebug: "Arm Debug",
+    liveTitle: "Combined arm and hand control via the console path (without ROS bridge)",
+    fullscreen: "Fullscreen", reconnect: "Reconnect", copyUrl: "Copy current connection URL",
+    settings: "Settings", interfaceLanguage: "Interface language", languageNote: "Saved in this browser.",
+    gesture: "Gesture, ", mapping: "Mapped", upload: "Upload", waitingVideo: "Waiting for video input…",
+    uploadVideo: "Upload video", uploadHandResult: "Upload hand result",
+    rgbdSource: "RGB-D source · Choose directory", regenerate: "Regenerate", viewportFullscreen: "Fullscreen viewport",
+    chooseFile: "Choose file", online: "Online", busy: "Processing", offline: "Offline",
+    inspireDrop: "Robot · NERO+inspire ▾", inspireName: "NERO + inspire hand",
+    inspireMeta: "7-DoF arm + 6-actuator hand · state(13)", inspireSpecMeta: "7-DoF arm + inspire hand",
+    inspireBadge: "state(13) = 7 arm + 6 hand", inspireMetrics: "Robot-specific · Hand",
+    gripperDrop: "Robot · NERO+gripper ▾", gripperName: "NERO + parallel gripper",
+    gripperMeta: "7-DoF arm + 1 gripper axis · state(8)", gripperSpecMeta: "7-DoF arm + two-finger gripper",
+    gripperBadge: "state(8) = 7 arm + 1 gripper", gripperMetrics: "Robot-specific · Gripper",
+    uploadHandTitle: "Drop a processed hand result", uploadHandSub: "NPZ / PKL / JSON from MediaPipe or WiLoR",
+    uploadHandHint: "Required: hand_keypoints(N,21,3) + wrist_pose(N,7)",
+    uploadVideoTitle: "Drop your video", uploadVideoSub: "MP4 first-person hand-operation video",
+    uploadVideoHint: "Hand estimation and retargeting will run locally after upload",
+    uploadAnyTitle: "Drop a video or hand result",
+    uploadAnySub: "MP4 video, or NPZ/PKL/JSON exported by MediaPipe/WiLoR",
+    uploadAnyHint: "Hand results require hand_keypoints and wrist_pose · Esc to close",
+    handReady: "Hand result ready · Select Generate", videoReady: "Video ready · Select Generate",
+    rgbdReady: "RGB-D source · Set the directory, then select Generate",
+  },
+};
+
+// 调试面板的静态文案由多个历史模块直接写在 DOM 中。这里按完整文本翻译，
+// MutationObserver 还会处理切页后才生成的关节行、动作行和状态标签。
+const UI_TEXT_EN = {
+  "本体 RobotSpec": "Robot specification",
+  "数据有效性 · 验收": "Data validity · Acceptance",
+  "采集 / 规范层": "Capture / canonical layer",
+  "本体专属": "Robot-specific",
+  "本体层": "Robot layer",
+  "规范层": "Canonical layer",
+  "↓ 派生": "↓ Derive",
+  "规范层(256×256,对齐)": "Canonical layer (256×256, aligned)",
+  "规范层本体无关、可共享;换本体只重派生本体层,规范层不动。": "The canonical layer is robot-independent and reusable. Changing the robot only regenerates the robot layer.",
+  "数据有效性 · 验收": "Data validity · Acceptance",
+  "state(13) 读数": "state(13) readings",
+  "臂 state[0:7] · rad": "Arm state[0:7] · rad",
+  "手 state[7:13] · 驱动": "Hand state[7:13] · actuators",
+  "管线 Pipeline": "Pipeline",
+  "稳定化参数": "Stabilization parameters",
+  "手腕朝向稳定化:抑制出平面漂移、保面内真手势。 RGB 走 legacy 相对(可达);RGB-D 走 anchored 几何正确装配。": "Wrist orientation stabilization suppresses out-of-plane drift while preserving in-plane gestures. RGB uses reachable legacy-relative motion; RGB-D uses anchored geometry.",
+  "灵巧手调试功能": "Hand debugging tools",
+  "合体调试功能": "Combo debugging tools",
+  "接入": "Connect", "关节": "Joints", "速度力控": "Speed / force",
+  "预设": "Presets", "录制": "Record", "视频": "Video", "技能包": "Skill packs",
+  "语音": "Voice", "视频跟随": "Video tracking", "遥测": "Telemetry",
+  "灵巧手 · 6 轴 · rad · ANGLE_ACT": "Dexterous hand · 6 axes · rad · ANGLE_ACT",
+  "机械臂 · 7 轴 · rad · CAN 回读": "Robot arm · 7 axes · rad · CAN feedback",
+  "NERO 7 轴臂": "NERO 7-axis arm", "rad · CAN 回读": "rad · CAN feedback",
+  "灵巧手遥测": "Hand telemetry", "机械臂遥测": "Arm telemetry",
+  "逐指读数": "Per-finger readings", "关节实际位置": "Actual joint positions",
+  "目标角度设定": "Target angle settings", "实际关节角": "Actual joint angles",
+  "滑块设定值": "Slider targets", "设定值": "Target", "实际反馈": "Actual feedback",
+  "实际停在哪": "actual resting pose", "实际角度": "Actual angle", "角度": "Angle",
+  "速度 / 力控": "Speed / force", "速度": "Speed", "力": "Force",
+  "速度 0-1000": "Speed 0-1000", "力控 0-1000": "Force 0-1000",
+  "速度百分比 1-100(调试期建议 ≤30)": "Speed percentage 1-100 (≤30 recommended while debugging)",
+  "手速度 0-1000": "Hand speed 0-1000", "手力控 0-1000": "Hand force 0-1000",
+  "臂速度(%)": "Arm speed (%)", "臂 · 速度": "Arm · Speed",
+  "手 · 速度 / 力控": "Hand · Speed / force", "手 · 6 驱动": "Hand · 6 actuators",
+  "臂 · 7 关节": "Arm · 7 joints", "手 · 快捷": "Hand · Quick actions",
+  "使能 / 安全": "Enable / safety", "使能安全": "Enable / safety",
+  "臂 · 使能 / 安全": "Arm · Enable / safety",
+  "使能": "Enable", "去使能": "Disable", "复位": "Reset", "复位(解急停)": "Reset (clear E-stop)",
+  "急停": "Emergency stop", "⚠ 急停": "⚠ Emergency stop", "归零": "Home",
+  "归零(张开)": "Home (open)", "手归零(张开)": "Home hand (open)",
+  "回零位(全 0)": "Home pose (all zero)", "回放前先回零位": "Home before playback",
+  "回到接入位姿": "Return to connection pose", "臂回接入位姿": "Return arm to connection pose",
+  "不回零": "Do not home", "不保位": "Do not hold position", "未使能": "Disabled",
+  "清除错误": "Clear errors", "峰值清零": "Clear peaks", "把峰值列清零": "Clear peak values",
+  "把峰值列清零,重新开始记录": "Clear peaks and restart recording",
+  "下发": "Send", "下发目标": "Send target", "下发到机械臂": "Send to arm",
+  "下发到灵巧手": "Send to hand", "联动下发": "Linked control",
+  "臂 + 手 一起发": "Send arm + hand together", "只发臂": "Arm only", "只发手": "Hand only",
+  "绕过队列直发臂": "Send directly to arm, bypassing queue",
+  "用实际关节角覆盖滑块,作为微调起点": "Copy actual joint angles to sliders as the fine-tuning baseline",
+  "用实际角度 ANGLE_ACT 覆盖滑块,作为微调起点": "Copy ANGLE_ACT feedback to sliders as the fine-tuning baseline",
+  "用两边的实际角度覆盖滑块,作为微调起点": "Copy actual arm and hand angles to sliders as the fine-tuning baseline",
+  "读回实际": "Read actual", "未修改": "Unchanged", "通道未接入": "Channel disconnected",
+  "已同步": "Synchronized",
+  "无法下发:臂未接入": "Cannot send: arm is not connected",
+  "接入机械臂": "Connect arm", "接入灵巧手": "Connect hand", "合体接入": "Combo connection",
+  "两个一起接入": "Connect both", "同时驱动臂和手": "Drive arm and hand together",
+  "通道不冲突": "Independent channels", "臂走 can0、手走 RS485,": "Arm uses can0 and hand uses RS485;",
+  "无硬件模式(mock,不开 CAN)": "Mock mode (CAN disabled)",
+  "无硬件模式(mock,不开串口)": "Mock mode (serial disabled)",
+  "运动指令要先使能。急停后必须复位才能再动。": "Motion commands require Enable. After an emergency stop, Reset is required before moving again.",
+  ":关节进阻尼模式,无抱闸,臂会缓慢下落。手没有使能门槛, 接入即可发角度。": ": joints enter damping mode without a brake, so the arm will slowly descend. The hand has no enable gate and accepts angles once connected.",
+  "手的速度/力控不断电保存,每次接入要重设。": "Hand speed and force persist while powered, but must be set again on each connection.",
+  "速度/力控不断电保存,每次接入要重设。录制时这两个值会一起": "Speed and force persist while powered, but must be set again on each connection. During recording they are",
+  "存进每一帧": "stored in every frame",
+  "预设动作序列": "Preset action sequences", "厂商 DefaultAction.txt 的快照。名字是": "Snapshot of the vendor DefaultAction.txt. Names are",
+  "按索引号猜的": "inferred from indices", ",实机跑一遍才能对准。": "; run it once on the real device to verify the mapping.",
+  "按名称复现": "Replay by name", "复现连续动作": "Replay continuous action",
+  "暂停": "Pause", "继续": "Resume", "停止": "Stop", "停止(复位)": "Stop (reset)",
+  "没有在播的技能包": "No skill pack is playing", "未在回放": "Not playing", "执行进度": "Progress",
+  "和预设动作共用同一个播放器 —— 同时只能播一个。『停止』会复位到张开位。": "Presets and skill packs share one player, so only one can run at a time. Stop returns the hand to the open pose.",
+  "录制关键帧": "Record keyframes", "⏺ 记录当前姿态": "⏺ Record current pose",
+  "把当前姿态 + 速度 + 力控存成一帧": "Store the current pose, speed, and force as one frame",
+  "把当前 13 个关节角存成一帧": "Store the current 13 joint angles as one frame",
+  "还没有帧": "No frames yet", "0 帧": "0 frames", "驻留": "Dwell",
+  "还没有帧 —— 拖上面的滑块摆出姿态,点『记录当前姿态』。": "No frames yet. Set a pose with the sliders above, then select Record current pose.",
+  "还没有帧 —— 去『关节』栏拖滑块摆出姿态,回来点『记录当前姿态』。": "No frames yet. Set a pose under Joints, then return and select Record current pose.",
+  "—— 没接硬件也能纯靠 3D 预览编一整套。选『实际反馈』是 把臂和手摆到某姿态后录它": "You can author a sequence using only the 3D preview. Actual feedback records the pose where the arm and hand",
+  "—— 没接手也能纯靠 3D 预览编一整套。选『实际反馈』是 用手把灵巧手掰到某姿态后录它实际停在哪。": "You can author a sequence using only the 3D preview. Actual feedback records where the hand physically rests after positioning it.",
+  "(臂要先下发走到位)。": "(the arm must first be commanded into position).",
+  "3D 试播": "3D preview", "按驻留时间在 3D 里顺序播一遍,不发串口": "Preview frames in 3D using dwell times without sending serial commands",
+  "按驻留时间在 3D 里顺序播一遍,不发 CAN / 串口": "Preview frames in 3D using dwell times without sending CAN or serial commands",
+  "清空": "Clear", "保存录制包": "Save recording", "保存为联合录制包": "Save as combo recording",
+  "保存为技能包": "Save as skill pack", "保存技能包": "Save skill pack", "录制包": "Recording",
+  "名称(按名回放用这个,不是文件名)": "Name (used for replay by name, not the file name)",
+  "备注(可空)": "Notes (optional)", "保存路径(根目录下的相对路径)": "Save path (relative to the root)",
+  "根目录内": "inside the root", "覆盖同名文件": "Overwrite existing file",
+  "后端只能写": "The backend can only write",
+  "(拒绝绝对路径和 ..) —— 和技能包同一套沙箱。": "(absolute paths and .. are rejected), using the same sandbox as skill packs.",
+  "(拒绝绝对路径和 ..) —— 7860 端口没有认证,开放任意 路径写入等于给出远程任意文件写入。要存到别处用『导出到本机』。": "(absolute paths and .. are rejected). The web port is unauthenticated, so unrestricted paths would allow remote file writes. Use Export locally for other locations.",
+  "下载 JSON 到本机任意位置": "Download JSON to any local location", "导出到本机": "Export locally",
+  "已保存的录制包": "Saved recordings", "已保存的技能包": "Saved skill packs",
+  "导入": "Import", "刷新": "Refresh", "空闲": "Idle",
+  "视频源": "Video source", "原始视频": "Original video", "只读视频": "Read-only video",
+  "上传": "Upload",
+  "上传视频 / 手部结果文件…": "Upload video / hand result…", "先解析一段视频": "Process a video first",
+  "开始解析": "Start processing", "解析范围": "Processing range", "原视频全部帧": "All source frames",
+  "全部帧(连贯)": "All frames (continuous)", "只挑关键帧": "Keyframes only",
+  "逐帧读到视频结束。解析": "Read frame-by-frame to the end. Processing",
+  "挑帧": "Select frames", "重新挑帧": "Select again", "姿态差阈值 rad": "Pose threshold (rad)",
+  "最多挑几帧": "Maximum selected frames", "送进录制器": "Send to recorder",
+  "把挑出的帧灌进『录制』栏,替换现有帧": "Send selected frames to Record and replace existing frames",
+  "追加": "Append", "追加到『录制』栏现有帧后面": "Append after existing Record frames",
+  "逐帧时间轴": "Frame timeline", "默认录": "Default recording",
+  ",不碰硬件；未检出手的源帧会单独计数。": ", without touching hardware. Source frames with no detected hand are counted separately.",
+  "要": "For", "就用「全部帧」。关键帧模式只留几个定格姿态,中间过程全丢了, 回放是一顿一顿的 —— 那个模式是给「几个定格手势」用的。": "use All frames. Keyframe mode keeps only a few static poses and discards transitions, so playback becomes discontinuous; use it only for isolated gestures.",
+  "关键帧阈值是 6 关节的": "The keyframe threshold is the 6-joint",
+  "(任何一根手指动超过阈值就算新姿态)。用 L∞ 而 不是欧氏距离:手势语义靠单指位置,欧氏会把\"一根大动\"和\"六根微抖\"算成一样大。": "(a new pose is created when any finger exceeds the threshold). L∞ is used instead of Euclidean distance because gesture meaning depends on individual fingers.",
+  "驻留时间取": "Dwell time uses", "。回放器 tick 是 33ms(console --hz 30), 比这更短的驻留落不到实处 —— 想原速回放 30fps 素材,stride 用 1。": ". The player tick is 33 ms (console --hz 30), so shorter dwell times cannot be represented. Use stride 1 for native 30 fps playback.",
+  "拖动把那一帧灌进 3D 预览和滑块(": "Dragging loads that frame into the 3D preview and sliders (",
+  "不发串口": "no serial output", ")。看着对了就用上面的按钮送进录制器。": "). When it looks right, use the button above to send it to the recorder.",
+  "视频、腕部姿态和手指重定向使用同一条控制链。锚定同时记录当前位置与朝向，后续只发送相对变化。": "Video, wrist pose, and finger retargeting share one control chain. Anchoring records position and orientation, then sends relative changes.",
+  "MediaPipe · 合体跟随": "MediaPipe · Combo tracking", "启动摄像头": "Start camera",
+  "摄像头已关闭": "Camera off", "启动摄像头后可锚定": "Start the camera to enable anchoring",
+  "跟随灵巧手": "Track hand", "跟随机械臂": "Track arm",
+  "允许真臂跟随（首次验证前保持关闭）": "Allow real-arm tracking (keep off until initial validation)",
+  "腕部姿态：回放一致": "Wrist orientation: matches replay", "推理设备": "Inference device",
+  "正在检测浏览器运行方式…": "Detecting browser runtime…", "检测中…": "Detecting…",
+  "需要 HTTPS": "HTTPS required", "才能访问浏览器摄像头。": "is required for browser camera access.",
+  "语音指令文本": "Voice command text", "说一句话": "Say a command", "识别": "Recognize",
+  "识别只解析、": "Recognition only parses and",
+  ";要动必须再点一次「执行」。": "; select Execute separately to move.",
+  "。要动必须再点一次「执行」—— 误识别最坏就是弹错确认框,不会误动作。急停按钮": ". Select Execute separately to move, so a recognition error only produces the wrong confirmation and cannot move the robot. The emergency-stop button",
+  "。 语音**不绕过**这条规则:听到什么先填进框、再解析,照样要你点执行。": ". Voice does not bypass this rule: recognized text is placed in the field and parsed, and you must still select Execute.",
+  "就能回放已录好的手势。": "to replay a recorded gesture.",
+  "免确认": "No confirmation", "留给以后语音/VLA 的入口。": "Reserved for future voice/VLA integration.",
+  "[技能包]": "[Skill packs]", "[臂+手技能包]": "[Arm + hand skill packs]",
+  "—— 会列出候选让你指定路径。": "Candidates will be listed so you can choose the path.",
+  "张开手": "Open hand", "握拳": "Make a fist", "松手": "Release hand",
+  "轻柔力度": "Gentle force", "常规力度": "Normal force", "用力档": "Strong force",
+  "捏": "Pinch", "准备就绪": "Ready", "切慢速": "Switch to slow speed",
+  "回零位": "Home pose", "回零并比个1": "Home and show one",
+  "比个1": "Show one", "比个2": "Show two", "比个3": "Show three", "比个4": "Show four", "比个5": "Show five",
+  "点赞": "Thumbs up", "指": "Point", "使能机械臂": "Enable arm", "下使能": "Disable arm",
+  "复位机械臂": "Reset arm", "回放 RGB-D 示教": "Replay RGB-D demonstration", "回放 RGB 示教": "Replay RGB demonstration",
+  "🎤 说话": "🎤 Speak", "按住说话(或点一下开始/再点结束)": "Hold to speak (or click once to start and again to stop)",
+  "点一下开始说,再点结束": "Click to start speaking, then click again to stop",
+  "开始解析": "Parse", "确认执行": "Confirm execution", "执行": "Execute", "不执行": "Do not execute",
+  "取消": "Cancel", "能说什么": "Supported Chinese voice phrases", "直接说技能包的名字": "Say a skill pack name directly",
+  "例:张开手 / 握拳 / 说技能包的名字": "Example: open hand / make a fist / say a skill pack name",
+  "例:回零位慢一点 / 准备一下 / 急停": "Example: home slowly / get ready / emergency stop",
+  "重名不猜": "Do not guess duplicate names", "听不准,你是指哪个": "Ambiguous command. Which one did you mean?",
+  "抓杯子": "Pick up cup", "从当前位姿出发,抓取桌面物体": "Start from the current pose and pick up an object from the table",
+  "OK手势": "OK gesture", "食指拇指捏合,其余三指伸直": "Pinch index finger and thumb; extend the other three fingers",
+  "哪只手": "Which hand", "左手": "Left hand", "右手": "Right hand",
+  "显示 3D(three.js 本地渲染)": "Show 3D (local Three.js rendering)",
+  "显示 3D(装配体 9.3MB,首次加载稍慢)": "Show 3D (9.3 MB assembly; first load may be slower)",
+  "加载中…": "Loading…", "加载回放数据(视频 + 骨骼点 + 装配体 mesh)…": "Loading replay data (video + keypoints + assembly mesh)…",
+  "🎬 加载3D模型": "🎬 Load 3D model", "回放控制": "Replay controls", "回放": "Replay",
+  "▶ 下发轨迹": "▶ Send trajectory", "停止下发": "Stop trajectory",
+  "把视频→轨迹逐帧下发给机械臂+灵巧手": "Send the video trajectory frame-by-frame to the arm and hand",
+  "启用控制": "Enable control", "监控中 · 勾选『启用控制』解锁示教器点动(先在仿真验证)": "Monitoring · Enable control to unlock jog commands (validate in simulation first)",
+  "生成": "Generate", "跳过重算": "Skip recomputation", "处理中…": "Processing…",
+  "未开始": "Not started", "加载失败": "Load failed", "连接中…": "Connecting…",
+  "在线": "Online", "离线": "Offline", "状态": "Status", "视图": "View",
+  "显示": "Show", "关闭": "Close", "已连接": "Connected", "断开": "Disconnect",
+  "手部检出率": "Hand detection rate", "连续性": "Continuity", "稳定代理": "Stability proxy",
+  "需真值": "Ground truth required", "内部帧间隔一致性": "Internal frame interval consistency",
+  "相邻帧真实时间差": "Actual adjacent-frame time delta", "关节越限次数": "Joint limit violations",
+  "关节帧间跳变(最大)": "Maximum frame-to-frame joint jump",
+  "静止手腕位置抖动(p95)": "Stationary wrist position jitter (p95)",
+  "手腕绝对位置误差(p95)": "Absolute wrist position error (p95)",
+  "手腕位置帧间步长(p99)": "Wrist frame-to-frame position step (p99)",
+  "手腕姿态帧间角度(p99)": "Wrist frame-to-frame orientation angle (p99)",
+  "指尖重定向误差(中位)": "Median fingertip retargeting error",
+  "骨长稳定性代理(最差骨)": "Bone-length stability proxy (worst bone)",
+  "内参重投影误差": "Intrinsic reprojection error", "RGB/Depth对齐": "RGB/Depth alignment",
+  "Source RGB 分辨率": "Source RGB resolution", "Source RGB 帧率": "Source RGB frame rate",
+  "Source 硬件时间戳": "Source hardware timestamps", "Source RGB-Depth 硬件同步": "Source RGB-Depth hardware sync",
+  "6/10 达标": "6/10 passed", "未测 · 跑一次管线生成": "Not measured · Run the pipeline once",
+  "RGB-D 目录": "RGB-D directory", "相机名": "Camera name",
+  "含 color/ depth/ calibration.json": "Contains color/ depth/ calibration.json",
+  "calibration.json 里的相机名": "Camera name from calibration.json",
+  "RGB-D 数据目录:里面要有 color/、depth/ 和 calibration.json": "RGB-D directory containing color/, depth/, and calibration.json",
+  "相机名:calibration.json 的 cameras 里的键名(不是文件路径)": "Camera key under cameras in calibration.json (not a file path)",
+  "拖动只动 3D 预览,松手不发报文 —— 点『下发』才走 CAN。": "Dragging updates only the 3D preview. Release sends nothing; select Send to write to CAN.",
+  "拖动只动 3D 预览,松手不发报文 —— 点『下发』才写串口。 滑块值也是": "Dragging updates only the 3D preview. Release sends nothing; select Send to write serial. Slider values are also",
+  "取的那份姿态。": "the selected pose source.",
+  ",可以同时在线。也可以只接一边 —— 另一边的滑块仍能拖,当纯 3D 预览。": "; both can be online together. You may connect only one side and use the other sliders as a 3D-only preview.",
+  "⚠ 回放": "⚠ Playback", "。臂用": ". The arm uses", "走关键帧(": "with keyframes (",
+  "不是": "not", "CPV)—— 路径由臂自己规划,不受控。": "CPV), so the arm plans its own path and that path is not controlled.",
+  ":臂停在最后收到的目标位(回零路径未知,可能撞工装)。": ": the arm remains at the last target (the homing path is unknown and may collide with fixtures).",
+  "流式包(30fps)页面上放不了,要 CPV 逐关节伺服而臂被子进程占着。用命令行:": "Streaming packs (30 fps) cannot play here because CPV joint servo is unavailable while the child process owns the arm. Use the command line:",
+};
+function readUiLocale() {
+  try { return localStorage.getItem(UI_LOCALE_KEY) || "zh-CN"; } catch (_) { return "zh-CN"; }
+}
+let uiLocale = UI_MESSAGES[readUiLocale()] ? readUiLocale() : "zh-CN";
+const t = key => UI_MESSAGES[uiLocale][key] || UI_MESSAGES["zh-CN"][key] || key;
+const uiTextOriginals = new WeakMap();
+const uiAttrOriginals = new WeakMap();
+const UI_DYNAMIC_EN = [
+  [/^在线 · (.+)$/u, "Online · $1"],
+  [/^在线\(mock\)$/u, "Online (mock)"],
+  [/^连接断开$/u, "Connection closed"],
+  [/^连接错误$/u, "Connection error"],
+  [/^连接失败[:：]\s*(.*)$/u, "Connection failed: $1"],
+  [/^加载失败[:：]\s*(.*)$/u, "Load failed: $1"],
+  [/^3D 加载失败[:：]\s*(.*)$/u, "3D load failed: $1"],
+  [/^下发失败[:：]\s*(.*)$/u, "Send failed: $1"],
+  [/^已发送(.+)$/u, "Sent: $1"],
+  [/^动作\s*(\d+)$/u, "Action $1"],
+  [/^(\d+)\s*帧$/u, "$1 frames"],
+  [/^第\s*(\d+)\s*帧$/u, "Frame $1"],
+  [/^速度当前\s*(.+)$/u, "Current speed: $1"],
+  [/^处理中[:：]?\s*(.*)$/u, "Processing: $1"],
+  [/^上传中 · (.+)$/u, "Uploading · $1"],
+  [/^视频 · (.+)$/u, "Video · $1"],
+  [/^手部结果 · (.+)$/u, "Hand result · $1"],
+  [/^开始下发 (.+)$/u, "Starting trajectory: $1"],
+  [/^下发中 (.+)$/u, "Sending trajectory: $1"],
+  [/^与接入位姿偏差[:：](.+)$/u, "Offset from connection pose: $1"],
+  [/^采集 \/ 规范层 · (.+)$/u, "Capture / canonical layer · $1"],
+  [/^浏览器支持[:：]\s*(.+)$/u, "Browser support: $1"],
+  [/^根目录[:：]\s*(.+)$/u, "Root directory: $1"],
+  [/^(\d+)\s*帧 · (.+)$/u, (_, count, rest) => `${count} frame${count === "1" ? "" : "s"} · ${rest}`],
+  [/^(\d+)\s*步 · (.+)$/u, "$1 steps · $2"],
+  [/^已录制手势 · (\d+) 帧 · (.+)$/u, (_, count, rest) => `Recorded gesture · ${count} frame${count === "1" ? "" : "s"} · ${rest}`],
+  [/^臂\+手联合录制 · (\d+) 帧 · (.+)$/u, (_, count, rest) => `Arm + hand recording · ${count} frame${count === "1" ? "" : "s"} · ${rest}`],
+  [/^(\d+) frames? · (.+) · keyframe · 设定值$/u, "$1 frames · $2 · keyframe · target"],
+  [/^(\d+) frames? · (.+) · 先回零$/u, "$1 frames · $2 · home first"],
+  [/^combo_player\.py --combo <路径>(.+)$/u, "combo_player.py --combo <path>$1"],
+  [/^(\d+)\. 开合\(idx (\d+)\)$/u, "$1. Open/close (idx $2)"],
+  [/^(\d+)\. 捏取\(idx (\d+)\)$/u, "$1. Pinch (idx $2)"],
+  [/^(\d+)\. 抓握\(idx (\d+)\)$/u, "$1. Grasp (idx $2)"],
+  [/^(\d+)\. 侧捏\(idx (\d+)\)$/u, "$1. Side pinch (idx $2)"],
+];
+function translatedUiText(value) {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!/[\u3400-\u9fff]/u.test(normalized)) return null;
+  if (UI_TEXT_EN[normalized]) return UI_TEXT_EN[normalized];
+  let translated = normalized;
+  let changed = false;
+  for (const [pattern, replacement] of UI_DYNAMIC_EN) {
+    if (!pattern.test(translated)) continue;
+    translated = translated.replace(pattern, replacement);
+    changed = true;
+  }
+  return changed ? translated : null;
+}
+function translateUiTextNode(node) {
+  if (!node?.parentElement || ["SCRIPT", "STYLE", "OPTION"].includes(node.parentElement.tagName)) return;
+  if (uiLocale === "zh-CN") {
+    if (uiTextOriginals.has(node)) node.nodeValue = uiTextOriginals.get(node);
+    return;
+  }
+  const translated = translatedUiText(node.nodeValue);
+  if (!translated) return;
+  uiTextOriginals.set(node, node.nodeValue);
+  const leading = node.nodeValue.match(/^\s*/u)?.[0] || "";
+  const trailing = node.nodeValue.match(/\s*$/u)?.[0] || "";
+  node.nodeValue = leading + translated + trailing;
+}
+function translateUiElement(root) {
+  if (!(root instanceof Element)) return;
+  const elements = [root, ...root.querySelectorAll("*")];
+  for (const el of elements) {
+    if (["SCRIPT", "STYLE", "OPTION"].includes(el.tagName)) continue;
+    for (const attr of ["title", "placeholder", "aria-label"]) {
+      const value = el.getAttribute(attr);
+      if (value === null) continue;
+      if (uiLocale === "zh-CN") {
+        const originals = uiAttrOriginals.get(el);
+        if (originals?.has(attr)) el.setAttribute(attr, originals.get(attr));
+        continue;
+      }
+      const translated = translatedUiText(value);
+      if (!translated) continue;
+      let originals = uiAttrOriginals.get(el);
+      if (!originals) { originals = new Map(); uiAttrOriginals.set(el, originals); }
+      originals.set(attr, value);
+      el.setAttribute(attr, translated);
+    }
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) translateUiTextNode(walker.currentNode);
+}
+function translateDocumentUi() { translateUiElement(document.body); }
+function applyUiLocale(locale, persist=true) {
+  uiLocale = UI_MESSAGES[locale] ? locale : "zh-CN";
+  document.documentElement.lang = uiLocale;
+  document.title = t("documentTitle");
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const value = t(el.dataset.i18n);
+    if (value) el.textContent = value;
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => {
+    const value = t(el.dataset.i18nTitle);
+    if (value) el.title = value;
+  });
+  const settingsButton = $("settingsButton");
+  if (settingsButton) {
+    settingsButton.title = t("settings");
+    settingsButton.setAttribute("aria-label", t("settings"));
+  }
+  const settingsMenu = $("settingsMenu");
+  if (settingsMenu) settingsMenu.setAttribute("aria-label", t("settings"));
+  const select = $("languageSelect");
+  if (select) select.value = uiLocale;
+  translateDocumentUi();
+  if ($("serveText")?.dataset.state) $("serveText").textContent = t($("serveText").dataset.state);
+  if (persist) {
+    try { localStorage.setItem(UI_LOCALE_KEY, uiLocale); } catch (_) {}
+  }
+}
+applyUiLocale(uiLocale, false);
+new MutationObserver(records => {
+  if (uiLocale !== "en-US") return;
+  for (const record of records) {
+    if (record.type === "characterData") translateUiTextNode(record.target);
+    for (const node of record.addedNodes) {
+      if (node.nodeType === Node.TEXT_NODE) translateUiTextNode(node);
+      else if (node.nodeType === Node.ELEMENT_NODE) translateUiElement(node);
+    }
+  }
+}).observe(document.body, { subtree: true, childList: true, characterData: true });
 
 // 每个标签页独立持有硬件租约；sessionStorage 不会在复制标签页间共享。
 const HARDWARE_LEASE_ID = sessionStorage.getItem("hardwareLeaseId") ||
@@ -1965,7 +2372,9 @@ function setServe(state) {   // "online" | "busy" | "offline"
   const dot = $("serveDot"), cdot = $("centerDot");
   dot.className = "dot" + (state === "online" ? " online" : state === "busy" ? " busy" : "");
   if (cdot) cdot.className = "dot" + (state === "online" ? " online" : state === "busy" ? " busy" : "");
-  $("serveText").textContent = state === "online" ? "在线" : state === "busy" ? "处理中" : "离线";
+  $("serveText").dataset.state = state;
+  $("serveText").dataset.i18n = state;
+  $("serveText").textContent = t(state);
 }
 async function pollStatus() {
   try {
@@ -1974,7 +2383,7 @@ async function pollStatus() {
       const h = await (await fetch("/api/hand/status")).json();
       setServe(h.online ? "online" : "offline");
       if (h.online) {
-        $("serveText").textContent = h.mock ? "在线(mock)" : "在线 · " + (h.port || "");
+        $("serveText").textContent = h.mock ? t("online") + "(mock)" : t("online") + " · " + (h.port || "");
       }
       return;
     }
@@ -2000,7 +2409,7 @@ async function pollStatus() {
       const a = await (await fetch("/api/arm/status")).json();
       setServe(a.online ? "online" : "offline");
       if (a.online) {
-        $("serveText").textContent = a.mock ? "在线(mock)" : "在线 · " + (a.channel || "");
+        $("serveText").textContent = a.mock ? t("online") + "(mock)" : t("online") + " · " + (a.channel || "");
       }
       if (a.online) applyArmFlags(a.enabled, a.frozen);
       return;
@@ -2050,19 +2459,19 @@ function toastEnd(kind, msg) {   // "done" | "err"
 function openUpload(mode="any") {
   S.uploadMode = mode;
   if (mode === "handfile") {
-    $("uploadTitle").textContent = "拖入手部处理结果";
-    $("uploadSub").textContent = "支持 NPZ / PKL / JSON,可来自 MediaPipe 或 WiLoR";
-    $("uploadHint").textContent = "最低字段: hand_keypoints(N,21,3) + wrist_pose(N,7)";
+    $("uploadTitle").textContent = t("uploadHandTitle");
+    $("uploadSub").textContent = t("uploadHandSub");
+    $("uploadHint").textContent = t("uploadHandHint");
     $("fileInput").accept = ".npz,.pkl,.pickle,.json";
   } else if (mode === "video") {
-    $("uploadTitle").textContent = "拖入你的视频";
-    $("uploadSub").textContent = "MP4 格式,第一视角人手操作";
-    $("uploadHint").textContent = "上传后会在本机运行手部估计和重定向";
+    $("uploadTitle").textContent = t("uploadVideoTitle");
+    $("uploadSub").textContent = t("uploadVideoSub");
+    $("uploadHint").textContent = t("uploadVideoHint");
     $("fileInput").accept = "video/mp4,video/*";
   } else {
-    $("uploadTitle").textContent = "拖入视频或手部结果";
-    $("uploadSub").textContent = "MP4 视频,或外部 MediaPipe/WiLoR 导出的 NPZ/PKL/JSON";
-    $("uploadHint").textContent = "手部结果至少包含 hand_keypoints 和 wrist_pose · Esc 关闭";
+    $("uploadTitle").textContent = t("uploadAnyTitle");
+    $("uploadSub").textContent = t("uploadAnySub");
+    $("uploadHint").textContent = t("uploadAnyHint");
     $("fileInput").accept = "video/mp4,video/*,.npz,.pkl,.pickle,.json";
   }
   $("uploadZone").classList.add("active");
@@ -2098,9 +2507,8 @@ async function handleFile(file) {
     $("cmdName").textContent = prefix + S.name;
     refreshGo();
     $("cmd").classList.add("armed");
-    $("centerStatus").textContent = S.source === "handfile"
-      ? "外部手部结果已就绪 · 点『生成』"
-      : "视频已就绪 · 点『生成』";
+    $("centerStatus").dataset.i18n = S.source === "handfile" ? "handReady" : "videoReady";
+    $("centerStatus").textContent = t($("centerStatus").dataset.i18n);
   } catch (e) {
     $("cmdName").textContent = "上传失败,重试";
   }
@@ -2118,7 +2526,8 @@ function enterRgbd() {
   if (!$("rgbdCam").value) $("rgbdCam").value = RGBD_DEFAULT_CAM;
   $("cmdName").textContent = "RGB-D 源 · 填目录后点『生成』";
   $("cmdName").classList.remove("empty");
-  $("centerStatus").textContent = "RGB-D 源 · 设好目录点『生成』";
+  $("centerStatus").dataset.i18n = "rgbdReady";
+  $("centerStatus").textContent = t("rgbdReady");
   refreshGo();
   loadMetrics(currentRobot());    // 数据源切 RGB-D → 换该本体验收数据
 }
@@ -2133,33 +2542,56 @@ $("btnRgbd").onclick = () => { S.dataset === "rgbd" ? exitRgbd() : enterRgbd(); 
 
 // ===== 本体切换:NERO+inspire 灵巧手 <-> NERO+平行夹爪 =====
 const BODIES = {
-  inspire: { drop:"本体 · NERO+inspire ▾", name:"NERO + inspire",
-             meta:"7-DoF 臂 + inspire 灵巧手", badge:"state(13) = 7 臂 + 6 手" },
-  gripper: { drop:"本体 · NERO+夹爪 ▾", name:"NERO + 平行夹爪",
-             meta:"7-DoF 臂 + 二指平行夹爪", badge:"state(8) = 7 臂 + 1 夹爪开合" },
+  inspire: { drop:"inspireDrop", name:"inspireName",
+             meta:"inspireSpecMeta", badge:"inspireBadge", metrics:"inspireMetrics" },
+  gripper: { drop:"gripperDrop", name:"gripperName",
+             meta:"gripperSpecMeta", badge:"gripperBadge", metrics:"gripperMetrics" },
 };
 function setHand(hand) {
   S.hand = hand;
   const b = BODIES[hand] || BODIES.inspire;
-  $("robotDrop").textContent = b.drop;
-  const nm = document.querySelector(".spec-name"); if (nm) nm.textContent = b.name;
-  const mt = document.querySelector(".spec-meta"); if (mt) mt.textContent = b.meta;
-  const bd = document.querySelector(".spec-badge"); if (bd) bd.textContent = b.badge;
+  $("robotDrop").textContent = t(b.drop);
+  const nm = document.querySelector(".spec-name"); if (nm) nm.textContent = t(b.name);
+  const mt = document.querySelector(".spec-meta"); if (mt) mt.textContent = t(b.meta);
+  const bd = document.querySelector(".spec-badge"); if (bd) bd.textContent = t(b.badge);
   document.querySelectorAll("#robotMenu .drop-opt").forEach(o =>
     o.classList.toggle("sel", o.dataset.hand === hand));   // 选中高亮
   renderJoints();                 // 手部读数行换成对应本体
   refreshGo();                    // flowRobot 名 + 就绪态刷新
-  $("mxEmbTitle").textContent = hand === "gripper" ? "本体专属 · 夹爪" : "本体专属 · 灵巧手";
+  $("mxEmbTitle").textContent = t(b.metrics);
   loadMetrics(currentRobot());    // 切本体 → 显示该本体验收数据
 }
 // 下拉:点按钮展开选项列表,点选项选定,点外部收起。
 const robotMenu = $("robotMenu");
-$("robotDrop").onclick = e => { e.stopPropagation(); robotMenu.classList.toggle("open"); };
+$("robotDrop").onclick = e => {
+  e.stopPropagation();
+  closeSettings();
+  robotMenu.classList.toggle("open");
+};
 robotMenu.querySelectorAll(".drop-opt").forEach(o =>
   o.onclick = () => { setHand(o.dataset.hand); robotMenu.classList.remove("open"); });
 document.addEventListener("click", e => {
   if (!$("robotDropWrap").contains(e.target)) robotMenu.classList.remove("open");
 });
+
+const settingsMenu = $("settingsMenu");
+function closeSettings() {
+  settingsMenu.classList.remove("open");
+  $("settingsButton").setAttribute("aria-expanded", "false");
+}
+$("settingsButton").onclick = e => {
+  e.stopPropagation();
+  robotMenu.classList.remove("open");
+  const open = settingsMenu.classList.toggle("open");
+  $("settingsButton").setAttribute("aria-expanded", String(open));
+};
+settingsMenu.onclick = e => e.stopPropagation();
+$("languageSelect").onchange = e => {
+  applyUiLocale(e.target.value);
+  setHand(S.hand);
+  if ($("uploadZone").classList.contains("active")) openUpload(S.uploadMode);
+};
+document.addEventListener("click", closeSettings);
 
 // RGB-D 需目录;RGB 需先有视频/手部结果文件。
 function refreshGo() {
@@ -6374,7 +6806,7 @@ async function sendCmd(cmd) {
 
 // ===== 键盘快捷键 =====
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") closeUpload();
+  if (e.key === "Escape") { closeUpload(); closeSettings(); robotMenu.classList.remove("open"); }
   if (e.key === " " && e.target === document.body) { e.preventDefault(); $("btnRgbd").click(); }
   if (e.key === "Enter" && e.ctrlKey) $("cmdGo").click();
 });
