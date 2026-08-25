@@ -306,6 +306,7 @@ body {
 .right-panel { position: fixed; right: 28px; top: 84px; bottom: 116px; width: 312px;
   z-index: 50; padding: 20px; border-radius: 16px; background: var(--surface);
   border: 1px solid var(--line); box-shadow: var(--shadow-card); overflow-y: auto;
+  flex-direction: column;
   transition: transform .5s cubic-bezier(.16,1,.3,1), opacity .5s ease; }
 .right-panel::-webkit-scrollbar { width: 6px; }
 .right-panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
@@ -357,6 +358,24 @@ body {
   font-variant-numeric: tabular-nums; }
 .tel-safe .bad { color: var(--danger); font-weight: 600; }
 .tel-safe .mid { color: var(--accent); }
+/* 合体页臂遥测:固定成 J1-J7 矩阵，避免 7 个值拼成长文本后反复折行。 */
+.combo-arm-telem { font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+.combo-arm-telem-grid { display: grid; grid-template-columns: 38px repeat(7, minmax(0, 1fr));
+  align-items: center; gap: 6px 2px; font-variant-numeric: tabular-nums; }
+.combo-arm-telem-grid > span { min-width: 0; text-align: right; white-space: nowrap; }
+.combo-arm-telem-grid .label { text-align: left; color: var(--text-2); }
+.combo-arm-telem-grid .joint { font-size: 9px; color: var(--text-3); }
+.combo-arm-flags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
+.combo-arm-flag { padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px;
+  color: var(--text-2); background: var(--canvas); white-space: nowrap; }
+.combo-arm-flag.ok { color: var(--success); border-color: rgba(18,183,106,.25);
+  background: rgba(18,183,106,.06); }
+.combo-arm-flag.bad { color: var(--danger); border-color: rgba(240,68,56,.25);
+  background: rgba(240,68,56,.06); }
+#comboPanel .card-head { gap: 8px; }
+#comboPanel .card-head > span:first-child { min-width: 0; }
+#comboPanel .seg { flex-shrink: 0; }
+#comboPanel .jgroup { letter-spacing: 0; line-height: 1.5; }
 
 .spec-name { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .spec-meta { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
@@ -1499,20 +1518,20 @@ body {
 <!-- 合体页右侧:**只读**监视,两台设备的实际读数并排看 -->
 <aside class="right-panel" id="comboPanel" style="display:none;">
   <div class="card">
-    <div class="card-head"><span>state(13) 实际</span>
-      <span class="jgroup" style="margin:0">7 臂 + 6 手</span></div>
-    <div class="jgroup">臂 · rad · CAN 回读</div>
+    <div class="card-head"><span>关节实际位置</span>
+      <span class="jgroup" style="margin:0">13 DOF</span></div>
+    <div class="jgroup">机械臂 · 7 轴 · rad · CAN 回读</div>
     <div id="cbArmActRows"></div>
-    <div class="jgroup" style="margin-top:12px">手 · rad · ANGLE_ACT</div>
+    <div class="jgroup" style="margin-top:12px">灵巧手 · 6 轴 · rad · ANGLE_ACT</div>
     <div id="cbHandActRows"></div>
   </div>
   <div class="card">
-    <div class="card-head"><span>臂遥测</span></div>
-    <div id="cbArmTelem" style="font-family:var(--mono);font-size:10px;color:var(--text-3);line-height:1.6;">—</div>
+    <div class="card-head"><span>机械臂遥测</span></div>
+    <div id="cbArmTelem" class="combo-arm-telem">—</div>
   </div>
   <div class="card">
     <div class="card-head">
-      <span>手 · 逐指读数</span>
+      <span>灵巧手遥测</span>
       <div class="seg" id="cbHandTelemSeg">
         <button class="seg-b on" data-g="force">力</button>
         <button class="seg-b" data-g="angle">角度</button>
@@ -5241,18 +5260,37 @@ function cbOnArmFrame(row) {
       $("cbArmSpeedVal").textContent = row.speed_percent + "%";
     }
     if (row.tel) {
-      const t = row.tel, L = [];
-      const fmt = a => (a || []).map(v => v == null ? "—" : (+v).toFixed(2)).join(" ");
-      if (t.current) L.push("电流 A : " + fmt(t.current));
-      if (t.torque)  L.push("力矩 Nm: " + fmt(t.torque));
-      if (t.velocity) L.push("速度 r/s: " + fmt(t.velocity));
-      L.push("使能: " + (t.enabled ? "是" : "否") + "  急停: " + (t.frozen ? "是" : "否"));
-      if (t.arm_status) L.push("状态: " + t.arm_status);
-      $("cbArmTelem").textContent = L.join("\n") || "(无遥测)";
+      renderComboArmTelem(row.tel);
     }
   } else if (row.type === "error" && row.msg) {
     cbErr("cbArmErr", row.msg);
   }
+}
+
+function renderComboArmTelem(t) {
+  const host = $("cbArmTelem");
+  if (!host) return;
+  const metrics = [
+    ["电流", t.current],
+    ["力矩", t.torque],
+    ["速度", t.velocity],
+  ].filter(([, values]) => values);
+  const cells = metrics.map(([label, values]) =>
+    `<span class="label">${label}</span>` + Array.from({length: 7}, (_, i) => {
+      const value = values[i];
+      return `<span>${value == null ? "—" : (+value).toFixed(2)}</span>`;
+    }).join("")
+  ).join("");
+  const header = Array.from({length: 7}, (_, i) => `<span class="joint">J${i + 1}</span>`).join("");
+  const status = t.arm_status == null ? "" :
+    `<span class="combo-arm-flag">${_esc(String(t.arm_status))}</span>`;
+  host.innerHTML = (metrics.length
+    ? `<div class="combo-arm-telem-grid"><span></span>${header}${cells}</div>`
+    : `<div>暂无轴遥测</div>`)
+    + `<div class="combo-arm-flags">`
+    + `<span class="combo-arm-flag ${t.enabled ? "ok" : ""}">${t.enabled ? "已使能" : "未使能"}</span>`
+    + `<span class="combo-arm-flag ${t.frozen ? "bad" : "ok"}">${t.frozen ? "急停" : "运行正常"}</span>`
+    + status + `</div>`;
 }
 
 // ---- 手的遥测帧 ----

@@ -61,6 +61,17 @@ def test_acceptance_card_distinguishes_truth_and_proxy_metrics():
     assert 'runtimeMode: $("comboRuntimeMode")?.value || "auto"' in _INDEX
 
 
+def test_combo_status_panel_stacks_monitor_cards_vertically():
+    """页面把右栏设为 flex 时，监视卡片不能回退成默认横向排列。"""
+    assert '$("comboPanel").style.display = live ? "flex" : "none"' in _INDEX
+    right_panel_css = _INDEX[_INDEX.index(".right-panel {"):
+                             _INDEX.index(".right-panel::-webkit-scrollbar")]
+    assert "flex-direction: column" in right_panel_css
+    assert 'class="combo-arm-telem"' in _INDEX
+    assert "function renderComboArmTelem(t)" in _INDEX
+    assert "combo-arm-telem-grid" in _INDEX
+
+
 def test_page_navigation_and_close_release_hardware_channels():
     assert "async function switchMode(view)" in _INDEX
     assert 'await stopArmDebug({ silent: true, home: true })' in _INDEX
