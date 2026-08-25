@@ -72,6 +72,31 @@ def test_combo_status_panel_stacks_monitor_cards_vertically():
     assert "combo-arm-telem-grid" in _INDEX
 
 
+def test_debug_threejs_canvases_use_the_unobscured_viewport():
+    """灵巧手/合体 canvas 不应把被左侧控制盒覆盖的区域计入相机中心。"""
+    assert 'id="hand3dHost" style="position:absolute;top:0;right:0;bottom:0;' in _INDEX
+    assert 'id="combo3dHost" style="position:absolute;top:0;right:0;bottom:0;' in _INDEX
+    assert "--debug-obscured-left: 336px" in _INDEX
+    assert "--debug-obscured-left: 270px" in _INDEX
+    assert "--debug-obscured-left: 362px" in _INDEX
+    assert "#hand3dHost::before, #combo3dHost::before" in _INDEX
+    assert "#screen:fullscreen #hand3dHost" in _INDEX
+    assert "new ResizeObserver(() => this._resize()).observe(this.container)" in _URDF_VIEW
+    assert "this.camera.aspect = w / h" in _URDF_VIEW
+    assert "minAspect / this.camera.aspect" in _URDF_VIEW
+    assert "gridSize: 0.4, minFrameAspect: 0.60" in _HAND3D
+    assert "gridSize: 1.2, minFrameAspect: 0.45" in _COMBO3D
+
+
+def test_shared_threejs_viewer_uses_fill_and_rim_lights_without_shadow_maps():
+    """调试页需要照亮背光面，但不能为实时控制额外开启阴影贴图。"""
+    assert _URDF_VIEW.count("new THREE.DirectionalLight") == 3
+    assert "const key = new THREE.DirectionalLight" in _URDF_VIEW
+    assert "const fill = new THREE.DirectionalLight" in _URDF_VIEW
+    assert "const rim = new THREE.DirectionalLight" in _URDF_VIEW
+    assert "shadowMap.enabled" not in _URDF_VIEW
+
+
 def test_page_navigation_and_close_release_hardware_channels():
     assert "async function switchMode(view)" in _INDEX
     assert 'await stopArmDebug({ silent: true, home: true })' in _INDEX

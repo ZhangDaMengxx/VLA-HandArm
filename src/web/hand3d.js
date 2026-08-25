@@ -38,7 +38,7 @@ export function handJointMap(rad6) {
 
 export class HandViewer extends UrdfViewer {
   constructor(container) {
-    super(container, { gridSize: 0.4 });
+    super(container, { gridSize: 0.4, minFrameAspect: 0.60 });
   }
 
   /** 用 6 个驱动关节角(rad,项目顺序)刷新姿态,mimic 在这里补算。 */

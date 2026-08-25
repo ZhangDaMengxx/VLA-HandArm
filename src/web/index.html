@@ -64,6 +64,17 @@ body {
 #rerunHost { position: absolute; inset: 0; z-index: 1; }
 #rerunHost > iframe, #rerunHost > canvas { position: absolute; inset: 0; }
 #hand3dHost, #arm3dHost, #combo3dHost { z-index: 2; }
+/* 灵巧手/合体页左侧 tab 内容盒覆盖在 screen 上方。canvas 若仍铺满整个 screen，
+   Three.js 会把相机和 OrbitControls 中心算在被遮住的区域里，模型看起来向左偏。
+   这里只收窄对应 host；ResizeObserver 会同步 renderer 尺寸和相机 aspect。 */
+#hand3dHost, #combo3dHost {
+  --debug-obscured-left: 336px; left: var(--debug-obscured-left); }
+#hand3dHost::before, #combo3dHost::before {
+  content: ""; position: absolute; top: 0; right: 100%; bottom: 0;
+  width: var(--debug-obscured-left); background: var(--screen); }
+/* 全屏元素只有 #screen，外部 tab-box 不再显示，画布应恢复使用完整视口。 */
+#screen:fullscreen #hand3dHost, #screen:fullscreen #combo3dHost {
+  --debug-obscured-left: 0px; }
 .screen-hint { z-index: 3; }
 
 /* replay3d 布局:视频+骨骼+3D 并排,下面时序图,底部控制条 */
@@ -262,6 +273,8 @@ body {
   .tab-btn { height: 46px; }
   .tab-btn .lb { display: none; }
   .tab-box { left: 76px; width: 310px; }
+  /* screen 仍从 x=116 开始，tab-box 到 x=386，实际重叠 270px。 */
+  #hand3dHost, #combo3dHost { --debug-obscured-left: 270px; }
 }
 
 /* ===== 录制帧列表 / 技能包列表 ===== */
@@ -551,6 +564,8 @@ body {
 
 @media (max-width: 1100px) {
   .stage { padding: 76px 24px 108px; }
+  /* 此断点 screen 改从 x=24 开始，tab-box 到 x=386，重叠 362px。 */
+  #hand3dHost, #combo3dHost { --debug-obscured-left: 362px; }
   .center { left: 50%; }
   .bottom-bar { left: 50%; }
   .toast { left: 50%; }
@@ -579,13 +594,13 @@ body {
     </div>
     <!-- 灵巧手 3D:three.js 直接渲染,不走 Rerun 的 WASM 查看器(那个在 iframe 里很卡)。
          只在灵巧手调试页显示;canvas 由 hand3d.js 插进来。 -->
-    <div id="hand3dHost" style="position:absolute;inset:0;display:none;"></div>
+    <div id="hand3dHost" style="position:absolute;top:0;right:0;bottom:0;display:none;"></div>
     <!-- 机械臂 3D:同一套 urdf_view.js,canvas 由 arm3d.js 插进来 -->
     <div id="arm3dHost" style="position:absolute;inset:0;display:none;"></div>
     <!-- 合体 3D:装配体(臂+法兰+手)整条链,canvas 由 combo3d.js 插进来。
          和上面两个各自独立 —— 三个查看器各有自己的 WebGL context,切页只隐藏不销毁,
          回来时不用重新下载 mesh。 -->
-    <div id="combo3dHost" style="position:absolute;inset:0;display:none;"></div>
+    <div id="combo3dHost" style="position:absolute;top:0;right:0;bottom:0;display:none;"></div>
     <!-- 回放查看器专属挂载点。⚠ 必须给 Rerun 一个独立容器,不能直接把 #screen 交给它:
          WebViewer.start(parent) 初始化完会清空 parent 的子元素,于是 #vtools、三个
          3dHost、#screenHint 全被抹掉 → 后续 $("vtools")/$("hand3dHost") 返回 null,

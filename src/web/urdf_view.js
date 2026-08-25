@@ -79,10 +79,17 @@ export class UrdfViewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.0));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.6);
-    dir.position.set(0.5, 0.8, 0.6);
-    this.scene.add(dir);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.7));
+    // 三点布光只补模型自身的背光面，不启用 shadowMap，避免实时控制时增加阴影开销。
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    key.position.set(0.8, 1.2, 1.0);
+    this.scene.add(key);
+    const fill = new THREE.DirectionalLight(0xdce7ff, 0.9);
+    fill.position.set(-0.9, 0.5, 0.6);
+    this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xfff1df, 0.55);
+    rim.position.set(0.0, 1.1, -1.0);
+    this.scene.add(rim);
     const g = o.gridSize ?? 0.4;
     // 网格线跟着底色走。原来那对(0x2a2d33 / 0x1c1f24)是**比近黑底还暗**的,
     // 靠"比背景亮一点"来显形;换灰底后它们变成比底色暗,直接消失。
@@ -262,7 +269,11 @@ export class UrdfViewer {
         + "最大的几个 link:", this.linkBoxes().slice(0, 3));
     }
     this.controls.target.copy(c);
-    this.camera.position.copy(c).add(new THREE.Vector3(r * 1.6, r * 1.2, r * 1.6));
+    const minAspect = this.opts.minFrameAspect ?? 0;
+    const frameScale = minAspect > 0 && this.camera.aspect < minAspect
+      ? minAspect / this.camera.aspect : 1;
+    this.camera.position.copy(c).add(
+      new THREE.Vector3(r * 1.6, r * 1.2, r * 1.6).multiplyScalar(frameScale));
     this.camera.near = Math.max(0.001, r * 0.02);
     this.camera.far = Math.max(1.0, r * 60);
     this.camera.updateProjectionMatrix();

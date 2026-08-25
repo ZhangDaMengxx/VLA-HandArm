@@ -20,7 +20,7 @@ export class ComboViewer extends UrdfViewer {
   constructor(container) {
     // gridSize 1.2m:装配体零位高约 0.98m,手页那个 0.4m 的网格在这里只有巴掌大,
     // 完全失去"地面在哪"的参照作用。
-    super(container, { gridSize: 1.2 });
+    super(container, { gridSize: 1.2, minFrameAspect: 0.45 });
   }
 
   /** 只刷臂的 7 个关节,手不动。 */
