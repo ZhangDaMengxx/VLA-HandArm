@@ -270,8 +270,10 @@ python3 -m pytest src/test/test_stdin_lines.py
 七关节全零位，再断 CAN。回位失败或超时也必须释放通道。浏览器关闭/刷新走
 `pagehide -> sendBeacon('/api/hardware/release')`，不要改成无法保证送达的普通异步请求。
 `sendBeacon` 仍只是浏览器尽力通知：进程强杀、主机断电和断网可能使请求无法到达后端。
-需要严格通道所有权时，应在服务端增加按页面会话续租的 heartbeat/lease watchdog，并处理
-多标签页所有权；该能力完成前，不得把 `pagehide` 当作绝对释放保证。
+服务端使用按标签页 owner 的硬件租约补足这条路径：页面每 2 秒调用 heartbeat，租约默认
+8 秒，超时后 watchdog 复用统一硬件释放路径。硬件 start/stop/command 和 release 请求必须
+携带 `X-Hardware-Lease`；当前 owner 有效时其他标签页返回 409。网络抖动超过租约也会触发
+手复位和臂回零/断开，因此 watchdog 不是急停替代品，真机仍需净空和可用急停。
 
 ### 修改合体实时跟随
 

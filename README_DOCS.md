@@ -142,8 +142,9 @@ q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
 4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；灵巧手与机械臂 IK 已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。
-5. 页面内切换会等待硬件复位和断开；浏览器关闭依赖 `pagehide/sendBeacon` 尽力通知，
-   服务端 heartbeat/lease watchdog 和多标签页通道所有权尚未实现。
+5. 页面内切换会等待硬件复位和断开；浏览器关闭使用 `pagehide/sendBeacon` 尽力通知，
+   服务端 heartbeat/lease watchdog 和多标签页通道所有权已实现。仍需真机覆盖进程强杀、
+   断网和超时释放路径，确认手复位及机械臂回零/断开的现场行为。
 6. Capture 路径、生命周期、Source 基础留存、版本化 quality profile、绝对/代理质量语义、
    坐标契约、Python 3.12 + LeRobot 0.6.1 完整离线链、严格 v3、episode sidecar 和 Capture 完整性校验已完成；
    设备原生 RGB-D/raw depth、真实硬件时间戳以及限位/碰撞/指尖误差的物理 QA 证据仍未闭环。
