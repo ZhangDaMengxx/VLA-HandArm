@@ -6,6 +6,52 @@
 
 ---
 
+## [2026-08-25] - 联合回放响应与硬件会话租约
+
+### Added (新增)
+
+- 新增服务端硬件会话 lease watchdog：浏览器标签页使用独立 `sessionStorage` owner，
+  每 2 秒 heartbeat，默认租约 8 秒
+- 新增 `/api/hardware/lease/acquire`、`heartbeat`、`status` 和 `release`；手/臂直接硬件
+  start、stop、command、手势动作回放、臂相机姿态和统一释放均校验 `X-Hardware-Lease`
+- 新增手/臂直接控制的多标签页所有权：有效 owner 存在时拒绝其他标签页控制；同 owner
+  可续租，释放与 watchdog 清理保持幂等
+- 新增租约获取、续期、争抢、过期、重复/并发释放及页面 owner/heartbeat 静态回归
+
+### Changed (变更)
+
+- 联合技能回放改为 `combo_prepare -> combo_ready -> combo_start` 两阶段启动：机械臂先
+  非阻塞移动到首帧，真正回放时再为臂和手分配同一个 monotonic 起点
+- 首帧 approach 期间继续轮询并广播机械臂遥测，Three.js 会连续显示到位过程，不再长时间
+  停在旧姿态后突然跳到首帧
+- 联合回放 approach 默认速度由 `10%` 调整为 `50%`；到位、失败或取消后恢复进入前速度
+- 正常主动断开、切页和 `pagehide` 仍执行手复位及机械臂回零后释放；heartbeat 超时则不
+  发送新的手复位或臂回零目标，只保持最后目标并释放串口/CAN
+- 机械臂超时退出只调用 `arm.disconnect()` 关闭当前 SDK/CAN 会话，不调用 `disable()`，
+  不改变真机原有使能状态
+
+### Fixed (修复)
+
+- 修复联合技能 approach 阻塞 `arm_console` 主循环，导致 Three.js 长时间无变化、到位后
+  突然跳变的问题
+- 修正 Web 机械臂会话中“退出会去使能”的遗留注释；增加回归约束，禁止退出 `finally`
+  路径调用 `arm.disable()`
+- 浏览器正常停止最后一个硬件通道后立即释放页面租约，避免其他标签页额外等待 8 秒
+
+### Safety (安全)
+
+- heartbeat 超时释放不会因网络抖动主动生成新的复位/回零运动；灵巧手可能继续保持最后
+  夹持目标，机械臂保持原使能状态，因此 watchdog 仍不是急停替代品
+- 本次只执行 Mock、静态和单元测试，未连接真机、未发送真实运动命令；断网、进程强杀和
+  双真机超时释放仍需在低速、净空和急停可用条件下现场验证
+- `/api/combo/play` 与 `/api/voice/invoke` 仍通过已接入的全局硬件会话执行，尚未独立校验
+  页面 lease header；在这两个入口补齐 owner 透传前，多标签页所有权不能视为全入口闭环
+
+### Verification (验证)
+
+- 租约、页面生命周期、手 console ACK/退出相关定向测试 `35 passed`
+- 合体页面与 CPV 回归 `50 passed`；Python 编译和 `git diff --check` 通过
+
 ## [2026-08-24] - 灵巧手资产映射一致性
 
 ### Added (新增)
