@@ -5648,8 +5648,9 @@ async function rcPollStatus() {
   // (i/n/total_ms),不再是 web 层 ComboPlaySession 的 frame/total/duration_ms。
   // fail 是 CPV 发送失败帧数 —— 非 0 说明 CAN 在丢帧,比进度更值得看。
   const on = s.running;
+  const preparing = on && s.phase && s.phase !== "playing";
   $("rcPlayStat").textContent = on
-    ? `${s.paused ? "暂停" : "回放"} ${s.name} · ${s.i}/${s.n}`
+    ? `${preparing ? "正在低速到首帧" : s.paused ? "暂停" : "回放"} ${s.name} · ${s.i}/${s.n}`
       + ` · ${(s.elapsed_ms / 1000).toFixed(1)}/${(s.total_ms / 1000).toFixed(1)}s`
       + (s.fail ? ` · ⚠ 丢 ${s.fail} 帧` : "")
     : "未在回放";
@@ -5657,8 +5658,8 @@ async function rcPollStatus() {
                               : on ? "var(--accent)" : "var(--text-3)";
   const pct = s.total_ms ? Math.min(100, s.elapsed_ms / s.total_ms * 100) : 0;
   $("rcPlayFill").style.width = (on ? pct : 0) + "%";
-  $("btnRcPause").disabled = !on || s.paused;
-  $("btnRcResume").disabled = !on || !s.paused;
+  $("btnRcPause").disabled = !on || preparing || s.paused;
+  $("btnRcResume").disabled = !on || preparing || !s.paused;
   $("btnRcStop").disabled = !on;
   if (!on && _rcPollTimer) {           // 停了就别接着轮询
     clearInterval(_rcPollTimer);

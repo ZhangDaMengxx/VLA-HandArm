@@ -41,6 +41,35 @@ def _player(**kw) -> ComboPlayer:
     return ComboPlayer(_pack(**kw), None, None, None)
 
 
+class _DelayedArm:
+    """move_j 接收目标但不立即到位，用来覆盖真机的异步 approach。"""
+
+    def __init__(self) -> None:
+        self.mock = False
+        self.cpv_active = False
+        self.enabled = True
+        self.frozen = False
+        self.speed_percent = 37
+        self.last_error = None
+        self.current = [0.3] + [0.0] * 6
+        self.target = list(self.current)
+        self.speeds: list[int] = []
+
+    def set_speed_percent(self, value: int) -> None:
+        self.speed_percent = value
+        self.speeds.append(value)
+
+    def move_j(self, target: list[float]) -> bool:
+        self.target = list(target)
+        return True
+
+    def read_angles(self) -> list[float]:
+        return list(self.current)
+
+    def cpv_end(self) -> None:
+        self.cpv_active = False
+
+
 def _combo_dict() -> dict:
     """一个最小的合法 combo 包 dict。两帧,手从张开到半合。"""
     import combo_pack as cbp
@@ -240,6 +269,73 @@ def test_tick_not_fired_before_start_at():
     assert pl.sent_arm == 0, "起跑前不该发帧"
 
 
+# ------------------------------------------------------ 非阻塞 approach + ready 握手
+@case
+def test_nonblocking_approach_keeps_polling_without_sleep():
+    arm = _DelayedArm()
+    pl = ComboPlayer(_pack(), arm, None, None)
+    started = time.monotonic()
+    ok, _ = pl.begin_approach(timeout=5.0)
+    status, _ = pl.poll_approach(current=arm.current, now=started + 0.1)
+    elapsed = time.monotonic() - started
+    assert ok and status == "waiting"
+    assert elapsed < 0.05, f"begin+poll 阻塞了 {elapsed:.3f}s"
+    assert arm.speeds == [cp.APPROACH_SPEED_PCT], "尚未到位时应保持默认 approach 速度"
+
+    arm.current = list(pl.pack.approach_rad)
+    status, _ = pl.poll_approach(current=arm.current, now=started + 0.2)
+    assert status == "ready"
+    assert arm.speeds == [cp.APPROACH_SPEED_PCT, 37], "到位后必须恢复原速度"
+
+
+@case
+def test_approach_timeout_fails_closed_and_restores_speed():
+    arm = _DelayedArm()
+    pl = ComboPlayer(_pack(), arm, None, None)
+    ok, _ = pl.begin_approach(timeout=0.0)
+    status, msg = pl.poll_approach(current=arm.current, now=time.monotonic())
+    assert ok and status == "failed"
+    assert "不开始回放" in msg
+    assert arm.speeds == [cp.APPROACH_SPEED_PCT, 37]
+
+
+@case
+def test_web_starts_hand_only_after_arm_ready_with_shared_clock():
+    import app_web as w
+
+    class _Proc:
+        def poll(self):
+            return None
+
+    class _Session:
+        def __init__(self):
+            self.console = _Proc()
+            self.commands = []
+
+        def command(self, command):
+            self.commands.append(command)
+            return {"ok": True}
+
+    old_arm, old_hand, old_pending = w._arm, w._hand, w._combo_pending
+    arm, hand = _Session(), _Session()
+    try:
+        w._arm, w._hand = arm, hand
+        w._combo_pending = {"token": "tok", "name": "t", "path": "t.json",
+                            "frames": 2, "duration_ms": 500,
+                            "phase": "preparing", "hand_pack": {"frames": []}}
+        w._handle_arm_combo_event({"type": "state", "combo": {"phase": "approaching"}})
+        assert arm.commands == [] and hand.commands == [], "到位前两侧都不能正式起跑"
+
+        before = time.monotonic()
+        w._handle_arm_combo_event({"type": "combo_ready", "token": "tok"})
+        assert arm.commands[-1]["cmd"] == "combo_start"
+        assert hand.commands[-1]["cmd"] == "gesture_play"
+        assert arm.commands[-1]["start_at"] == hand.commands[-1]["start_at"]
+        assert arm.commands[-1]["start_at"] >= before + 0.15
+    finally:
+        w._arm, w._hand, w._combo_pending = old_arm, old_hand, old_pending
+
+
 # ------------------------------------------------------ 手侧复用 gesture_play
 @case
 def test_combo_hand_half_loads_as_gesture_pack():
@@ -303,7 +399,7 @@ def test_combo_start_exists_and_is_the_only_path():
     """
     import app_web as w
     assert hasattr(w, "_combo_start"), "_combo_start 没定义"
-    src = Path(SIM / "app_web.py").read_text(encoding="utf-8")
+    src = Path(SRC / "app_web.py").read_text(encoding="utf-8")
     n = src.count("_combo_start(pack")
     assert n >= 2, f"_combo_start 应被两处调用(▶ 和语音),只找到 {n}"
     assert "class ComboPlaySession" not in src, \

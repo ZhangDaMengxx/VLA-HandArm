@@ -73,6 +73,7 @@ TICK_HZ = 200.0
 # 再大则首帧就有可见偏差。
 APPROACH_TOL_RAD = 0.5 * 3.141592653589793 / 180.0
 APPROACH_TIMEOUT_S = 20.0       # 等不到就报错退出,**不硬着头皮开始流式发**
+APPROACH_SPEED_PCT = 50         # approach 默认速度百分比
 
 
 class ComboError(ValueError):
@@ -285,6 +286,9 @@ class ComboPlayer:
         self.fail_arm = 0
         self.fail_hand = 0
         self.late_ms: list[float] = []
+        self._approach_active = False
+        self._approach_deadline = 0.0
+        self._approach_old_speed: int | None = None
 
     # ---------------------------------------------------------------- 控制
     def start(self, *, start_at: float | None = None) -> None:
@@ -472,7 +476,87 @@ class ComboPlayer:
                 bad.append("手没连上")
         return bad
 
-    def approach(self, *, speed_pct: int = 10,
+    def _finish_approach(self) -> str | None:
+        """结束 approach 并恢复进入前的速度；失败时返回原因。可重复调用。"""
+        if not self._approach_active:
+            return None
+        self._approach_active = False
+        old = self._approach_old_speed
+        self._approach_old_speed = None
+        if old is not None and self.arm is not None:
+            try:
+                self.arm.set_speed_percent(old)
+            except Exception as e:                          # noqa: BLE001
+                return f"恢复 approach 前速度 {old}% 失败: {e}"
+        return None
+
+    def begin_approach(self, *, speed_pct: int = APPROACH_SPEED_PCT,
+                       timeout: float = APPROACH_TIMEOUT_S) -> tuple[bool, str]:
+        """下发低速 move_j，但不等待到位；到位检查交给 poll_approach()。
+
+        这是 console 主循环使用的入口。硬件读写仍在同一个线程里进行，同时主循环
+        可以继续发布真实关节角遥测，避免 Three.js 在 approach 期间冻结。
+        """
+        if self.arm is None:
+            return True, "无臂,跳过 approach"
+        if self._approach_active:
+            return False, "approach 已经在进行"
+        tgt = self.pack.approach_rad
+        if self.arm.cpv_active:
+            self.arm.cpv_end()
+        self._approach_old_speed = self.arm.speed_percent
+        try:
+            self.arm.set_speed_percent(speed_pct)
+            if not self.arm.move_j(tgt):
+                self._approach_active = True
+                restore = self._finish_approach()
+                detail = f"approach 的 move_j 被拒(急停中?): {self.arm.last_error}"
+                return False, detail + (f"; {restore}" if restore else "")
+        except Exception as e:                              # noqa: BLE001
+            self._approach_active = True
+            restore = self._finish_approach()
+            detail = f"approach 下发异常: {e}"
+            return False, detail + (f"; {restore}" if restore else "")
+        self._approach_active = True
+        self._approach_deadline = time.monotonic() + max(0.0, timeout)
+        return True, "approach 已下发"
+
+    def poll_approach(self, *, current: list[float] | None = None,
+                      now: float | None = None) -> tuple[str, str]:
+        """检查 approach 状态，返回 waiting / ready / failed 和说明。"""
+        if self.arm is None:
+            return "ready", "无臂,跳过 approach"
+        if not self._approach_active:
+            return "failed", "approach 尚未开始或已经结束"
+        if self.arm.frozen or not self.arm.enabled:
+            restore = self._finish_approach()
+            msg = "approach 期间机械臂被急停或失能 —— 不开始回放"
+            return "failed", msg + (f"; {restore}" if restore else "")
+        if self.arm.mock:
+            restore = self._finish_approach()
+            if restore:
+                return "failed", restore + " —— 不开始回放"
+            return "ready", "mock:move_j 立即到位"
+
+        cur = current if current is not None else self.arm.read_angles()
+        err = max(abs(c - t) for c, t in zip(cur, self.pack.approach_rad))
+        if err <= APPROACH_TOL_RAD:
+            restore = self._finish_approach()
+            if restore:
+                return "failed", restore + " —— 不开始回放"
+            return "ready", f"到位,最大偏差 {err * 57.2958:.3f}°"
+        if (time.monotonic() if now is None else now) >= self._approach_deadline:
+            restore = self._finish_approach()
+            msg = (f"approach 超时,最大偏差还有 {err * 57.2958:.2f}° "
+                   "—— 不开始回放")
+            return "failed", msg + (f"; {restore}" if restore else "")
+        return "waiting", f"最大偏差 {err * 57.2958:.2f}°"
+
+    def cancel_approach(self) -> None:
+        """取消等待并恢复速度；已下发的 move_j 只能由急停等硬件命令制动。"""
+        self._finish_approach()
+
+    def approach(self, *, speed_pct: int = APPROACH_SPEED_PCT,
                  timeout: float = APPROACH_TIMEOUT_S) -> tuple[bool, str]:
         """把臂从**当前姿态**低速挪到首帧,等到位。返回 (成功, 说明)。
 
@@ -484,41 +568,16 @@ class ComboPlayer:
         用 move_j 而不是 CPV:这一步要的是**规划过的、慢的**运动,正好是 move_j 的强项。
         CPV 在这里反而危险 —— 它是位置环,一个远目标下去就是全速冲。
         """
-        if self.arm is None:
-            return True, "无臂,跳过 approach"
-        tgt = self.pack.approach_rad
-        if self.arm.cpv_active:
-            # move_j 要靠 auto 切模式,CPV 期间 auto 是关的。先退出。
-            self.arm.cpv_end()
-        old = self.arm.speed_percent
-        self.arm.set_speed_percent(speed_pct)
-        try:
-            if not self.arm.move_j(tgt):
-                return False, f"approach 的 move_j 被拒(急停中?): {self.arm.last_error}"
-            if self.arm.mock:
-                # ⚠ mock 下**不能**跑到位判据。mock 的 read_angles 故意在目标位附近
-                # 摆 ±0.12rad(=6.9°)当"活着"的可见信号,永远进不了 0.5° 的窗
-                # —— 等满 20s 然后报"超时,还差 5.25°"。那个数是摆动幅度,不是误差。
-                # 说明:**到位判据只在真机上被执行到**。这是已知的覆盖缺口,
-                # 不是"mock 下也验过了"。
-                return True, "mock:跳过到位等待(mock 的摆动幅度 6.9° > 判据 0.5°)"
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                cur = self.arm.read_angles()
-                err = max(abs(c - t) for c, t in zip(cur, tgt))
-                if err <= APPROACH_TOL_RAD:
-                    return True, f"到位,最大偏差 {err * 57.2958:.3f}°"
-                time.sleep(0.05)
-            cur = self.arm.read_angles()
-            err = max(abs(c - t) for c, t in zip(cur, tgt))
-            return False, (f"approach 超时 {timeout:.0f}s,最大偏差还有 "
-                           f"{err * 57.2958:.2f}° —— **不开始回放**")
-        finally:
-            # 速度恢复:approach 的低速是这一步专用的,留着会让后面的动作也慢。
-            # ⚠ old 可能是 None(speed_percent 在没写过时返回 None,见那个属性的注释),
-            # 那种情况下我们不知道原值,就**不乱写**一个猜的值回去。
-            if old is not None:
-                self.arm.set_speed_percent(old)
+        ok, msg = self.begin_approach(speed_pct=speed_pct, timeout=timeout)
+        if not ok:
+            return False, msg
+        while True:
+            status, msg = self.poll_approach()
+            if status == "ready":
+                return True, msg
+            if status == "failed":
+                return False, msg
+            time.sleep(0.05)
 
 
 def hand_cues_from_pack(rel: str) -> tuple[list[HandCue], list[str]]:

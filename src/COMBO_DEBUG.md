@@ -244,7 +244,8 @@ mock 下已验:
 | 视频 → 关节 | ✅ 6 维 | ❌(`derive_embodiment.py` 出 13 维,但没页面能送真机) |
 
 **播放器跑在 `arm_console` 进程里**,不在 web 层:CPV 要 `arm.move_cpv_pos()`,而 can0
-被 console 独占。web 层只投递 `combo_play` 命令,然后轮询 `/api/combo/play/status` ——
+被 console 独占。web 层先投递 `combo_prepare`，到位后再投递 `combo_start`，并轮询
+`/api/combo/play/status` ——
 进度**捎在臂遥测里**回来。语音说包名走的是同一条路(见 `README.md` 的「三种 kind」)。
 
 ⚠ 回放器 tick 必须排在**读位姿之前**。反了的话 CPV 帧在位姿读之后才发,遥测里带的是
@@ -284,14 +285,16 @@ mock 下已验:
 `ctrl_mode` 门控的)。web 层查不了 —— 它没有 `NeroArm` 句柄。
 
 `arm_console` 还在 CPV 之前做两件事:**逐点查限位**(只查不夹)和 **`approach`** ——
-以 10% 速度慢速挪到首帧,挡住过大的初始落差。没有 approach 的话第一帧就是全速冲。
+以 50% 速度挪到首帧,挡住过大的初始落差。approach 是主循环中的非阻塞状态：
+每个遥测 tick 继续读取并发布真实关节角，同时检查 0.5° 到位窗；所以 Web 3D 会显示
+这段真实运动，而不是停住后跳到首帧。20s 超时、失能或急停都会拒绝正式回放。
 
 帧间最大单关节跳变仍然要报,但走 CPV 之后**这个数的含义变了**:原来(`move_j`)大跳变
 意味着规划被下一帧打断、臂走不到任何一个点;现在是位置环,重设目标不打断,后果是
 **速度** —— 跳变越大冲得越快。`check` 只查不夹,夹了就把"包本身越界"这个事实抹掉了。
 
 ⚠ 退出 CPV 模式**只在 `done` 时做**,不在每帧结束时做。两个包之间退了的话,下一个
-`combo_play` 又要重进,多一次模式切换。
+`combo_prepare` 又要重进,多一次模式切换。
 
 `combo_player.py` 默认 `--mock`,真机要 `--no-mock-arm`/`--no-mock-hand` **外加 `--yes`**。
 
@@ -336,14 +339,16 @@ mock 下已验:
 另外 `video_gesture.py` 只出 6 维手,**完全不碰臂的 7 维**,而 `derive_embodiment.py`
 早就在出完整 13 维 —— 离线管线的产物**没有任何页面能送到真机**。
 
-## 时间轴同步(已实现:`start_at`)
+## 时间轴同步(已实现:`combo_ready` + `start_at`)
 
-**一个 t0,不要握手协议。** start 命令里带一个共同的 `t0`,两个 console **各自算自己的
-截止时刻**。没有主从、不需要周期性重同步、不存在漂移。
+**先做一次就绪握手，再共用一个 t0。** `combo_prepare` 只让臂低速到首帧，手不启动；
+`arm_console` 到位后发 `combo_ready`。Web 收到事件才生成共同 `t0`，两个 console
+**各自算自己的截止时刻**。正式回放没有主从、不需要周期性重同步。
 
-已落到 `_combo_start()`:`start_at = time.monotonic() + 0.05`,臂侧走 `combo_play`、
-手侧**复用 `gesture_play`** 并各带同一个 `start_at`。那 50ms 是指令递到 + parse +
-approach 的余量。
+已落到 `_combo_start()` 和 `_handle_arm_combo_event()`：收到 `combo_ready` 后取
+`start_at = time.monotonic() + 0.2`，臂侧走 `combo_start`、手侧**复用 `gesture_play`**
+并各带同一个 `start_at`。200ms 只覆盖两条 stdin 管道的调度和解析，不再错误地把耗时
+数秒的 approach 塞进固定余量。approach 失败时手侧不会启动。
 
 依据:`time.monotonic()` 在 Linux 上是 `clock_gettime(CLOCK_MONOTONIC)`,**系统级**的。
 实测 200/200 次子进程读数都落在父进程的 `[a, b]` 区间内,偏移就是 IPC 往返本身

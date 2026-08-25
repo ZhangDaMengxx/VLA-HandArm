@@ -43,6 +43,8 @@ from stdin_lines import StdinLines                                   # noqa: E40
 
 HOME_RAD = list(NERO_HOME_POSE)
 _player = None                # ComboPlayer 实例,主循环 tick 它
+_combo_phase = "idle"         # idle / approaching / ready / playing
+_combo_token: str | None = None
 
 
 def emit(obj: dict) -> None:
@@ -59,15 +61,22 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
     pending_speed 是单元素可变列表(用列表是为了让 handle 能改调用方的值):
     接入时臂未使能 → 初始速度没能设,挂在这里,等 enable 成功后补发。
     """
+    global _player, _combo_phase, _combo_token
     c = cmd.get("cmd")
     moving = c in ("angles", "home", "goto_connect_pose", "goto_tracking_ready", "combo_play",
-                   "tracking_begin", "tracking_angles")
+                   "combo_prepare", "combo_start", "tracking_begin", "tracking_angles")
     if moving and require_enable and not arm.enabled:
         return {"type": "error", "cmd": c,
                 "msg": "臂未使能,运动指令被拒。先发 {\"cmd\":\"enable\"}"}
     if moving and arm.frozen:
         return {"type": "error", "cmd": c,
                 "msg": "急停生效中,运动指令被拒。先发 {\"cmd\":\"reset\"} 解除"}
+    conflicting = ("angles", "home", "goto_connect_pose", "goto_tracking_ready",
+                   "speed", "tracking_begin", "tracking_angles", "tracking_end",
+                   "combo_play", "combo_prepare")
+    if _combo_phase != "idle" and c in conflicting:
+        return {"type": "error", "cmd": c,
+                "msg": f"联合回放处于 {_combo_phase},先发 combo_stop"}
 
     if c == "angles":
         rad = cmd.get("rad") or []
@@ -150,9 +159,11 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
     # 那是 NeroArm 的方法,而 NeroArm 只在这个进程里(它独占 can0)。
     # web 层经 stdin 递 JSON 递不了对象,所以播放器必须在这边。
     # 和 hand_console 跑 ActionPlayer 是同一个道理。
-    if c == "combo_play":
-        global _player
-        if _player is not None and not _player.done:
+    if c == "combo_prepare":
+        token = str(cmd.get("token") or "")
+        if not token:
+            return {"type": "error", "cmd": c, "msg": "token 为空"}
+        if _player is not None:
             return {"type": "error", "cmd": c, "msg": "已经在回放,先发 combo_stop"}
         try:
             from combo_player import ComboPlayer, ArmTrajPack, ArmWaypoint
@@ -182,38 +193,64 @@ def handle(arm: NeroArm, cmd: dict, require_enable: bool,
                            mode=str(cmd.get("mode") or "waypoints"),
                            waypoints=pts, approach_rad=list(pts[0].rad))
         # hand=None:手侧由 hand_console 自己播(两个进程各持一个设备)。
-        # 两侧靠 start_at(共同的 CLOCK_MONOTONIC 时刻)对齐 —— 见 main() 里
-        # 的 tick 和 web 层 _combo_start 的注释。
+        # approach 与正式播放分成两阶段。主循环继续读真实角度并检查到位；到位后
+        # 发 combo_ready，web 再给臂和手下发共同 start_at。
         _player = ComboPlayer(pack, arm, None, None,
                               skip_arm=(pack.mode == "stream"))
         bad = _player.preflight()
         if bad:
             _player = None
             return {"type": "error", "cmd": c, "msg": "preflight 不通过: " + "; ".join(bad)}
-        # approach:慢速挪到首帧,挡住过大的初始落差。
-        ok_ap, msg_ap = _player.approach(speed_pct=10)
+        ok_ap, msg_ap = _player.begin_approach()
         if not ok_ap:
             _player = None
-            return {"type": "error", "cmd": c, "msg": f"approach 失败: {msg_ap}"}
-        # 进 CPV 模式 —— 关掉 SDK 的 auto_set_motion_mode,后续逐关节位置指令才有效。
-        if not arm.mock and not arm.cpv_begin():
-            _player = None
-            return {"type": "error", "cmd": c, "msg": f"进入 CPV 失败: {arm.last_error}"}
-        start_at = float(cmd.get("start_at") or 0.0) or None
-        _player.start(start_at=start_at)
-        return {"type": "ack", "cmd": c, "ok": True, "name": pack.name,
+            return {"type": "error", "cmd": c, "token": token,
+                    "msg": f"approach 失败: {msg_ap}"}
+        _combo_phase = "approaching"
+        _combo_token = token
+        return {"type": "ack", "cmd": c, "ok": True, "token": token,
+                "name": pack.name,
                 "waypoints": len(pts), "mode": pack.mode,
-                "duration_s": round(pack.dur_ns / 1e9, 2), "cpv": True}
+                "duration_s": round(pack.dur_ns / 1e9, 2), "phase": _combo_phase}
+    if c == "combo_start":
+        token = str(cmd.get("token") or "")
+        if _player is None or _combo_phase != "ready":
+            return {"type": "error", "cmd": c, "token": token,
+                    "msg": "机械臂尚未完成 approach"}
+        if token != _combo_token:
+            return {"type": "error", "cmd": c, "token": token,
+                    "msg": "combo token 不匹配"}
+        start_at = float(cmd.get("start_at") or 0.0)
+        if start_at <= time.monotonic():
+            return {"type": "error", "cmd": c, "token": token,
+                    "msg": "start_at 必须是未来时刻"}
+        _player.start(start_at=start_at)
+        _combo_phase = "playing"
+        return {"type": "ack", "cmd": c, "ok": True, "token": token,
+                "name": _player.pack.name, "start_at": start_at}
     if c in ("combo_pause", "combo_resume", "combo_stop"):
         if _player is None:
             return {"type": "error", "cmd": c, "msg": "没有在回放"}
+        if c == "combo_stop" and _combo_phase in ("approaching", "ready"):
+            name = _player.pack.name
+            _player.cancel_approach()
+            if arm.cpv_active:
+                arm.cpv_end()
+            _player = None
+            _combo_phase = "idle"
+            _combo_token = None
+            return {"type": "ack", "cmd": c, "ok": True, "stopped": True,
+                    "name": name}
+        if _combo_phase != "playing":
+            return {"type": "error", "cmd": c,
+                    "msg": "approach 阶段只能停止,不能暂停或恢复"}
         if c == "combo_pause":
             _player.pause()
         elif c == "combo_resume":
             _player.resume()
         else:
             _player.stop()
-            # ⚠ stop 之后**不清 _player** —— 主循环要靠它走到 cpv_end()
+            # ⚠ 播放中 stop 之后**不清 _player** —— 主循环要靠它走到 cpv_end()
             # 把 auto_set_motion_mode 恢复。清早了那一步就没人做,
             # 之后的 move_j 会走在 cpv 模式下(行为未定义)。
         return {"type": "ack", "cmd": c, "ok": True, "paused": _player.paused}
@@ -313,24 +350,46 @@ def main() -> None:
 
             # ⚠ 回放器 tick:必须在读位姿**之前**,否则 CPV 帧在位姿读之后才发,
             # 遥测里的 target 滞后一拍。
-            global _player
-            if _player is not None:
+            global _player, _combo_phase, _combo_token
+            if _player is not None and _combo_phase == "playing":
                 if not _player.done:
                     _player.tick()
                 else:
                     # 跑完了:恢复 auto_set_motion_mode,清 _player。
                     # ⚠ cpv_end 要在这里调而不是在 combo_stop 时 —— stop 是「中断」,
                     # 那时用户可能接着发下一个包,两个包之间不该退出 CPV 模式(退了
-                    # 下一个 combo_play 又要重进,多一次模式切换)。只在 done 时退,
+                    # 下一个 combo_prepare 又要重进,多一次模式切换)。只在 done 时退,
                     # 意思是「一段时间内不会再有 CPV」了。
-                    if not arm.mock:
-                        arm.cpv_end()
+                    arm.cpv_end()
                     emit({"type": "combo_done", "name": _player.pack.name,
+                          "token": _combo_token,
                           "stopped": _player.stopped,
                           "sent": _player.sent_arm, "fail": _player.fail_arm})
                     _player = None
+                    _combo_phase = "idle"
+                    _combo_token = None
 
             rad = arm.read_angles()
+            if _player is not None and _combo_phase == "approaching":
+                phase, detail = _player.poll_approach(current=rad, now=now)
+                if phase == "ready":
+                    if not arm.cpv_begin():
+                        emit({"type": "combo_failed", "name": _player.pack.name,
+                              "token": _combo_token,
+                              "msg": f"进入 CPV 失败: {arm.last_error}"})
+                        _player = None
+                        _combo_phase = "idle"
+                        _combo_token = None
+                    else:
+                        _combo_phase = "ready"
+                        emit({"type": "combo_ready", "name": _player.pack.name,
+                              "token": _combo_token, "detail": detail})
+                elif phase == "failed":
+                    emit({"type": "combo_failed", "name": _player.pack.name,
+                          "token": _combo_token, "msg": detail})
+                    _player = None
+                    _combo_phase = "idle"
+                    _combo_token = None
             row = {"type": "state", "t": round(now - t0, 3),
                    "names": ARM_JOINTS, "rad": [round(v, 4) for v in rad],
                    "target": [round(v, 4) for v in arm.target],
@@ -342,12 +401,13 @@ def main() -> None:
                                             zip(rad, arm.connect_pose)), 4))}
             # 回放进度随遥测捎带 —— 前端不用另开一路轮询。
             if _player is not None:
-                row["combo"] = {"name": _player.pack.name,
-                                "progress": round(_player.progress(), 4),
-                                # max(0,…):start_at 在未来时 elapsed 是负的
-                                "elapsed_ms": max(0, _player.elapsed_ns // 1_000_000),
+                playing = _combo_phase == "playing"
+                row["combo"] = {"name": _player.pack.name, "phase": _combo_phase,
+                                "progress": round(_player.progress(), 4) if playing else 0.0,
+                                "elapsed_ms": (max(0, _player.elapsed_ns // 1_000_000)
+                                               if playing else 0),
                                 "total_ms": _player.total_ns // 1_000_000,
-                                "paused": _player.paused,
+                                "paused": _player.paused if playing else False,
                                 "i": _player.i_arm,
                                 "n": len(_player.pack.waypoints),
                                 "fail": _player.fail_arm}

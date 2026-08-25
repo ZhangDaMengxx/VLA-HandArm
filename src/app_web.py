@@ -890,7 +890,13 @@ class ArmDebugSession:
                     self.loop.call_soon_threadsafe(
                         self._resolve_tracking_ack, token, row
                     )
-            if typ in ("state", "ack", "error", "closed"):
+            if (typ in ("combo_ready", "combo_failed", "combo_done")
+                    or (typ == "error" and row.get("cmd") in
+                        ("combo_prepare", "combo_start"))
+                    or (typ == "state" and row.get("combo"))):
+                _handle_arm_combo_event(row)
+            if typ in ("state", "ack", "error", "closed", "combo_ready",
+                       "combo_failed", "combo_done"):
                 self.loop.call_soon_threadsafe(self._broadcast, row)
 
     def _broadcast(self, row: dict) -> None:
@@ -1011,6 +1017,8 @@ _hand: HandDebugSession | None = None
 _arm: ArmDebugSession | None = None
 _hand_target_mailbox: LatestTargetMailbox | None = None
 _arm_target_mailbox: LatestTargetMailbox | None = None
+_combo_pending_lock = threading.Lock()
+_combo_pending: dict | None = None
 
 
 def _get_arm() -> ArmDebugSession:
@@ -1535,7 +1543,7 @@ def _voice_play_pack(payload: dict) -> JSONResponse:
     """语音回放技能包。走**和按钮同一条**路,按 kind 分流:
 
       gesture_pack → gp.load_pack  → hand_console 的 gesture_play(ActionPlayer)
-      combo_pack   → cbp.load_pack → arm_console 的 combo_play(CPV)+ 手同轴
+      combo_pack   → cbp.load_pack → arm_console 的 prepare/start(CPV)+ 手同轴
 
     为什么不让前端直接打 /api/hand/gesture/play 或 /api/combo/play:那样会绕过
     两件事 —— ① 二次确认闸;② 调用日志。日志里 (原话, 包路径) 的配对和技能那边
@@ -1598,16 +1606,71 @@ def _voice_play_pack(payload: dict) -> JSONResponse:
                          "note": "已投递给 console;逐帧进度看手页『技能包』栏"})
 
 
+def _handle_arm_combo_event(row: dict) -> None:
+    """由 arm stdout 线程处理 prepare/ready/start 两阶段协调。"""
+    global _combo_pending
+    typ = row.get("type")
+    token = row.get("token")
+    with _combo_pending_lock:
+        pending = _combo_pending
+        if pending is not None and token and token != pending.get("token"):
+            return
+        if typ == "combo_failed" or (typ == "error" and row.get("cmd") == "combo_start"):
+            hand = _get_hand()
+            if hand.console and hand.console.poll() is None:
+                hand.command({"cmd": "action_stop"})
+            _combo_pending = None
+            return
+        if pending is None:
+            return
+
+        if typ == "state":
+            if (row.get("combo") or {}).get("phase") == "playing":
+                pending["phase"] = "playing"
+            return
+        if typ == "combo_done":
+            _combo_pending = None
+            return
+        if typ == "error":
+            _combo_pending = None
+            hand = _get_hand()
+            if hand.console and hand.console.poll() is None:
+                hand.command({"cmd": "action_stop"})
+            return
+        if typ != "combo_ready" or pending.get("phase") != "preparing":
+            return
+
+        arm, hand = _get_arm(), _get_hand()
+        if not (arm.console and arm.console.poll() is None
+                and hand.console and hand.console.poll() is None):
+            arm.command({"cmd": "combo_stop"})
+            _combo_pending = None
+            return
+
+        # ready 之后重新取共同起点。200ms 覆盖两条 stdin 管道的调度抖动；两边使用
+        # 同一个系统 CLOCK_MONOTONIC，所以到达先后不会变成固定时间轴偏差。
+        start_at = time.monotonic() + 0.2
+        arm_result = arm.command({"cmd": "combo_start", "token": token,
+                                  "start_at": start_at})
+        hand_result = hand.command({"cmd": "gesture_play", "pack": pending["hand_pack"],
+                                    "return_home": False, "start_at": start_at})
+        if not arm_result.get("ok") or not hand_result.get("ok"):
+            arm.command({"cmd": "combo_stop"})
+            hand.command({"cmd": "action_stop"})
+            _combo_pending = None
+            return
+        pending["phase"] = "starting"
+
+
 def _combo_start(pack, rel: str) -> tuple[bool, str, int]:
     """启动联合录制包回放,返回 (成功, 消息, HTTP 状态码)。
 
-    CPV 路径:两个 console 各自播一半,通过 start_at(共同的 CLOCK_MONOTONIC
-    时刻)对齐。这个函数只做 preflight + 分发指令,不持有播放状态 —— 进度
-    由 console 内部的 ComboPlayer 管着。
+    CPV 路径分两阶段：先让 arm_console 非阻塞地 approach 首帧；收到 combo_ready
+    后再给两个 console 下发共同 start_at。进度由 console 内部播放器管理。
 
     ⚠ 这是 ▶ 按钮和语音的统一路径 —— preflight 做一份,两边门槛一致。
     """
-    import combo_pack as cbp
+    global _combo_pending
     arm, hand = _get_arm(), _get_hand()
     if not (arm.console and arm.console.poll() is None):
         return False, "未接入臂", 409
@@ -1620,16 +1683,6 @@ def _combo_start(pack, rel: str) -> tuple[bool, str, int]:
         return False, "急停生效中,先点『复位』", 409
     if pack.mode == "stream":
         return False, "mode=stream 上千帧,要流式喂 —— 用 combo_player.py --combo", 400
-
-    # 共同起跑时刻:两个 console 靠它对齐。⚠ 留 50ms 余量(指令递到 + parse + approach)。
-    import time
-    start_at = time.monotonic() + 0.05
-
-    # 臂侧:整个 pack 序列化成 waypoints 下发给 arm_console,它构造 ComboPlayer
-    # 并在主循环 tick。
-    wps = [{"t_ns": f.t_ns, "rad": list(f.arm_rad)} for f in pack.frames]
-    arm.command({"cmd": "combo_play", "name": pack.name, "mode": pack.mode,
-                 "waypoints": wps, "start_at": start_at})
     # 手侧:**复用 gesture_play**,不新造命令。
     # ⚠ combo 包的手侧字段和 GesturePack 逐个对得上(hand_rad→rad、hand_raw→
     # raw_vendor,其余同名),所以转成 gesture pack 的 dict 就能走 console 里
@@ -1647,8 +1700,21 @@ def _combo_start(pack, rel: str) -> tuple[bool, str, int]:
                     "hold_ms": f.hold_ms, "speed": f.speed, "force": f.force,
                     "label": f.label, "t_ns": f.t_ns} for f in pack.frames],
     }
-    hand.command({"cmd": "gesture_play", "pack": hand_pack,
-                  "return_home": False, "start_at": start_at})
+    token = f"combo-{time.monotonic_ns()}"
+    wps = [{"t_ns": f.t_ns, "rad": list(f.arm_rad)} for f in pack.frames]
+    with _combo_pending_lock:
+        if _combo_pending is not None:
+            return False, "已有联合回放正在准备或启动", 409
+        _combo_pending = {"token": token, "name": pack.name, "path": rel,
+                          "frames": len(pack.frames), "duration_ms": pack.duration_ms,
+                          "phase": "preparing", "hand_pack": hand_pack}
+    sent = arm.command({"cmd": "combo_prepare", "token": token,
+                        "name": pack.name, "mode": pack.mode, "waypoints": wps})
+    if not sent.get("ok"):
+        with _combo_pending_lock:
+            if _combo_pending and _combo_pending.get("token") == token:
+                _combo_pending = None
+        return False, sent.get("msg") or "下发 combo_prepare 失败", 500
     return True, "", 200
 
 
@@ -2279,13 +2345,23 @@ async def combo_play(payload: dict) -> JSONResponse:
 
 @app.get("/api/combo/play/status")
 async def combo_play_status() -> JSONResponse:
-    """回放进度。**从臂遥测里取** —— 播放器活在 arm_console 进程里,web 层不持有状态。
+    """回放进度。正式播放取臂遥测；prepare/start 间隙取 Web 协调状态。
 
     ⚠ 不再用 ComboPlaySession。臂侧的 ComboPlayer 是唯一的进度来源(手侧跟着
-    同一条 start_at 时间轴走,不单独报)。没有 combo 字段 = 没在放。
+    同一条 start_at 时间轴走,不单独报)。
     """
     st = (_get_arm().latest or {}).get("combo")
     if not st:
+        with _combo_pending_lock:
+            pending = dict(_combo_pending) if _combo_pending is not None else None
+        if pending:
+            return JSONResponse({"ok": True, "running": True,
+                                 "name": pending["name"],
+                                 "phase": pending["phase"], "progress": 0.0,
+                                 "elapsed_ms": 0,
+                                 "total_ms": pending["duration_ms"],
+                                 "paused": False, "i": 0,
+                                 "n": pending["frames"], "fail": 0})
         return JSONResponse({"ok": True, "running": False})
     return JSONResponse({"ok": True, "running": True, **st})
 
@@ -2296,7 +2372,11 @@ def _combo_ctl(arm_cmd: str, hand_cmd: str) -> JSONResponse:
     ⚠ 两条指令**不可能真正同时到**(两个管道)。但暂停/恢复的语义对几毫秒的
     偏差不敏感 —— 各自记录自己的暂停时长,恢复后仍按 t_ns 定位,不累积漂移。
     """
+    global _combo_pending
     arm, hand = _get_arm(), _get_hand()
+    if arm_cmd == "combo_stop":
+        with _combo_pending_lock:
+            _combo_pending = None
     if arm.console and arm.console.poll() is None:
         arm.command({"cmd": arm_cmd})
     if hand.console and hand.console.poll() is None:
