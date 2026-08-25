@@ -69,6 +69,17 @@ def test_page_navigation_and_close_release_hardware_channels():
     assert "await _stop_arm_session(home=True)" in _APP
 
 
+def test_hardware_lease_is_per_tab_and_heartbeats():
+    assert "sessionStorage.getItem(\"hardwareLeaseId\")" in _INDEX
+    assert "setInterval(async () =>" in _INDEX
+    assert "/api/hardware/lease/acquire" in _INDEX
+    assert "/api/hardware/lease/heartbeat" in _INDEX
+    assert "X-Hardware-Lease" in _INDEX and "HARDWARE_LEASE_ID" in _INDEX
+    assert '@app.post("/api/hardware/lease/acquire")' in _APP
+    assert '@app.post("/api/hardware/lease/heartbeat")' in _APP
+    assert "_hardware_watchdog" in _APP
+
+
 def test_combo_camera_exclusively_owns_threejs_while_active():
     assert "function comboCameraOwns3d()" in _INDEX
     assert "!comboCameraOwns3d()) _cv.setArm(rad)" in _INDEX

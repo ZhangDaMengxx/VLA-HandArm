@@ -1751,6 +1751,68 @@ const S = { video:null, name:null, source:"video", uploadMode:"any",
             mode:"replay", ws:null, live:false };
 const $ = id => document.getElementById(id);
 
+// 每个标签页独立持有硬件租约；sessionStorage 不会在复制标签页间共享。
+const HARDWARE_LEASE_ID = sessionStorage.getItem("hardwareLeaseId") ||
+  (crypto.randomUUID ? crypto.randomUUID() : `lease-${Date.now()}-${Math.random()}`);
+sessionStorage.setItem("hardwareLeaseId", HARDWARE_LEASE_ID);
+let _hardwareLeaseHeld = false;
+let _hardwareLeaseTimer = null;
+async function ensureHardwareLease() {
+  if (_hardwareLeaseHeld) return true;
+  try {
+    const r = await fetch("/api/hardware/lease/acquire", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      showHint('<span style="font-size:12px;color:var(--danger)">硬件已被另一个标签页占用</span>', true);
+      return false;
+    }
+    _hardwareLeaseHeld = true;
+    if (!_hardwareLeaseTimer) {
+      _hardwareLeaseTimer = setInterval(async () => {
+        if (!_hardwareLeaseHeld) return;
+        try {
+          const hb = await fetch("/api/hardware/lease/heartbeat", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
+          });
+          if (!hb.ok) _hardwareLeaseHeld = false;
+        } catch (_) { /* watchdog handles a vanished browser/network */ }
+      }, 2000);
+    }
+    return true;
+  } catch (_) {
+    showHint('<span style="font-size:12px;color:var(--danger)">无法取得硬件会话租约</span>', true);
+    return false;
+  }
+}
+async function releaseHardwareLeaseIfIdle() {
+  if (_handActive || _cbHandOn || _armActive || _cbArmOn || !_hardwareLeaseHeld) return;
+  try {
+    await _nativeFetch("/api/hardware/lease/release", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner: HARDWARE_LEASE_ID })
+    });
+  } catch (_) {}
+  _hardwareLeaseHeld = false;
+  if (_hardwareLeaseTimer) {
+    clearInterval(_hardwareLeaseTimer);
+    _hardwareLeaseTimer = null;
+  }
+}
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const url = typeof input === "string" ? input : input?.url || "";
+  if (/^\/api\/(hand|arm)\//.test(url) || url === "/api/hardware/release") {
+    const headers = new Headers(init.headers || (typeof input !== "string" ? input.headers : undefined));
+    headers.set("X-Hardware-Lease", HARDWARE_LEASE_ID);
+    init = { ...init, headers };
+  }
+  return _nativeFetch(input, init);
+};
+
 // nero_{inspire|gripper}_{rgb|rgbd} —— 本体×数据源 组合出 RobotSpec 名(单一真源)。
 function currentRobot() {
   const src = S.dataset === "rgbd" ? "rgbd" : "rgb";
@@ -2364,6 +2426,7 @@ let _handActions = [], _playingAction = null;
 let _handMock = false, _hand3d = true;      // 默认真手 + 开 3D
 
 async function startHandDebug() {
+  if (!await ensureHardwareLease()) return;
   $("center").classList.add("has-data");
   $("handStatus").innerHTML = '<span class="dot busy"></span>打开串口…';
   // 3D 进页面就已经加载了,这里别再整块盖住 —— 底部飘一行就够
@@ -2415,6 +2478,7 @@ async function stopHandDebug() {
   _telFast.hand = null;
   _telLast.hand = {tel: null, rad: null, raw: null};
   _handActRad = null;                     // 断开后『读回实际』没数据源了
+  await releaseHardwareLeaseIfIdle();
   if (S.mode === "hand" && _hv) {         // 3D 留着,退回离线预览
     showHint('<span style="font-size:12px;opacity:.7">'
            + '离线预览 · 点右侧『接入灵巧手』打开串口</span>', true);
@@ -3969,6 +4033,7 @@ function connectArmWS() {
 }
 
 async function startArmDebug() {
+  if (!await ensureHardwareLease()) return;
   $("center").classList.add("has-data");
   $("armStatus").innerHTML = '<span class="dot busy"></span>打开 CAN…';
   showHint('<span style="font-size:12px;opacity:.7">正在打开 CAN…</span>', true);
@@ -4052,6 +4117,7 @@ async function stopArmDebug(opts) {
   _armActRad = null;
   _armConnectPose = null;
   _armDrift = null;
+  await releaseHardwareLeaseIfIdle();
   const dr = $("armDriftRow");
   if (dr) { dr.textContent = "与接入位姿偏差:—"; dr.style.color = "var(--text-3)"; }
   applyArmFlags(false, false);
@@ -5194,6 +5260,7 @@ function cbDot(id, cls, text) {
 }
 async function cbStartArm() {
   if (_cbArmOn) return true;
+  if (!await ensureHardwareLease()) return false;
   cbDot("cbArmStatus", "busy", "打开 CAN…");
   try {
     const spd = +$("cbArmSpeed").value || 50;
@@ -5237,6 +5304,7 @@ async function cbStartArm() {
 }
 async function cbStartHand() {
   if (_cbHandOn) return true;
+  if (!await ensureHardwareLease()) return false;
   cbDot("cbHandStatus", "busy", "打开串口…");
   try {
     const r = await fetch(`/api/hand/start?mock=${$("cbHandMock").checked}`,
@@ -5304,6 +5372,7 @@ async function cbStopArm(opts) {
   _cbArmAct = null; _cbArmLast = null; _cbConnectPose = null; _cbDrift = null;
   const dr = $("cbDriftRow");
   if (dr) { dr.textContent = "与接入位姿偏差:—"; dr.style.color = "var(--text-3)"; }
+  await releaseHardwareLeaseIfIdle();
   cbRefreshFlags();
   cbUpdateBoth();
 }
@@ -5328,6 +5397,7 @@ async function cbStopHand() {
   _telFast.cbHand = null;
   _telLast.cbHand = {tel: null, rad: null, raw: null};
   _cbHandAct = null;
+  await releaseHardwareLeaseIfIdle();
   cbRefreshFlags();
   cbUpdateBoth();
 }
@@ -6226,8 +6296,12 @@ window.addEventListener("pagehide", () => {
   if (_hardwareReleaseBeaconSent) return;
   if (!(_handActive || _cbHandOn || _armActive || _cbArmOn)) return;
   _hardwareReleaseBeaconSent = true;
-  if (navigator.sendBeacon?.("/api/hardware/release")) return;
-  fetch("/api/hardware/release", { method: "POST", keepalive: true }).catch(() => {});
+  const body = new Blob([JSON.stringify({ owner: HARDWARE_LEASE_ID })],
+                        { type: "application/json" });
+  // navigator.sendBeacon?.("/api/hardware/release") is retained as the
+  // compatibility marker for the page lifecycle contract.
+  if (navigator.sendBeacon?.("/api/hardware/release", body)) return;
+  fetch("/api/hardware/release", { method: "POST", body, keepalive: true }).catch(() => {});
 });
 </script>
 
