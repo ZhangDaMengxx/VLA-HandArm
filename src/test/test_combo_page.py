@@ -30,6 +30,7 @@ _COMBO3D = (WEB / "combo3d.js").read_text("utf-8")
 _HAND3D = (WEB / "hand3d.js").read_text("utf-8")
 _APP = (SIM / "app_web.py").read_text("utf-8")
 _HAND_CONSOLE = (SIM / "hand_console.py").read_text("utf-8")
+_ARM_CONSOLE = (SIM / "arm_console.py").read_text("utf-8")
 _COMBO_CAMERA = (WEB / "combo_camera.js").read_text("utf-8")
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
@@ -92,6 +93,10 @@ def test_watchdog_disconnects_without_commanding_home_pose():
     assert 'json.dumps({"cmd": "quit", "home": home})' in _APP
     assert 'home_on_exit = bool(cmd.get("home", True))' in _HAND_CONSOLE
     assert "if home_on_exit:" in _HAND_CONSOLE
+    arm_finally = _ARM_CONSOLE[_ARM_CONSOLE.index("    finally:"):
+                               _ARM_CONSOLE.index('if __name__ == "__main__"')]
+    assert "arm.disconnect()" in arm_finally
+    assert "arm.disable()" not in arm_finally
 
 
 def test_combo_camera_exclusively_owns_threejs_while_active():

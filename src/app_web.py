@@ -773,7 +773,7 @@ class ArmDebugSession:
 
     ⚠ 和手的实质差异:
       · 默认 mock=True(臂是 7 自由度工业臂,不做"连上就能动")
-      · stop() **不回零** —— 臂在半途时回零路径未知,可能撞东西。只去使能。
+      · stop() **不回零、不去使能** —— 只结束 console 并释放 CAN。
       · 运动指令要先 enable,由 arm_console 侧强制
     """
 
@@ -836,7 +836,7 @@ class ArmDebugSession:
             self.loop.call_soon_threadsafe(self._cancel_tracking_waiters)
         except RuntimeError:
             pass
-        # quit 让 console 走 finally:去使能 + 断 CAN。**不回零**(见类注释)。
+        # quit 让 console 走 finally:不回零、不去使能，只释放 CAN(见类注释)。
         if self.console and self.console.stdin and self.console.poll() is None:
             try:
                 with self._stdin_lock:

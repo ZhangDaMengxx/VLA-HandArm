@@ -273,8 +273,8 @@ python3 -m pytest src/test/test_stdin_lines.py
 服务端使用按标签页 owner 的硬件租约补足这条路径：页面每 2 秒调用 heartbeat，租约默认
 8 秒。硬件 start/stop/command 和 release 请求必须携带 `X-Hardware-Lease`；当前 owner 有效时
 其他标签页返回 409。正常主动释放仍复位手并让臂回零；watchdog 超时则保持最后位置，只
-停止会话并释放串口/CAN，避免网络抖动触发新运动。此时手可能继续夹持，机械臂去使能后
-可能因无抱闸而下落，因此 watchdog 不是急停替代品，真机仍需净空和可用急停。
+停止会话并释放串口/CAN，避免网络抖动触发新运动。此时手可能继续夹持；机械臂退出路径
+不调用 `disable()`，只关闭当前 SDK/CAN 会话并保持原使能状态。watchdog 不是急停替代品。
 
 ### 修改合体实时跟随
 
