@@ -600,19 +600,19 @@ class HandDebugSession:
         if not self.ready and not self.error:
             self.error = f"等 hand_console 就绪超时({timeout:.0f}s)"
 
-    def stop(self) -> None:
+    def stop(self, *, home: bool = True) -> None:
         self._running = False
         try:
             self.loop.call_soon_threadsafe(self._cancel_ack_waiters)
         except RuntimeError:
             pass
-        # quit 指令让 console 复位手到安全张开位再断开
+        # 主动退出默认复位；watchdog 超时只释放串口，不发新的位置目标。
         if self.console and self.console.stdin and self.console.poll() is None:
             try:
                 with self._stdin_lock:
-                    self.console.stdin.write('{"cmd":"quit"}\n')
+                    self.console.stdin.write(json.dumps({"cmd": "quit", "home": home}) + "\n")
                     self.console.stdin.flush()
-                self.console.wait(timeout=2)            # 等它复位手 + 断开
+                self.console.wait(timeout=2)            # 等它按退出模式收尾并断开
             except Exception:                           # noqa: BLE001
                 pass
         for p in (self.console, self.rerun):
@@ -1204,8 +1204,8 @@ async def hardware_lease_status(owner: str | None = Header(default=None,
     })
 
 
-async def _hardware_release_impl() -> dict:
-    """Idempotent cleanup shared by explicit release and the watchdog."""
+async def _hardware_release_impl(*, home: bool = True) -> dict:
+    """Release hardware, optionally moving to the normal safe home poses first."""
     global _hardware_release_lock
     if _hardware_release_lock is None:
         _hardware_release_lock = asyncio.Lock()
@@ -1217,10 +1217,12 @@ async def _hardware_release_impl() -> dict:
             if _hand is not None:
                 alive = bool(_hand.ready and _hand.console and _hand.console.poll() is None)
                 hand_result["online"] = alive
-                await asyncio.get_event_loop().run_in_executor(_executor, _hand.stop)
+                await asyncio.get_event_loop().run_in_executor(
+                    _executor, lambda: _hand.stop(home=home)
+                )
         except Exception as error:  # noqa: BLE001
             hand_result.update(ok=False, error=str(error), released=False)
-        arm_result = await _stop_arm_session(home=True)
+        arm_result = await _stop_arm_session(home=home)
         return {"ok": True, "hand": hand_result, "arm": arm_result}
 
 
@@ -1229,8 +1231,8 @@ async def _hardware_watchdog() -> None:
         await asyncio.sleep(1.0)
         expired_owner = _hardware_lease.expired()
         if expired_owner is not None:
-            print(f"[hardware-lease] owner={expired_owner} 超时,强制释放", flush=True)
-            await _hardware_release_impl()
+            print(f"[hardware-lease] owner={expired_owner} 超时,保持姿态并释放", flush=True)
+            await _hardware_release_impl(home=False)
 
 
 @app.on_event("startup")
@@ -3717,7 +3719,7 @@ async def hardware_release(payload: dict | None = None,
     release_result = _hardware_lease.release(owner)
     if not release_result.ok:
         return _lease_response(release_result)
-    return JSONResponse(await _hardware_release_impl())
+    return JSONResponse(await _hardware_release_impl(home=True))
 
 
 @app.get("/api/arm/status")

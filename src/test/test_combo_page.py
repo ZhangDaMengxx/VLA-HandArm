@@ -29,6 +29,7 @@ _URDF_VIEW = (WEB / "urdf_view.js").read_text("utf-8")
 _COMBO3D = (WEB / "combo3d.js").read_text("utf-8")
 _HAND3D = (WEB / "hand3d.js").read_text("utf-8")
 _APP = (SIM / "app_web.py").read_text("utf-8")
+_HAND_CONSOLE = (SIM / "hand_console.py").read_text("utf-8")
 _COMBO_CAMERA = (WEB / "combo_camera.js").read_text("utf-8")
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
@@ -66,7 +67,8 @@ def test_page_navigation_and_close_release_hardware_channels():
     assert 'window.addEventListener("pagehide"' in _INDEX
     assert 'navigator.sendBeacon?.("/api/hardware/release")' in _INDEX
     assert '@app.post("/api/hardware/release")' in _APP
-    assert "await _stop_arm_session(home=True)" in _APP
+    assert "arm_result = await _stop_arm_session(home=home)" in _APP
+    assert "_hardware_release_impl(home=True)" in _APP
 
 
 def test_hardware_lease_is_per_tab_and_heartbeats():
@@ -78,6 +80,18 @@ def test_hardware_lease_is_per_tab_and_heartbeats():
     assert '@app.post("/api/hardware/lease/acquire")' in _APP
     assert '@app.post("/api/hardware/lease/heartbeat")' in _APP
     assert "_hardware_watchdog" in _APP
+
+
+def test_watchdog_disconnects_without_commanding_home_pose():
+    watchdog = _APP[_APP.index("async def _hardware_watchdog"):
+                    _APP.index('@app.on_event("startup")')]
+    explicit_release = _APP[_APP.index('@app.post("/api/hardware/release")'):
+                            _APP.index('@app.get("/api/arm/status")')]
+    assert "_hardware_release_impl(home=False)" in watchdog
+    assert "_hardware_release_impl(home=True)" in explicit_release
+    assert 'json.dumps({"cmd": "quit", "home": home})' in _APP
+    assert 'home_on_exit = bool(cmd.get("home", True))' in _HAND_CONSOLE
+    assert "if home_on_exit:" in _HAND_CONSOLE
 
 
 def test_combo_camera_exclusively_owns_threejs_while_active():

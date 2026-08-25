@@ -13,6 +13,7 @@
           {"cmd":"gesture_play","pack":{...}}  回放手势技能包(内联数据,非路径)
           {"cmd":"clear_error"}
           {"cmd":"quit"}                   复位到安全位后断开
+          {"cmd":"quit","home":false}      保持当前位置并断开
   stdout → {"type":"state","rad":[6],"raw":[6],"t":..,...}   周期遥测
           {"type":"ready"|"closed"|"error"|"ack", ...}
 
@@ -418,6 +419,7 @@ def main() -> None:
     pdt = 1.0 / max(1.0, args.player_hz)
     t0 = time.monotonic()
     last_full = 0.0
+    home_on_exit = True
     next_tick = time.monotonic()                       # 下一次发遥测
     next_ptick = time.monotonic()                      # 下一次 tick 播放器
     stdin_lines = StdinLines()
@@ -430,12 +432,13 @@ def main() -> None:
 
     def process_line(line: str) -> None:
         nonlocal last_angle_at, last_angle_id, last_angle_serial_ms
-        nonlocal last_angle_settled_ms, last_mimic_angle_at
+        nonlocal last_angle_settled_ms, last_mimic_angle_at, home_on_exit
         try:
             cmd = json.loads(line)
         except json.JSONDecodeError:
             return
         if cmd.get("cmd") == "quit":
+            home_on_exit = bool(cmd.get("home", True))
             raise KeyboardInterrupt
         received_ns = time.perf_counter_ns()
         event = handle(hand, cmd, sequences)
@@ -585,12 +588,13 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        # 退出前复位到安全张开位,再断开 —— 不留在握紧姿态上
-        try:
-            hand.set_angles(list(HOME_RAD))
-            time.sleep(0.8)                                  # 给手走到位的时间
-        except Exception:                                    # noqa: BLE001
-            pass
+        # 主动退出默认张开；租约超时可要求只释放串口，避免断网触发新动作。
+        if home_on_exit:
+            try:
+                hand.set_angles(list(HOME_RAD))
+                time.sleep(0.8)                              # 给手走到位的时间
+            except Exception:                                # noqa: BLE001
+                pass
         hand.disconnect()
         emit({"type": "closed"})
 
