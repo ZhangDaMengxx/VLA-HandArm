@@ -358,4 +358,42 @@
     <parent link="right_little_1" />
     <child link="right_little_2" />
     </joint>
+
+  <!--
+    Retarget-only fingertip frames.  The vendor 6dof proxy intentionally keeps
+    one drive joint per finger, but its terminal links stop at the distal
+    phalanx.  These fixed offsets are derived from the corresponding vendor
+    meshes so an open human finger is compared against the actual fingertip
+    geometry instead of a point several centimetres short.
+  -->
+  <link name="thumb_tip" />
+  <joint name="thumb_tip_joint" type="fixed">
+    <origin xyz="0.0137599 0.0204399 -0.0080762" rpy="0 0 0" />
+    <parent link="right_thumb_4" />
+    <child link="thumb_tip" />
+  </joint>
+  <link name="index_tip" />
+  <joint name="index_tip_joint" type="fixed">
+    <origin xyz="0.0144754 0.0426952 -0.0056212" rpy="0 0 0" />
+    <parent link="right_index_2" />
+    <child link="index_tip" />
+  </joint>
+  <link name="middle_tip" />
+  <joint name="middle_tip_joint" type="fixed">
+    <origin xyz="0.0161153 0.0456677 -0.0060162" rpy="0 0 0" />
+    <parent link="right_middle_2" />
+    <child link="middle_tip" />
+  </joint>
+  <link name="ring_tip" />
+  <joint name="ring_tip_joint" type="fixed">
+    <origin xyz="0.0144739 0.0426943 -0.0056256" rpy="0 0 0" />
+    <parent link="right_ring_2" />
+    <child link="ring_tip" />
+  </joint>
+  <link name="pinky_tip" />
+  <joint name="pinky_tip_joint" type="fixed">
+    <origin xyz="0.0117575 0.0353353 -0.0059712" rpy="0 0 0" />
+    <parent link="right_little_2" />
+    <child link="pinky_tip" />
+  </joint>
 </robot>

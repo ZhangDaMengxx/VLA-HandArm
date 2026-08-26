@@ -1065,7 +1065,7 @@ MediaPipe Tasks 和 latest-target 改造后，RH56DFX 真机样本为：
 目标抖动，运动速度升高时自动提高截止频率，避免固定低通带来的持续相位延迟。默认
 `min_cutoff=1.5Hz`、`beta=2.5`、导数截止 `1.0Hz`。六个关节的最小命令变化量均为
 `0.0005rad`，约等于或小于一个硬件 raw count；全部关节低于该分辨率门限时不写
-`ANGLE_SET`。
+`ANGLE_SET`。retarget 配置的 `low_pass_alpha=1.0`，不再在 One Euro 前叠加逐帧固定低通。
 
 滤波状态按 WebSocket 隔离；目标中断超过 200ms、关闭硬件驱动、灵巧手离线、控制权
 被拒或连接断开都会清理状态。浏览器 3D 预览仍显示未经滤波的 retarget 结果，方便对照

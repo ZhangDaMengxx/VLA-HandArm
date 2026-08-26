@@ -3105,6 +3105,21 @@ async def ws_hand_mimic(websocket: WebSocket):
             )
         return ik_scheduler
 
+    async def send_response(payload: dict) -> None:
+        """Treat a close racing with a response as a normal disconnect."""
+        try:
+            await websocket.send_json(payload)
+        except WebSocketDisconnect:
+            raise
+        except RuntimeError as exc:
+            message = str(exc)
+            if (
+                'Cannot call "send" once a close message has been sent' in message
+                or "WebSocket is not connected" in message
+            ):
+                raise WebSocketDisconnect(code=1006) from exc
+            raise
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -3136,7 +3151,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                         _arm.end_tracking()
 
             if format_type != "mediapipe":
-                await websocket.send_json({
+                await send_response({
                     "ok": False,
                     "msg": f"仅支持 MediaPipe 格式，收到: {format_type}"
                 })
@@ -3167,7 +3182,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                     _arm_target_mailbox.release(owner)
                 if _arm is not None:
                     _arm.end_tracking()
-                await websocket.send_json({
+                await send_response({
                     "ok": True,
                     "frame_id": frame_id,
                     **mapper.status(),
@@ -3185,7 +3200,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                 continue
 
             if len(world_landmarks) != 21:
-                await websocket.send_json({
+                await send_response({
                     "ok": False,
                     "msg": f"需要 21 个世界关键点，收到: {len(world_landmarks)}"
                 })
@@ -3235,21 +3250,16 @@ async def ws_hand_mimic(websocket: WebSocket):
                             {"cmd": "fk", "q": current_q},
                         )
                         arm_anchor = np.asarray(fk_result["pose"], dtype=float).reshape(4, 4)
-                        if arm_online and not arm.mock:
-                            mapper.position_limits[:] = 0.02
-                            mapper.set_orientation_limits_deg(
-                                (-45.0, -25.0, -35.0),
-                                (45.0, 25.0, 35.0),
-                            )
-                        else:
-                            mapper.position_limits[:] = [0.05, 0.05, 0.03]
-                            # 固定准备位、固定末端位置的 5° 步进 IK 扫描可达约
-                            # X -95/+65、Y -120/+55、Z -180/+165°。Mock 留
-                            # 5-10° 余量；真机仍保留上面的保守限幅。
-                            mapper.set_orientation_limits_deg(
-                                (-90.0, -115.0, -175.0),
-                                (60.0, 50.0, 155.0),
-                            )
+                        # Keep the live and mock tracking envelopes identical.  The
+                        # envelope is already guarded by IK, joint limits, the
+                        # real-arm opt-in, and the enabled/frozen state gates.
+                        # Using the mock-calibrated range here also preserves the
+                        # full wrist-roll/pitch motion needed to turn the hand over.
+                        mapper.position_limits[:] = [0.05, 0.05, 0.03]
+                        mapper.set_orientation_limits_deg(
+                            (-90.0, -115.0, -175.0),
+                            (60.0, 50.0, 155.0),
+                        )
                         mapper.request_anchor(arm_anchor)
                         tracking_control_applied = True
                     filtered_position = wrist_position_filter.update(
@@ -3424,7 +3434,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                     if _arm is not None:
                         _arm.end_tracking()
 
-                await websocket.send_json({
+                await send_response({
                     "ok": True,
                     "frame_id": frame_id,
                     "joint_angles": joint_angles,
@@ -3444,6 +3454,8 @@ async def ws_hand_mimic(websocket: WebSocket):
                     **mapper.status(),
                 })
 
+            except WebSocketDisconnect:
+                raise
             except Exception as e:
                 wrist_position_filter.reset()
                 wrist_orientation_filter.reset()
@@ -3456,7 +3468,7 @@ async def ws_hand_mimic(websocket: WebSocket):
                 if _arm is not None:
                     _arm.end_tracking()
                 print(f"[ws] 合体跟随失败: {e}")
-                await websocket.send_json({
+                await send_response({
                     "ok": False,
                     "frame_id": frame_id,
                     "msg": f"跟随处理失败: {str(e)}",

@@ -21,7 +21,8 @@
 # scaling_factor 1.15 was tuned on the old tip locations and may need re-tuning.
 retargeting:
   type: vector
-  # ⚠ 使用无 mimic 约束的简化版 URDF，仅用于 retargeting
+  # ⚠ 使用无 mimic 约束的 6dof 代理 URDF，仅用于 retargeting。
+  # 末端 *_tip 是从 vendor STL 推导的固定指尖 frame；这不是可视化 mimic URDF。
   # 实际机器人控制使用原始 inspire_hand_right.urdf（含 mimic）
   urdf_path: ../assets/hand/urdf/inspire_hand_right_6dof.urdf
 
@@ -33,7 +34,7 @@ retargeting:
                         'right_thumb_2_joint', 'right_thumb_1_joint' ]
   # thumb origin = R_base_link (palm); each finger origin = its own MCP link
   target_origin_link_names: [ "R_base_link", "right_index_1", "right_middle_1", "right_ring_1", "right_little_1" ]
-  target_task_link_names:   [ "right_thumb_4", "right_index_2", "right_middle_2", "right_ring_2", "right_little_2" ]
+  target_task_link_names:   [ "thumb_tip", "index_tip", "middle_tip", "ring_tip", "pinky_tip" ]
   scaling_factor: 1.15
 
   # Source refers to the retargeting input, which usually corresponds to the human hand
@@ -41,5 +42,6 @@ retargeting:
   # row1 = task   human keypoint (fingertips)
   target_link_human_indices: [ [ 0, 5, 9, 13, 17 ], [ 4, 8, 12, 16, 20 ] ]
 
-  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
-  low_pass_alpha: 0.2
+  # Disable dex-retargeting's frame-based low-pass. Live hardware targets already
+  # use the per-WebSocket adaptive One Euro filter; stacking both delays endpoints.
+  low_pass_alpha: 1.0

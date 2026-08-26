@@ -259,6 +259,17 @@ def test_combo_hand_path_is_not_blocked_by_live_ik():
     assert "context.get(\"authorization_revision\") == authorization_revision" in handler
 
 
+def test_combo_websocket_disconnect_does_not_send_a_second_response():
+    start = _APP.index('@app.websocket("/ws/hand/mimic")')
+    end = _APP.index("def _estimate_hand_frame", start)
+    handler = _APP[start:end]
+    assert handler.count("except WebSocketDisconnect:") >= 3
+    assert 'Cannot call "send" once a close message has been sent' in handler
+    assert "raise WebSocketDisconnect(code=1006) from exc" in handler
+    assert "await websocket.send_json({" not in handler
+    assert "await send_response({" in handler
+
+
 def _gltf_json(p: Path) -> dict:
     raw = p.read_bytes()
     magic, ver, total = struct.unpack("<4sII", raw[:12])
