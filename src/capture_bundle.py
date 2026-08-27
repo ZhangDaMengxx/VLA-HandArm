@@ -127,6 +127,7 @@ def _write_stream_index(paths: "CapturePaths", rows: list[dict[str, Any]]) -> Pa
         ("rgb_source_name", pa.string()),
         ("depth_source_name", pa.string()),
         ("rgb_path", pa.string()),
+        ("depth_raw_path", pa.string()),
         ("depth_aligned_path", pa.string()),
         ("rgb_timestamp_hw_us", pa.int64()),
         ("depth_timestamp_hw_us", pa.int64()),
@@ -465,6 +466,7 @@ class CapturePaths:
                 "created_at": _utc_now(),
                 "status": CAPTURE_BUILDING,
                 "stages": {
+                    "source": {"status": CAPTURE_BUILDING, "started_at": _utc_now()},
                     "ego": {"status": CAPTURE_BUILDING, "started_at": _utc_now()},
                     "robots": {},
                 },
@@ -527,6 +529,7 @@ class CapturePaths:
             data["status"] = CAPTURE_BUILDING
             data.pop("failure", None)
             stages = data.setdefault("stages", {})
+            stages.setdefault("source", {"status": CAPTURE_BUILDING})
             stages["ego"] = {"status": CAPTURE_BUILDING, "started_at": started_at}
             stages.setdefault("robots", {})
 
@@ -543,8 +546,50 @@ class CapturePaths:
             data["status"] = CAPTURE_READY
             data.pop("failure", None)
             stages = data.setdefault("stages", {})
+            stages.setdefault("source", {"status": CAPTURE_READY, "completed_at": completed_at})
             ego = stages.setdefault("ego", {})
             ego.update({"status": CAPTURE_READY, "completed_at": completed_at})
+            stages.setdefault("robots", {})
+
+        self.update_manifest(update)
+
+    def begin_source_capture(self) -> None:
+        """Mark native Source acquisition as incomplete until finalization."""
+        started_at = _utc_now()
+
+        def update(data: dict[str, Any]) -> None:
+            data["status"] = CAPTURE_BUILDING
+            data.pop("failure", None)
+            stages = data.setdefault("stages", {})
+            stages["source"] = {"status": CAPTURE_BUILDING, "started_at": started_at}
+            stages.setdefault("ego", {"status": CAPTURE_BUILDING})
+            stages.setdefault("robots", {})
+
+        self.update_manifest(update)
+
+    def mark_source_ready(self) -> None:
+        """Finalize Source while leaving the Capture building until Ego exists."""
+        completed_at = _utc_now()
+
+        def update(data: dict[str, Any]) -> None:
+            stages = data.setdefault("stages", {})
+            source = stages.setdefault("source", {})
+            source.update({"status": CAPTURE_READY, "completed_at": completed_at})
+            stages.setdefault("ego", {"status": CAPTURE_BUILDING})
+            stages.setdefault("robots", {})
+
+        self.update_manifest(update)
+
+    def mark_source_failed(self, reason: str) -> None:
+        failed_at = _utc_now()
+
+        def update(data: dict[str, Any]) -> None:
+            data["status"] = CAPTURE_FAILED
+            data["failure"] = {"stage": "source", "reason": reason, "failed_at": failed_at}
+            stages = data.setdefault("stages", {})
+            source = stages.setdefault("source", {})
+            source.update({"status": CAPTURE_FAILED, "failed_at": failed_at})
+            stages.setdefault("ego", {"status": CAPTURE_BUILDING})
             stages.setdefault("robots", {})
 
         self.update_manifest(update)
@@ -901,6 +946,7 @@ def write_sample_stream_index(
             "rgb_source_name": None,
             "depth_source_name": None,
             "rgb_path": rgb_path,
+            "depth_raw_path": None,
             "depth_aligned_path": None,
             "rgb_timestamp_hw_us": timestamp,
             "depth_timestamp_hw_us": None,
@@ -965,6 +1011,7 @@ def archive_aligned_rgbd(
             "rgb_source_name": rgb_source.name,
             "depth_source_name": depth_source.name,
             "rgb_path": rgb_destination.relative_to(paths.source).as_posix(),
+            "depth_raw_path": None,
             "depth_aligned_path": depth_destination.relative_to(paths.source).as_posix(),
             "rgb_timestamp_hw_us": rgb_timestamp,
             "depth_timestamp_hw_us": depth_timestamp,
@@ -992,6 +1039,94 @@ def archive_aligned_rgbd(
         ),
     })
     return _write_stream_index(paths, rows)
+
+
+def write_native_rgbd_stream_index(
+    paths: CapturePaths,
+    *,
+    records: list[dict[str, Any]],
+    fps: float,
+    camera: str,
+    depth_scale_m_per_unit: float,
+    depth_storage_format: str = "uint16_png",
+) -> Path:
+    """Index persisted native RGB and unaligned raw depth without inventing D2C."""
+    if not records:
+        raise ValueError("native RGB-D Source requires at least one frame pair")
+    if fps <= 0 or depth_scale_m_per_unit <= 0:
+        raise ValueError("fps and depth_scale_m_per_unit must be positive")
+    if depth_storage_format not in {"uint16_png", "y16_le"}:
+        raise ValueError("depth_storage_format must be uint16_png or y16_le")
+    rgb_timestamps = _timestamp_values(
+        [row.get("rgb_timestamp_hw_us") for row in records],
+        len(records),
+        "rgb_timestamp_hw_us",
+    )
+    depth_timestamps = _timestamp_values(
+        [row.get("depth_timestamp_hw_us") for row in records],
+        len(records),
+        "depth_timestamp_hw_us",
+    )
+    hardware_t0 = min(rgb_timestamps[0], depth_timestamps[0])
+    rows = []
+    for index, record in enumerate(records):
+        rgb_path = _optional_source_path(record.get("rgb_path"), "rgb_path")
+        depth_raw_path = _optional_source_path(record.get("depth_raw_path"), "depth_raw_path")
+        if rgb_path is None or depth_raw_path is None:
+            raise ValueError("native RGB-D records require rgb_path and depth_raw_path")
+        if not (paths.source / rgb_path).is_file():
+            raise FileNotFoundError(paths.source / rgb_path)
+        if not (paths.source / depth_raw_path).is_file():
+            raise FileNotFoundError(paths.source / depth_raw_path)
+        rgb_timestamp = rgb_timestamps[index]
+        depth_timestamp = depth_timestamps[index]
+        sync_error_ms = record.get("sync_error_ms")
+        if sync_error_ms is None:
+            sync_error_ms = abs(rgb_timestamp - depth_timestamp) / 1000.0
+        sync_error_ms = _optional_nonnegative_float(sync_error_ms, "sync_error_ms")
+        rows.append({
+            "episode_index": 0,
+            "frame_index": index,
+            "source_frame_index": index,
+            "ego_frame_index": None,
+            "rgb_source_name": Path(rgb_path).name,
+            "depth_source_name": Path(depth_raw_path).name,
+            "rgb_path": rgb_path,
+            "depth_raw_path": depth_raw_path,
+            "depth_aligned_path": None,
+            "rgb_timestamp_hw_us": rgb_timestamp,
+            "depth_timestamp_hw_us": depth_timestamp,
+            "timestamp_relative_ms": (rgb_timestamp - hardware_t0) / 1000.0,
+            "timestamp_source": "hardware",
+            "sync_error_ms": sync_error_ms,
+            "pairing_basis": str(record.get("pairing_basis", "hardware_timestamp")),
+        })
+
+    _write_json(paths.source / "depth/depth_streams.json", {
+        "schema_version": "1.1",
+        "camera": camera,
+        "depth_scale_m_per_unit": depth_scale_m_per_unit,
+        "raw_depth": {
+            "available": True,
+            "path": "raw/episode_000000",
+            "frame_count": len(records),
+            "format": depth_storage_format,
+            "aligned_to_rgb": False,
+        },
+        "aligned_to_rgb": {
+            "available": False,
+            "reason": "native Source preserves unaligned raw depth; Hardware D2C is not validated",
+        },
+        "hardware_timestamps_available": True,
+    })
+    return _write_stream_index(paths, rows)
+
+
+def write_source_checksums(paths: CapturePaths) -> Path:
+    """Write Source checksums after all acquisition metadata and indexes exist."""
+    destination = paths.source / "checksums_original.json"
+    _write_checksums(paths.source, destination)
+    return destination
 
 
 def write_ego_frame_mapping(paths: CapturePaths, ego_frame_indices: Any) -> Path:
@@ -1400,6 +1535,7 @@ def write_ego_metadata(
     })
     _write_checksums(paths.ego, paths.ego / "checksums.json")
     _write_checksums(paths.source, paths.source / "checksums_original.json")
+    paths.mark_source_ready()
     # Ready is written last: implicit readers never observe a partially finalized Ego dataset.
     paths.mark_ego_ready()
 

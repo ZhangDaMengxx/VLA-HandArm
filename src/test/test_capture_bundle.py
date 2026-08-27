@@ -66,6 +66,7 @@ def test_create_capture_allocates_sequence_and_contract(tmp_path: Path) -> None:
     assert manifest["data_conventions"]["canonical_wrist_pose"].endswith("qx,qy,qz,qw")
     assert manifest["datasets"]["ego"] == "ego"
     assert manifest["status"] == CAPTURE_BUILDING
+    assert manifest["stages"]["source"]["status"] == CAPTURE_BUILDING
     assert manifest["stages"]["ego"]["status"] == CAPTURE_BUILDING
 
 
@@ -446,6 +447,7 @@ def test_aligned_rgbd_source_is_archived_and_indexed_without_fake_timestamps(
         "rgb_source_name": "frame007.png",
         "depth_source_name": "frame007.png",
         "rgb_path": "rgb_original/episode_000000/frame_000000.png",
+        "depth_raw_path": None,
         "depth_aligned_path": "depth/aligned_to_rgb/episode_000000/frame_000000.png",
         "rgb_timestamp_hw_us": None,
         "depth_timestamp_hw_us": None,

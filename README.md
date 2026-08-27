@@ -74,8 +74,8 @@ bash src/camera/check_orbbec_60fps.sh v4l2 12
 `result=PASS threshold_hz=59.400`。脚本同时要求 sysfs 枚举的 video 节点已经全部出现在
 `/dev/video*`；节点不全时应等待 udev 或重新附加 USB 后重测，不能用缺少 Depth Profile
 的结果判断设备能力。原生 `Gemini336LAdapter` 已能锁定 Profile、读取标定和逐帧硬件时间戳；
-该结果只关闭了双路 60 FPS 短时能力验证，Capture Source writer、Hardware D2C 配对输出、
-长时稳定性和 RGB-D 最大同步残差 `<10 ms` 仍未闭环。详细判定与排障见
+Capture Source writer 也已完成 180 对真机原始写盘，RGB/Depth 均为 `59.8945 Hz`，最大同步
+残差 `0.259 ms`。Hardware D2C、Source→Ego、长时稳定性和物理手眼标定仍未完成。详细判定见
 [src/camera/README.md](src/camera/README.md)。
 
 ## Web 工作台
@@ -190,8 +190,9 @@ state/action 有限值等自动检查，缺少碰撞、限位或指尖真值时�
 `VLA_LEGACY_OUT=1`）才会读取旧产物。当前迁移只改变路径并保留既有 `xyzw` 四元数和数值
 运算。命名环境 `lerobot-v3` 已扩充为 Python 3.12.13 + `lerobot[dataset]==0.6.1` 的完整
 离线 EGO/RobotDataset/回放链，严格 v3 校验已通过；
-Gemini 336L 原生 Adapter 已证明 RGB/Depth 与设备微秒时间戳可用，但 Capture Source writer
-尚未把这些数据写盘；因此现有 Capture 仍不具备完整 RGB-D 原始流和硬件时间戳证据。目录说明见
+Gemini 336L 原生 Adapter 与 Source writer 已证明 RGB/Depth 原始帧、设备微秒时间戳和
+60 Hz 短时写盘链可用；成功录制的 Source 仍保持 Capture 为 `building`，必须继续构建 Ego
+后才是完整交付。当前尚无 Hardware D2C、长稳态和正式物理手眼证据。目录说明见
 [datasets/captures/README.md](datasets/captures/README.md)，字段约定见
 [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)，V3 代码入口见
 [src/lerobot_v3/README.md](src/lerobot_v3/README.md)。

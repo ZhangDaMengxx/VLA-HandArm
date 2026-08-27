@@ -162,8 +162,17 @@ PYTHONPATH=src ~/miniconda3/envs/lerobot-v3/bin/python \
   -m camera.orbbec_gemini336l --backend v4l2 --validate-seconds 12 --frames 3
 ```
 
-Adapter 只负责原生采集和校验，尚未替代 `build_canonical_from_rgbd.py` 的文件输入，也不会
-自动创建 Capture。相机 Source writer 完成前，不得把 Adapter 冒烟结果记作正式数据交付。
+Adapter 冒烟只读帧，不写 Capture。原生 Source 录制使用：
+
+```bash
+PYTHONPATH=src ~/miniconda3/envs/lerobot-v3/bin/python \
+  -m camera.capture_orbbec --duration 60 --validate-seconds 12 --backend v4l2
+```
+
+命令默认新建 Capture，直接保存 MJPG 与 little-endian Y16，并写入标定、硬件时间戳、
+`stream_index.parquet`、多流长表和 checksum。队列溢出、任一路低于 `59.4 Hz` 或同步残差
+达到 `10 ms` 都失败，不会降级 30 FPS。Source 成功后整个 Capture 仍为 `building`，必须把
+输出路径传给后续 Source→Ego 构建；产物说明见 [src/camera/README.md](src/camera/README.md)。
 
 严格验证时给 Hugging Face 指定可写缓存，并显式离线运行：
 
@@ -209,8 +218,9 @@ python src/lerobot_v3/replay_rerun.py --capture-root datasets/captures/capture_<
 帧集没有硬件时间时使用 `fps_derived`，只表示处理时间轴，不作为相机同步精度证据。
 该宽表服务当前单 RGB-D；眼镜、VIO/IMU、腕部设备和外部真值的异步多流将使用
 `streams.parquet`/`samples.parquet` 长表并保留 `stream_index.parquet` 兼容视图。当前已提供
-`write_multisensor_source_index()` 写入与基础校验，设备 Source writer 和 Source -> Ego 对齐尚未
-接入；实施顺序与质量闸见 [EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)。
+`write_multisensor_source_index()` 写入与基础校验，Gemini 336L writer 已填充原生 RGB/Depth
+双流；Source -> Ego 对齐消费者尚未接入。实施顺序与质量闸见
+[EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)。
 
 质量口径位于 `configs/quality_profiles/*.json`，构建时完整复制到
 `source/quality_profile.json`，同一 Capture 不允许静默替换。三个构建器的默认 profile 分别是

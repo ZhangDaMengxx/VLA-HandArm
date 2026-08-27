@@ -48,13 +48,15 @@ conda run -n lerobot-v3 python src/lerobot_v3/verify_dataset.py \
 
 Source 文件同盘时优先硬链接，跨盘时复制；两种方式都由 `checksums_original.json` 校验。
 `stream_index.parquet` 的 `source_frame_index` 和可空 `ego_frame_index` 记录原始帧是否进入
-Ego。硬件时间仅写入 `rgb_timestamp_hw_us`/`depth_timestamp_hw_us`；没有硬件时间的旧视频或
+Ego；`rgb_path`、可空 `depth_raw_path` 和可空 `depth_aligned_path` 明确区分原生未对齐深度与
+RGB 对齐深度。硬件时间仅写入 `rgb_timestamp_hw_us`/`depth_timestamp_hw_us`；没有硬件时间的旧视频或
 帧集保留空值，并把 `timestamp_source` 标记为 `fps_derived`，不能把推算时间当硬件时间。
 
 该宽表是阶段 1--4 单 RGB-D 的现行格式。眼镜、VIO/IMU、左右腕部设备和外部真值构成多个
 异步流时，使用可选的 `streams.parquet`、`samples.parquet` 和 `synchronization.json` 长表；
-`capture_bundle.write_multisensor_source_index()` 已提供厂商无关的逐文件原子写入和基础校验，
-但设备 Adapter 与 Source -> Ego 对齐消费者仍待实现。原 `stream_index.parquet` 保持兼容，
+`capture_bundle.write_multisensor_source_index()` 已提供厂商无关的逐文件原子写入和基础校验；
+Gemini 336L Source writer 已用它保存原生 RGB/Depth 时间轴，但 Source -> Ego 对齐消费者仍待
+实现。原 `stream_index.parquet` 保持兼容，
 并将作为派生后的 Source -> Ego 对齐视图。全链完成前，不得把多个设备强行塞入
 `rgb_*`/`depth_*` 固定列或丢弃原生高频采样。
 
@@ -65,7 +67,8 @@ Ego。硬件时间仅写入 `rgb_timestamp_hw_us`/`depth_timestamp_hw_us`；没�
 - `legacy_rgb_video_30hz_v1`：既有固定相机 RGB 视频，不声明 Depth 或硬件同步
 - `legacy_aligned_rgbd_30hz_v1`：既有 960×540 对齐帧集，按文件名配对，不声明硬件同步
 - `processed_observations_v1`：外部处理结果，不反推相机能力
-- `ego_fixed_rgbd_60hz_v1`：固定 RGB-D 生产 EGO Canonical 的目标，RGB 1920×1080@60、原生 Depth 至少 640×480@60、硬件时间戳且 RGB-D 残差 <10ms
+- `ego_fixed_rgbd_60hz_v1`：Gemini 336L 固定 RGB-D 目标，RGB 1280×800@60、原生 Depth
+  848×480@60、硬件时间戳且 RGB-D 残差 <10ms
 
 未来眼镜和腕部设备使用独立 profile，不通过补帧或缺失流占位复用固定相机 profile。
 
@@ -91,8 +94,10 @@ profile 是验收标准，不是转换器。给旧 30 Hz 数据选择 60 Hz prof
 - 把 Capture 内 `source/`、`reports/` 等非数据集目录当作 Ego 或 RobotDataset
 
 不传路径时，Canonical 构建器新建 Capture，派生/验收/验证/回放和分析工具读取最新可用
-Capture。`bundle.json` 的生命周期为 `building -> ready`，普通异常退出记为 `failed`；隐式读取
-只选择 `ready`，所以新建后中断的半成品不会遮住上一份完整数据。显式 `--capture-root` 仍可
+Capture。`bundle.json` 的生命周期为 `building -> ready`，普通异常退出记为 `failed`；
+`stages.source` 和 `stages.ego` 分别记录原始采集与 Ego 构建。Gemini 336L writer 成功后
+Source 可为 `ready`，但整个 Capture 保持 `building`，直到 Ego 完成。隐式读取只选择
+`ready`，所以新建后中断的半成品不会遮住上一份完整数据。显式 `--capture-root` 仍可
 检查或重建 `building/failed` 批次。并行创建使用文件锁分配同日 sequence；UUID 继续保证目录
 身份唯一。
 

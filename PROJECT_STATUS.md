@@ -1,7 +1,7 @@
 # 项目状态
 
 **核对日期**：2026-08-27
-**阶段**：Ego Capture、严格 LeRobot v3 与结构 QA 已完成，设备 Source/物理 QA 与真机安全验证待开展
+**阶段**：Ego Capture、严格 LeRobot v3、设备 Source writer 与结构 QA 已完成，Source→Ego、物理 QA 与真机安全验证待开展
 
 ## 当前结论
 
@@ -11,8 +11,8 @@
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 双 Backend 已接入 | Web API/技能/跟随协议不变；真实会话可选 ROS2 Driver 或 Direct，Mock 继续空跑；真机双模式待验 |
 | 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
-| 相机与标定 | 原生 Adapter 已实现/Source 待接入 | Gemini 336L 固定双流、设备身份、标定快照、硬件时间戳和 60Hz fail-closed Adapter 已完成；Capture writer、Hardware D2C、长稳态与物理手眼待闭环 |
-| VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
+| 相机与标定 | 原生 Source 短录已通过 | Gemini 336L Adapter 与 fail-closed Capture writer 已完成 180 对真机写盘；Hardware D2C、长稳态、Source→Ego 与物理手眼待闭环 |
+| VLA 数据管线 | Capture/Source/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、原生 RGB-D Source、episode sidecar 与完整性校验已接入，Source→Ego 和物理 QA 待完成 |
 | MCP/Bridge | ROS2 Backend Mock 已验收 | HTTP API、MCP 调用和 X-Token 不变；Bridge 通过有应答 ROS Service 调 Driver，真机待验 |
 | ROS2 | Web/MCP 控制链已接入 | Driver、诊断、重连、Bridge、Web 基础控制、CPV 跟随与 Web 联合包已接通；正式轨迹 Action、统一 owner 和真机拔插仍待完成 |
 | 运行环境 | 主链已统一 | `lerobot-v3` 承接 Web/视觉/IK/数据；ROS Humble 自动分流 Hardware Driver、Web worker 和 Bridge 到 Python 3.10 |
@@ -39,6 +39,11 @@
 
 ### 2026-08-27
 
+- 新增 Gemini 336L Capture Source writer：异步有界队列直接保存原生 MJPG 与 little-endian
+  Y16，写入标定、frame journal、兼容宽表、多传感器长表和 checksum；30 FPS 回退、队列
+  溢出、写盘错误、时间戳倒退、同步残差超限均 fail-closed
+- 完成 180 对真机 Source 写盘，RGB/Depth 均为 `59.8945 Hz`，最大同步残差 `0.259 ms`；
+  Source stage 为 `ready`，Capture 保持 `building` 等待 Ego，未声明 D2C 已通过
 - 新增 `Gemini336LAdapter`：固定 V4L2、`2bc5:0807` 和 RGB `1280x800@60 MJPG` +
   raw Depth `848x480@60 Y16`，输出原始/解码帧、设备/Global/系统时间戳及内外参；配置、
   运行时 Profile 或实测 cadence 回退均 fail-closed，离线伪 SDK 回归 `7 passed`；12 秒
@@ -313,8 +318,8 @@ episode sidecar 与 Capture QA 接入后，Capture/strict 定向测试为 `26 pa
 1. 在新单关节 Profile 基础上另行批准并完成 thumb-index interaction commissioning，
    再将完整 Profile 接入 Web/Bridge 条件化安全投影。
 2. 轮换和停止跟踪 TLS 私钥。
-3. 将 Gemini 336L Adapter 接入 Capture Source writer，再闭环长稳态、断连恢复、
-   Hardware D2C 和 `<10 ms` 最大同步残差。
+3. 将 Gemini 336L 原生 Source 接入 Source→Ego 消费者，再闭环长稳态、断连恢复、
+   Hardware D2C 与物理手眼标定。
 4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
 6. 按真手+Mock 臂、真臂+Mock 手、双真机低速顺序验收合体跟随，再接入 RGB-D 米制位置。

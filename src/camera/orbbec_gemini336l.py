@@ -156,7 +156,7 @@ class CadenceReport:
 @dataclass(frozen=True)
 class RGBDFrame:
     sequence: int
-    color_bgr: np.ndarray
+    color_bgr: np.ndarray | None
     color_mjpg: bytes
     depth_raw: np.ndarray
     depth_unit_mm: float
@@ -510,7 +510,7 @@ class Gemini336LAdapter:
         self.startup_cadence = report
         return report
 
-    def read(self) -> RGBDFrame:
+    def read(self, *, decode_color: bool = True) -> RGBDFrame:
         color, depth = self._wait_pair()
         color_timestamp = self._hardware_timestamp(color, "color")
         depth_timestamp = self._hardware_timestamp(depth, "depth")
@@ -522,13 +522,15 @@ class Gemini336LAdapter:
         self._last_depth_timestamp_us = depth_timestamp
 
         color_bytes = np.asarray(color.get_data(), dtype=np.uint8).reshape(-1).tobytes()
-        color_bgr = cv2.imdecode(np.frombuffer(color_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if color_bgr is None or color_bgr.shape != (
-            self.profile.color.height,
-            self.profile.color.width,
-            3,
-        ):
-            raise CameraStreamError("failed to decode the native MJPG color frame")
+        color_bgr = None
+        if decode_color:
+            color_bgr = cv2.imdecode(np.frombuffer(color_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if color_bgr is None or color_bgr.shape != (
+                self.profile.color.height,
+                self.profile.color.width,
+                3,
+            ):
+                raise CameraStreamError("failed to decode the native MJPG color frame")
         expected_depth_values = self.profile.depth.width * self.profile.depth.height
         depth_raw = np.frombuffer(depth.get_data(), dtype=np.uint16)
         if depth_raw.size != expected_depth_values:

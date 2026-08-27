@@ -164,7 +164,7 @@ SDK 确认设备存在 Hardware D2C profile，但当前 WSL + usbipd 下 30 Hz H
 - 原生 Color/Depth/IR/IMU 多流：功能性通过；
 - 原生 RGB/Depth 双路 60 FPS：短时通过；
 - 设备/Global 微秒时间戳：可读取且单调；
-- Hardware D2C 配对输出：未通过，需在 Capture Source 接入中优先复现和解决；
+- Hardware D2C 配对输出：未通过，需在 Source→Ego 对齐前复现和解决；
 - 长时间 usbipd 稳定性、内参精度、RGB-D 像素对齐和手眼外参：尚未验收。
 
 不要并行启动 `ob_multi_streams`、`ob_hw_d2c_align` 或项目 Adapter；相机是单 owner，
@@ -209,13 +209,44 @@ Global 时间残差为 `0.153--0.158 ms`。这证明 Adapter 本身可保持已�
 - Color/Depth frame index、设备/Global/系统微秒时间戳和配对残差；
 - 启动时冻结的 Color/Depth 内参、畸变和 Depth→Color 外参。
 
-Adapter 不能只返回 BGR 帧，后续 Capture Source 接入还需要：
+### Capture Source 录制
 
-- 将厂商原生 RGB 和未对齐 raw depth 持久化；
-- 对齐到 RGB 的 depth，以及每帧 valid 状态；
-- Color/Depth 内参、畸变、RGB-Depth 外参和标定 revision；
-- 原始 sample index、设备/Global 微秒时间戳和同步残差；
-- SDK 原生录制文件，并接入 Capture `source/recordings/` 与流索引。
+原生 Source writer 已接入 `src/camera/capture_orbbec.py`。录制前先停止 Viewer、Web 相机和
+其他 SDK 示例，确保 Gemini 336L 只有一个 owner，然后从仓库根目录运行：
+
+```bash
+PYTHONPATH=src ~/miniconda3/envs/lerobot-v3/bin/python \
+  -m camera.capture_orbbec \
+  --duration 60 \
+  --validate-seconds 12 \
+  --backend v4l2
+```
+
+默认在 `datasets/captures/` 新建 Capture。也可用 `--capture-root <capture>` 写入指定的空
+Capture；writer 拒绝覆盖已有原生 RGB-D Source。采集期间原生 MJPG 直接保存为 `.jpg`，
+未对齐 `848x480 uint16` 深度以 little-endian `.y16` 保存，不做 MJPG 解码、PNG 压缩或
+D2C。有限异步队列一旦溢出、写盘失败、时间戳倒退、任一路实测低于 `59.4 Hz`、depth
+scale 异常或最大同步残差达到 `10 ms`，本批 Source 会 fail-closed。
+
+成功后会写入：
+
+- `source/recordings/native_rgbd_frames.jsonl`：逐对原始 frame journal；
+- `source/rgb_original/episode_000000/*.jpg` 与 `source/depth/raw/episode_000000/*.y16`；
+- `source/calibration/intrinsics_extrinsics.json` 与 `acquisition.json`；
+- `stream_index.parquet` 兼容宽表，以及 `streams.parquet`、`samples.parquet` 和
+  `synchronization.json` 原生双流时间轴；
+- `checksums_original.json`。
+
+Source 成功只把 `bundle.json.stages.source` 标成 `ready`，整个 Capture 仍为 `building`；
+这是有意的，因为 Ego 尚未构建。`depth_aligned_path` 保持空值，不会把 raw depth 冒充已对齐
+深度。后续 Source→Ego 构建必须继续使用终端输出的同一个 `--capture-root`。
+
+2026-08-27 本机使用 V4L2 完成 180 对真机写盘：RGB/Depth 均为 `59.8945 Hz`，最大配对
+同步残差 `0.259 ms`。这证明短时原始写盘没有把双流降到 30 FPS；它不替代长时完整率、
+USB 断连恢复、Hardware D2C 或物理手眼标定验收。
+
+尚未实现的是对齐到 RGB 的 depth、对应逐帧 valid/对齐质量，以及 SDK 原生 bag 容器。当前
+`recordings/` 中的 JSONL 是原始帧 journal，不应表述为 SDK bag。
 
 手眼求解器只使用 RGB 棋盘格角点，深度流不能替代角点检测。Adapter 与 Source 全链通过
 后，再用本页前述工具标定 `T_flange_wrist_camera`；在此之前不得让深度位置直接驱动机械臂。

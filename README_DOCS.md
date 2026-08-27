@@ -155,8 +155,9 @@ q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
    坐标契约、Python 3.12 + LeRobot 0.6.1 完整离线链、严格 v3、episode sidecar 和 Capture
    完整性校验已完成。Gemini 336L 在 WSL + usbipd 下的原生 RGB `1280x800@60 MJPG` 与
    raw Depth `848x480@60 Y16`、设备时间戳和短时 `>=59.4 Hz` 能力已实测通过，原生 Adapter
-   也已完成真机验收；Capture Source writer、Hardware D2C、长时稳定性、`<10 ms` 最大同步残差，以及
-   限位/碰撞/指尖误差的物理 QA 证据仍未闭环。
+   及 Capture Source writer 已完成真机短录验收，180 对落盘仍为 `59.8945/59.8945 Hz`、
+   最大同步残差 `0.259 ms`；Source→Ego、Hardware D2C、长时稳定性，以及限位/碰撞/指尖
+   误差的物理 QA 证据仍未闭环。
 
 ---
 

@@ -10,6 +10,8 @@
 
 ### Added (新增)
 
+- 新增 Gemini 336L 原生 Capture Source writer；有界异步队列直接保存 MJPG 与 little-endian
+  Y16，并生成标定快照、逐帧 journal、兼容宽表、多传感器长表和 Source checksum
 - 新增 `Gemini336LAdapter` 与一次性 Python wrapper 构建脚本；Adapter 固定生产双流、设备
   身份和 V4L2，保留原始 MJPG/raw depth、三类时间戳、内参/畸变及 Depth→Color 外参
 - 完成 Orbbec Gemini 336L 在 WSL2 + usbipd 下的设备准入；记录固件、USB 连接、六类
@@ -48,6 +50,9 @@
 
 ### Verification (验证)
 
+- Gemini 336L 真机完成 180 对原始 Source 写盘；持久化后 RGB/Depth 均为
+  `59.8945 Hz`，最大同步残差 `0.259 ms`，Source stage 正确进入 `ready` 且 Capture 保持
+  `building` 等待 Ego；相机/Capture/Profile/完整性校验定向离线回归 `57 passed`
 - Gemini 336L Adapter 的精确 Profile、USB 身份、原始帧契约、标定单位、设备时间戳 cadence
   及 30 FPS 回退拒绝离线测试 `7 passed`
 - Python Adapter 使用 V4L2 完成 12 秒真机验收：RGB/Depth 各 720 帧，设备时间戳实测
