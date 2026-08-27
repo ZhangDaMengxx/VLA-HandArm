@@ -64,6 +64,10 @@ Direct 模式允许同时启动 Web 与 Bridge，但不协调硬件 owner：Brid
 | `src/live_ik_worker.py` | 与轻量 Web 环境隔离的 NERO FK/IK 子进程 |
 | `src/live_ik_scheduler.py` | 单 worker、latest-only 实时 IK 调度和过期结果失效 |
 | `src/camera/` | 相机 Adapter、棋盘格检测和只读式 NERO 手眼标定 |
+| `src/camera/orbbec_gemini336l.py` | 固定双流、标定快照和硬件时间戳原生 Adapter |
+| `src/camera/check_orbbec_60fps.sh` | Gemini 336L 双路 60 FPS 无 GUI 硬件验收入口 |
+| `src/camera/setup_pyorbbecsdk.sh` | 从仓内上游源码构建并安装官方 Python wrapper |
+| `configs/camera/orbbec_gemini336l_60fps.json` | 固定 RGB/Depth 生产 Profile |
 | `src/app_web.py` | Web 工作台和 WebSocket 后端 |
 | `src/web/hand_tracker_tasks.js` | MediaPipe Tasks/Legacy 统一追踪适配层 |
 | `src/web/combo_camera.js` | 合体页摄像头与锚定/冻结单按钮状态机 |
@@ -137,6 +141,30 @@ begin/set-target/end Service 下发；联合包先等待 prepare ACK，再在 ap
 
 不要用是否能 import 来推断真机已经可用；CAN、串口、使能、急停和工作区仍需单独确认。
 
+Gemini 336L 每次经 usbipd 重新附加后，先确认相机没有被其他进程占用，再运行固定双流验收：
+
+```bash
+bash src/camera/check_orbbec_60fps.sh v4l2 12
+```
+
+该命令显式选择 RGB `1280x800@60 MJPG` 和 raw Depth `848x480@60 Y16`，两路设备时间戳
+实测均须 `>=59.4 Hz`，并输出 `result=PASS threshold_hz=59.400`。V4L2 模式还要求
+`/sys/class/video4linux/video*` 与 `/dev/video*` 节点数量一致；usbipd 附加后一度缺少节点时，
+等待 udev 或重新附加并复测。禁止改用默认 Profile 或静默降到 30 FPS。短时通过不代表
+Hardware D2C、长时稳定性或 `<10 ms` 最大同步残差已经通过，完整边界见
+[src/camera/README.md](src/camera/README.md)。
+
+Adapter 首次安装与真机冒烟：
+
+```bash
+bash src/camera/setup_pyorbbecsdk.sh ~/miniconda3/envs/lerobot-v3/bin/python
+PYTHONPATH=src ~/miniconda3/envs/lerobot-v3/bin/python \
+  -m camera.orbbec_gemini336l --backend v4l2 --validate-seconds 12 --frames 3
+```
+
+Adapter 只负责原生采集和校验，尚未替代 `build_canonical_from_rgbd.py` 的文件输入，也不会
+自动创建 Capture。相机 Source writer 完成前，不得把 Adapter 冒烟结果记作正式数据交付。
+
 严格验证时给 Hugging Face 指定可写缓存，并显式离线运行：
 
 ```bash
@@ -181,7 +209,7 @@ python src/lerobot_v3/replay_rerun.py --capture-root datasets/captures/capture_<
 帧集没有硬件时间时使用 `fps_derived`，只表示处理时间轴，不作为相机同步精度证据。
 该宽表服务当前单 RGB-D；眼镜、VIO/IMU、腕部设备和外部真值的异步多流将使用
 `streams.parquet`/`samples.parquet` 长表并保留 `stream_index.parquet` 兼容视图。当前已提供
-`write_multisensor_source_index()` 写入与基础校验，设备 Adapter 和 Source -> Ego 对齐尚未
+`write_multisensor_source_index()` 写入与基础校验，设备 Source writer 和 Source -> Ego 对齐尚未
 接入；实施顺序与质量闸见 [EGO_DATA_STANDARD.md](EGO_DATA_STANDARD.md)。
 
 质量口径位于 `configs/quality_profiles/*.json`，构建时完整复制到
@@ -446,4 +474,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s robot-bridge/tests -v
 
 ---
 
-**最后核对**：2026-08-21
+**最后核对**：2026-08-27

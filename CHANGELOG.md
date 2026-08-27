@@ -10,6 +10,10 @@
 
 ### Added (新增)
 
+- 新增 `Gemini336LAdapter` 与一次性 Python wrapper 构建脚本；Adapter 固定生产双流、设备
+  身份和 V4L2，保留原始 MJPG/raw depth、三类时间戳、内参/畸变及 Depth→Color 外参
+- 完成 Orbbec Gemini 336L 在 WSL2 + usbipd 下的设备准入；记录固件、USB 连接、六类
+  传感器、原生多流 FPS 和设备/Global 微秒时间戳基线
 - 新增 `RobotBackend` 及 ROS2、Direct、Mock 三种 worker 实现；通过
   `WEB_HARDWARE_BACKEND` 选择真实硬件通信方式
 - 新增 `/api/hardware/backend` 和 capability 报告，页面显示当前硬件 Backend
@@ -20,6 +24,10 @@
 
 ### Changed (变更)
 
+- 固定 RGB-D 生产标准改为 Gemini 336L 可实现的 RGB `1280x800@60 MJPG` 与 raw Depth
+  `848x480@60 Y16`；60 FPS 为硬指标，设备时间戳实测须各自 `>=59.4 Hz`
+- Source 帧率验收不再只读取 `acquisition.json` 声明值；60Hz Profile 必须存在 RGB/Depth
+  硬件时间戳并通过实际 cadence，缺证据或退回 30 FPS 明确失败
 - arm/hand Web 会话不再自行判断 ROS 或 Console；技能、组合动作、视频跟随、HTTP 和
   WebSocket 继续复用原 JSON worker 协议
 - 在线会话拒绝切换 Backend；Direct 只作为迁移回退，不能与 Hardware Driver 同时占用硬件
@@ -40,6 +48,20 @@
 
 ### Verification (验证)
 
+- Gemini 336L Adapter 的精确 Profile、USB 身份、原始帧契约、标定单位、设备时间戳 cadence
+  及 30 FPS 回退拒绝离线测试 `7 passed`
+- Python Adapter 使用 V4L2 完成 12 秒真机验收：RGB/Depth 各 720 帧，设备时间戳实测
+  `59.8945/59.8945 Hz`，最大帧间隔均 `16.697 ms`、无倒退；随后三个配对帧的 Global
+  时间残差为 `0.153--0.158 ms`，并成功读取两路内参、畸变及 Depth→Color 外参
+- Orbbec SDK 2.9.3 成功枚举 Gemini 336L；无界面原生录制同时收到 Color、Depth、双 IR、
+  Accel 和 Gyro 并正常封装临时 bag。约 35 秒时间戳样本两路单调，RGB/Depth 最近邻
+  Global 时间残差平均绝对值约 1.123 ms、最大约 32.025 ms
+- Hardware D2C profile 可查询且 30 Hz 管线可启动，但当前 WSL + usbipd 只返回 Color、
+  未返回配对 Depth；D2C、长稳态与 `<10 ms` 最大残差明确保留为未通过项
+- Windows Viewer 与 WSL 原生 SDK 均确认 RGB `1280x800@60 MJPG` + Depth
+  `848x480@60 Y16`：WSL + usbipd 的 V4L2 后端实测 `59.895/59.894 Hz`，LibUVC 复测
+  `59.816/59.894 Hz`。早期 Depth 0 帧在重新附加 USB 后恢复，撤回“usbipd/LibUVC 无法
+  达到 60 FPS”的过早归因；60Hz fail-closed 验收、Profile 与 Capture 回归 `38 passed`
 - Backend 选择、ROS/Direct/Mock worker、能力差异和在线切换拒绝定向测试通过
 - 启动器语法、三种模式 dry-run 与 Web + Bridge Mock 实际启停通过
 - Direct 菜单 `2 -> 3` 与 `--mode direct --components both` dry-run 通过；未执行双进程真机接入

@@ -54,13 +54,27 @@ def validate_quality_profile(profile: dict[str, Any]) -> dict[str, Any]:
         spec = acquisition.get(stream)
         if not isinstance(spec, dict) or not isinstance(spec.get("required"), bool):
             raise ValueError(f"quality profile acquisition.{stream}.required must be boolean")
-        for key in ("min_fps", "min_width", "min_height"):
+        for key in ("min_fps", "min_measured_fps", "min_width", "min_height"):
             if key in spec and (
                 isinstance(spec[key], bool)
                 or not isinstance(spec[key], (int, float))
                 or spec[key] <= 0
             ):
                 raise ValueError(f"quality profile acquisition.{stream}.{key} must be positive")
+        if (
+            "min_measured_fps" in spec
+            and "min_fps" not in spec
+        ):
+            raise ValueError(
+                f"quality profile acquisition.{stream}.min_measured_fps requires min_fps"
+            )
+        if (
+            "min_measured_fps" in spec
+            and float(spec["min_measured_fps"]) > float(spec["min_fps"])
+        ):
+            raise ValueError(
+                f"quality profile acquisition.{stream}.min_measured_fps cannot exceed min_fps"
+            )
     timestamps = acquisition.get("hardware_timestamps")
     sync = acquisition.get("rgb_depth_sync")
     if not isinstance(timestamps, dict) or not isinstance(timestamps.get("required"), bool):

@@ -2,7 +2,7 @@
 
 本文说明松灵 NERO 七自由度机械臂与因时 RH56DFX-2R 右手在本项目中的硬件规格、通信接口、运行时约束和装配参数。
 
-> 对齐基准：2026-08-21 本地项目。运行时参数以 `src/nero_arm.py` 和
+> 对齐基准：2026-08-27 本地项目。运行时参数以 `src/nero_arm.py` 和
 > `src/inspire_hand.py` 为准；装配参数以 `src/build_nero_inspire.py` 为准。
 
 ---
@@ -204,6 +204,59 @@ MediaPipe Tasks → WebSocket → dex-retargeting → latest-target mailbox → 
 积累滤波尾差并产生约 `0.02rad` 的末端台阶，已移除。该滤波不改变 RH56DFX 固件、
 `SPEED_SET` 或 `FORCE_SET`，也不能提升本体内部位置环带宽。dex-retargeting 自带的
 逐帧固定低通已设置为 `low_pass_alpha=1.0`（关闭），避免与 One Euro 叠加延迟。
+
+---
+
+### 1.3 RGB-D 相机：Orbbec Gemini 336L
+
+2026-08-27 在 WSL2 + usbipd 下完成首次设备准入，当前设备基线如下：
+
+| 项目 | 实测值 |
+|------|--------|
+| 型号 | Orbbec Gemini 336L |
+| USB ID | `2bc5:0807` |
+| 序列号 | `CPC876300084` |
+| 固件 | `1.4.60` |
+| SDK | OrbbecSDK `2.9.3` |
+| 连接 | USB 3.2，经 usbipd 转发到 WSL2 |
+| 传感器 | Color、Depth、Accel、Gyro、Left IR、Right IR |
+
+官方无界面原生录制器成功同时打开全部六类传感器并正常封装临时 bag。稳定观察窗口中
+Color/Depth/左右 IR 约 `32.5--33 FPS`，Accel/Gyro 约 `214--218 FPS`；曾出现一个
+Color/Depth/IR 约 `9.9 FPS` 的短时窗口，因此这次只算功能性准入，不代表 WSL + usbipd
+长时间稳定性已验收。这里使用的是 SDK 默认 30 FPS 配置，不是项目生产标准。
+
+官方时间戳工具自动选择 Color `1280x720@30 MJPG` 和 Depth `848x480@30 Y16`，约 35 秒
+内分别得到 1044/1055 帧，Global 时间戳均单调，平均速率为 29.920/29.946 Hz。按 Global
+时间戳做最近邻配对时，平均绝对残差约 `1.123 ms`，最大值约 `32.025 ms`；最大值超过项目
+`<10 ms` 的目标门限，且样本中存在约 2.98 秒的共同间隔，需在正式 Capture Source writer 中记录丢帧、
+对齐 sample index 并做更长时间复测，不能只用平均值宣称同步通过。
+
+固件/SDK 查询确认该型号提供 Hardware D2C profile；当前 WSL + usbipd 下 30 Hz 对齐管线
+能够创建和启动，但探针只收到 Color、未收到对齐 Depth，所以 Hardware D2C 尚未通过验收。
+正式采集前必须在单一相机 owner 下复测，确认能持续得到配对 RGB-D、保存未对齐 raw depth
+和对齐 depth，并读取设备内参、畸变及 RGB-Depth 外参。当前相机数据还没有接入 Capture，
+也没有参与机械臂控制。
+
+Orbbec 官方 Gemini 336L 产品页给出的上限为：Depth `1280x800@30 FPS`、RGB
+`1280x800@60 FPS`。这表示 Depth 的最高分辨率模式是 30 FPS，并不表示 Depth 最高只能
+30 FPS；本机 SDK/固件实际暴露了 Depth `848x480`、`640x480`、`640x360`、`480x270`、
+`424x240` 的 60 FPS Y16 profile，以及 RGB `1280x800/1280x720@60 MJPG` 等 profile。
+
+项目固定 RGB-D 生产硬指标为 RGB `1280x800@60 MJPG`、raw Depth `848x480@60 Y16`：
+两路标称都必须显式为 60 FPS，并分别用设备时间戳证明实测 `>=59.4 Hz`；禁止自动回退
+30 FPS 或补帧。用户先在 Windows Orbbec Viewer 验证该双流组合均为 60 FPS；随后项目
+使用 OrbbecSDK 2.9.3 在同一 WSL + usbipd 链路复现：V4L2 后端实测 RGB/Depth 为
+`59.895/59.894 Hz`，LibUVC 后端复测为 `59.816/59.894 Hz`，均达到硬门槛。
+
+早期探针曾遇到 Depth 60 停在 STARTING、0 帧；重新通过 usbipd 附加设备后，同一 Depth
+单流探针恢复为 `59.894 Hz`。因此该现象应归类为 USB 附加或运行时瞬时故障，不能解释为
+WSL、usbipd 或 LibUVC 的固有帧率上限。生产启动优先显式选择 V4L2，并在每次附加后运行
+双流验收；V4L2 还要求 sysfs 枚举的 8 个 video 节点都已出现在 `/dev/video*`，缺节点会
+导致 Depth Profile 缺失。失败时先停止所有相机 owner、重新附加 USB 并复测，禁止静默降级到 30 FPS。
+固定配置见 `configs/camera/orbbec_gemini336l_60fps.json`。
+
+相机的 SDK 命令、判定边界和下一步见 `src/camera/README.md`。
 
 ---
 

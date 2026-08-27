@@ -34,6 +34,7 @@ ROS2 Driver 同时占用硬件。
 | 部署 MCP Server 或硬件 Bridge | `/home/zhang123/ros2_ws/robot-mcp-server/README.md` |
 | 查看本项目文档状态 | [README_DOCS.md](README_DOCS.md) |
 | 调试硬件 | [HARDWARE.md](HARDWARE.md) |
+| 验收 Gemini 336L 双路 60 FPS | [src/camera/README.md](src/camera/README.md) |
 | 建立灵巧手可行域 Profile | [src/HAND_FEASIBILITY_AUTOMATION.md](src/HAND_FEASIBILITY_AUTOMATION.md) |
 | 修改本项目代码 | [HANDBOOK.md](HANDBOOK.md) |
 | 查看当前进度和已知问题 | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
@@ -56,6 +57,26 @@ Direct 模式可启动 Web、Bridge 或两者；两者同时运行时 Bridge 启
 > `mcp_server/` 和根目录 `bridge.py` 是拆仓前的内嵌快照，包含曾经试验过的
 > combo、视觉 mimic 和 `/execute` 能力。它们不是当前 MCP 部署基准；不要从这些
 > 文件推断线上接口，也不要与独立仓库混合部署。
+
+## RGB-D 相机基线
+
+当前固定相机为 Orbbec Gemini 336L。WSL2 + usbipd + OrbbecSDK 2.9.3 已用与 Windows
+Viewer 相同的组合短时实测通过：RGB `1280x800@60 MJPG`、raw Depth
+`848x480@60 Y16`。生产优先使用 V4L2，60 FPS 是硬指标，不允许自动回退到 30 FPS。
+
+每次重新附加 USB 后，从仓库根目录执行：
+
+```bash
+bash src/camera/check_orbbec_60fps.sh v4l2 12
+```
+
+两路设备时间戳实测都必须达到 `>=59.4 Hz`，且输出包含
+`result=PASS threshold_hz=59.400`。脚本同时要求 sysfs 枚举的 video 节点已经全部出现在
+`/dev/video*`；节点不全时应等待 udev 或重新附加 USB 后重测，不能用缺少 Depth Profile
+的结果判断设备能力。原生 `Gemini336LAdapter` 已能锁定 Profile、读取标定和逐帧硬件时间戳；
+该结果只关闭了双路 60 FPS 短时能力验证，Capture Source writer、Hardware D2C 配对输出、
+长时稳定性和 RGB-D 最大同步残差 `<10 ms` 仍未闭环。详细判定与排障见
+[src/camera/README.md](src/camera/README.md)。
 
 ## Web 工作台
 
@@ -169,7 +190,8 @@ state/action 有限值等自动检查，缺少碰撞、限位或指尖真值时�
 `VLA_LEGACY_OUT=1`）才会读取旧产物。当前迁移只改变路径并保留既有 `xyzw` 四元数和数值
 运算。命名环境 `lerobot-v3` 已扩充为 Python 3.12.13 + `lerobot[dataset]==0.6.1` 的完整
 离线 EGO/RobotDataset/回放链，严格 v3 校验已通过；
-完整 Source RGB-D 原始流与真实硬件微秒时间戳仍需由后续采集设备提供。目录说明见
+Gemini 336L 原生 Adapter 已证明 RGB/Depth 与设备微秒时间戳可用，但 Capture Source writer
+尚未把这些数据写盘；因此现有 Capture 仍不具备完整 RGB-D 原始流和硬件时间戳证据。目录说明见
 [datasets/captures/README.md](datasets/captures/README.md)，字段约定见
 [src/CANONICAL_SPEC.md](src/CANONICAL_SPEC.md)，V3 代码入口见
 [src/lerobot_v3/README.md](src/lerobot_v3/README.md)。

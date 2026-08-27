@@ -11,6 +11,8 @@
 | `kinect2-middle/` | RGB-D 第三方数据与工具 | 本地资产，不入库 |
 | `pinocchio-kinematics-lite/` | 运动学参考实现 | 本地资产，不入库 |
 | `pyAgxArm/` | NERO 厂商 Python SDK | 真机依赖，不入库 |
+| `OrbbecSDK/` | Orbbec SDK 2.9.3 原生库、头文件和官方示例 | 厂商依赖，不入库 |
+| `pyorbbecsdk-2-main/` | Orbbec SDK v2 官方 Python wrapper 源码与文档 | 上游源码，不入库 |
 | `unitree-sdk2/` | Unitree SDK 上游源码 | 本地资产，不入库 |
 | `overlays/` | 本项目对上游文件的补丁和扩展 | 项目维护，进入 Git |
 

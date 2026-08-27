@@ -84,8 +84,18 @@
   - 标定并版本化 `T_scene_overhead`、`T_scene_robot_base` 和 `T_flange_wrist_camera`
   - [x] 建立 `src/camera/` 和 eye-in-hand 棋盘格交互工具；只读关节角、URDF FK、
     `next/finish` 采样、退化检测、误差报告及 `xyzw`/4x4 输出已具备（2026-08-24）
-  - [ ] 相机具体型号和 Orbbec SDK 确认后实现 336 原生 RGB-D/硬件时间戳 Adapter，并用
-    真机数据验证 `T_flange_wrist_camera`；当前 OpenCV Adapter 不代表设备 Source 已闭环
+  - [x] 确认设备为 Gemini 336L、固件 `1.4.60`、OrbbecSDK `2.9.3` 和 USB 3.2；原生
+    Color/Depth/IR/IMU 多流及设备/Global 微秒时间戳功能性通过（2026-08-27）
+  - [x] 实现 Gemini 336L 原生 RGB-D/硬件时间戳 Adapter：固定 V4L2 Profile、设备身份、
+    原始 MJPG/raw depth、标定快照和 fail-closed cadence（2026-08-27）
+  - [ ] 将 Adapter 写入 Capture Source，并用真机数据验证 `T_flange_wrist_camera`；
+    Adapter 冒烟和当前 OpenCV 标定入口都不代表设备 Source 已闭环
+  - [x] WSL + usbipd 原生双流达到硬门槛：V4L2 下 RGB `1280x800@60 MJPG` 与 raw Depth
+    `848x480@60 Y16` 实测 `59.895/59.894 Hz`；LibUVC 复测也通过（2026-08-27）
+  - [ ] 解决或规避 Hardware D2C 只有 Color、没有配对 Depth 的问题；正式采集链优先
+    V4L2，附加异常时必须复测双路 60 FPS，不允许降到 30 FPS
+  - [ ] 用设备时间戳复测 RGB/Depth 各自 `>=59.4 Hz`、原始流完整率 `>=99%`、RGB-D
+    最大同步残差 `<10 ms` 和长时间掉帧；当前 30 FPS 冒烟样本最大残差 `32.025 ms`
   - 深度无效、时间戳过期或两路位姿冲突时冻结机械臂目标并进入重定位
 - [ ] 用相同固定角度阶跃各重复 3 次，对照 `SPEED_SET=500/800/1000` 的 settled、力、电流和温度
 - [ ] 验证局域网可信 HTTPS；不得继续使用已提交的旧私钥
@@ -175,6 +185,8 @@
 ### 剩余任务（2026-08-20）
 
 - [ ] 接入真实采集设备的完整 Source 数据
+  - [x] Gemini 336L SDK 原生临时 bag 已成功封装，确认 Color/Depth/IR/IMU 均有实际帧；
+    临时 `/tmp` 冒烟数据不是正式 Capture（2026-08-27）
   - 保存设备 SDK 原生 RGB-D 容器到 `source/recordings/`
   - 同时保存未对齐 raw depth、对齐 RGB 的 depth 及对应标定快照
   - 将 RGB/Depth 原始硬件微秒时间戳写入 `stream_index.parquet`，计算真实同步残差
@@ -233,4 +245,4 @@
 
 ---
 
-**最后整理**：2026-08-24
+**最后整理**：2026-08-27

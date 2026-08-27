@@ -9,6 +9,9 @@
 /third_party/unitree-sdk2/
 /third_party/OrbbecSDK/
 /third_party/pyorbbecsdk-2-main/
+# Orbbec SDK 运行时生成的诊断日志。
+/Log/
+/third_party/Log/
 # 项目维护的上游适配层需要入库。
 !/third_party/overlays/
 *.zip

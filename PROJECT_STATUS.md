@@ -11,7 +11,7 @@
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
 | Web 传输 | 双 Backend 已接入 | Web API/技能/跟随协议不变；真实会话可选 ROS2 Driver 或 Direct，Mock 继续空跑；真机双模式待验 |
 | 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
-| 相机与标定 | 工具已建/真机待验 | eye-in-hand 交互工具已具备；Orbbec 336 原生 SDK Adapter、设备内参与物理手眼结果待相机到货后验证 |
+| 相机与标定 | 原生 Adapter 已实现/Source 待接入 | Gemini 336L 固定双流、设备身份、标定快照、硬件时间戳和 60Hz fail-closed Adapter 已完成；Capture writer、Hardware D2C、长稳态与物理手眼待闭环 |
 | VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
 | MCP/Bridge | ROS2 Backend Mock 已验收 | HTTP API、MCP 调用和 X-Token 不变；Bridge 通过有应答 ROS Service 调 Driver，真机待验 |
 | ROS2 | Web/MCP 控制链已接入 | Driver、诊断、重连、Bridge、Web 基础控制、CPV 跟随与 Web 联合包已接通；正式轨迹 Action、统一 owner 和真机拔插仍待完成 |
@@ -39,6 +39,23 @@
 
 ### 2026-08-27
 
+- 新增 `Gemini336LAdapter`：固定 V4L2、`2bc5:0807` 和 RGB `1280x800@60 MJPG` +
+  raw Depth `848x480@60 Y16`，输出原始/解码帧、设备/Global/系统时间戳及内外参；配置、
+  运行时 Profile 或实测 cadence 回退均 fail-closed，离线伪 SDK 回归 `7 passed`；12 秒
+  真机 Adapter 验收为 `59.8945/59.8945 Hz`，最大帧间隔均 `16.697 ms`、无时间戳倒退
+- 完成 Orbbec Gemini 336L 真机准入：SDK 2.9.3 在 WSL2 + usbipd 下识别 USB 3.2、
+  固件 1.4.60 及 Color/Depth/Accel/Gyro/双 IR；官方无界面录制器成功生成原生临时 bag
+- 时间戳工具实测 Color `1280x720@30 MJPG`、Depth `848x480@30 Y16`，约 35 秒内
+  Global 时间戳均单调，最近邻平均绝对残差约 1.123 ms、最大约 32.025 ms；存在约
+  2.98 秒共同间隔，长稳态与 `<10 ms` 最大残差门限尚未通过
+- SDK 确认 Hardware D2C profile 存在，但 WSL + usbipd 下 30 Hz 对齐管线只返回 Color、
+  未得到配对 Depth；已将具体型号冻结并把 D2C/同步问题列为 Capture Source 接入前置项
+- Windows Orbbec Viewer 已确认 RGB `1280x800@60 MJPG` 与 Depth `848x480@60 Y16`；
+  同一组合在 WSL + usbipd + OrbbecSDK 2.9.3 的 V4L2 后端实测 `59.895/59.894 Hz`，
+  LibUVC 后端复测 `59.816/59.894 Hz`，证明双路 60 FPS 可用
+- 将固定 RGB-D 的 60 FPS 定为硬门槛：RGB `1280x800`、raw Depth `848x480` 均须标称
+  60 FPS，设备时间戳实测均须 `>=59.4 Hz`；验收代码不再接受只有配置声明、缺时间戳或
+  自动回退 30 FPS，质量 Profile 与 Capture 定向回归 `38 passed`
 - 新增 Web `RobotBackend` 抽象及 `ros`、`direct`、`mock` 实现；原 arm/hand API、WebSocket、
   技能包、组合动作和视频跟随继续复用同一 JSON worker 协议
 - 增加 `WEB_HARDWARE_BACKEND` 配置、`/api/hardware/backend` 能力报告和页面 Backend
@@ -219,6 +236,9 @@
    或硬件时间戳；这些数据只能由后续真实采集链提供，不能从文件名或 FPS 反推。
 10. Robot episode QA 的关节限位、碰撞和指尖绝对误差尚无运行证据，当前明确标记为
     `not_evaluated`；结构通过不能替代物理验收。
+11. Gemini 336L 在 WSL + usbipd 下已通过原生 RGB/Depth 双路 60 FPS 短时验收；但早期
+    附加状态曾出现 Depth 0 帧，30 FPS 样本也出现过 2.98 秒共同间隔，Hardware D2C 尚无
+    配对 Depth。因此长稳态、断连恢复和 `<10 ms` 最大残差仍未通过。
 
 ## 验证记录
 
@@ -293,7 +313,8 @@ episode sidecar 与 Capture QA 接入后，Capture/strict 定向测试为 `26 pa
 1. 在新单关节 Profile 基础上另行批准并完成 thumb-index interaction commissioning，
    再将完整 Profile 接入 Web/Bridge 条件化安全投影。
 2. 轮换和停止跟踪 TLS 私钥。
-3. 补齐 Capture Source 原生 RGB-D、raw depth 和硬件时间戳，再接入限位、碰撞与指尖误差的物理 QA 证据。
+3. 将 Gemini 336L Adapter 接入 Capture Source writer，再闭环长稳态、断连恢复、
+   Hardware D2C 和 `<10 ms` 最大同步残差。
 4. 复测 One Euro 滤波后的张手末端和静止姿态，再完成浏览器兼容矩阵及相同固定角度阶跃速度测试。
 5. 复核 ROS2 独立仓库的关节命名和控制链。
 6. 按真手+Mock 臂、真臂+Mock 手、双真机低速顺序验收合体跟随，再接入 RGB-D 米制位置。

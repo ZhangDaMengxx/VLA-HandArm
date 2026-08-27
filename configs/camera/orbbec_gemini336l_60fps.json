@@ -1,0 +1,31 @@
+{
+  "schema": "gemini336l_native_rgbd_v1",
+  "device": {
+    "name": "Gemini 336L",
+    "vid": "0x2bc5",
+    "pid": "0x0807"
+  },
+  "backend": "v4l2",
+  "minimum_measured_fps": 59.4,
+  "startup_validation_seconds": 3.0,
+  "frame_timeout_ms": 1000,
+  "duration": 60,
+  "syncInterval": 0,
+  "streams": [
+    {
+      "sensor": "depth",
+      "width": 848,
+      "height": 480,
+      "fps": 60,
+      "format": "Y16"
+    },
+    {
+      "sensor": "color",
+      "width": 1280,
+      "height": 800,
+      "fps": 60,
+      "format": "MJPG"
+    }
+  ],
+  "deviceOverrides": {}
+}

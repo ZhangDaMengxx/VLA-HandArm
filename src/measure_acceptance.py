@@ -147,6 +147,50 @@ def _resolve_quality_profile(canonical_dir: Path, explicit: str | None):
     return load_quality_profile("processed_observations_v1"), "compatibility_default_undeclared"
 
 
+def _measured_source_fps(capture, stream: str):
+    """Measure native stream cadence from hardware timestamps, never from declared FPS."""
+    if capture is None:
+        return None, None, 0, "Capture 不存在，缺少设备时间戳证据"
+    stream_index = capture.source / "stream_index.parquet"
+    if not stream_index.is_file():
+        return None, None, 0, "缺少 source/stream_index.parquet，无法实测帧率"
+    column = "rgb_timestamp_hw_us" if stream == "rgb" else "depth_timestamp_hw_us"
+    try:
+        import pandas as pd
+
+        frame = pd.read_parquet(stream_index)
+        if column not in frame.columns:
+            return None, None, 0, f"stream_index.parquet 缺少 {column}"
+        if "episode_index" not in frame.columns:
+            frame = frame.assign(episode_index=0)
+        interval_count = 0
+        duration_us = 0.0
+        max_gap_us = 0.0
+        sample_count = 0
+        for _, episode in frame.groupby("episode_index", sort=False):
+            values = episode[column].dropna().to_numpy(dtype=np.int64)
+            sample_count += len(values)
+            if len(values) < 2:
+                continue
+            differences = np.diff(values)
+            if np.any(differences <= 0):
+                return None, None, sample_count, f"{column} 不是严格单调递增"
+            interval_count += len(differences)
+            duration_us += float(np.sum(differences))
+            max_gap_us = max(max_gap_us, float(np.max(differences)))
+        if interval_count == 0 or duration_us <= 0:
+            return None, None, sample_count, f"{column} 有效样本不足"
+        measured_fps = interval_count * 1_000_000.0 / duration_us
+        return (
+            measured_fps,
+            max_gap_us / 1000.0,
+            sample_count,
+            f"基于 {column} 的设备时间戳实测；不是 acquisition.json 声明值",
+        )
+    except (ImportError, OSError, ValueError, TypeError):
+        return None, None, 0, "无法读取 stream_index.parquet 的设备时间戳"
+
+
 def _source_acquisition_metrics(canonical_dir: Path, profile):
     capture = capture_for_path(canonical_dir)
     acquisition_path = capture.source / "acquisition.json" if capture is not None else None
@@ -160,21 +204,51 @@ def _source_acquisition_metrics(canonical_dir: Path, profile):
         standard = profile["acquisition"][stream]
         if not standard["required"]:
             continue
-        prefix = "" if stream == "rgb" else "depth_"
-        fps = config.get(f"{prefix}fps", config.get("fps"))
+        declared_fps = config.get(f"{stream}_fps", config.get("fps"))
         min_fps = standard.get("min_fps")
-        fps_pass = None if fps is None or min_fps is None else float(fps) >= float(min_fps)
+        min_measured_fps = standard.get("min_measured_fps")
+        measured_fps = None
+        max_gap_ms = None
+        sample_count = 0
+        fps_note = "来自 source/acquisition.json；不是由 Ego 输出帧率反推"
+        if min_measured_fps is not None:
+            measured_fps, max_gap_ms, sample_count, fps_note = _measured_source_fps(
+                capture, stream
+            )
+            declaration_pass = (
+                declared_fps is not None
+                and min_fps is not None
+                and float(declared_fps) >= float(min_fps)
+            )
+            measured_pass = (
+                measured_fps is not None
+                and float(measured_fps) >= float(min_measured_fps)
+            )
+            fps_pass = bool(declaration_pass and measured_pass)
+            fps = measured_fps
+            fps_note += (
+                f"；声明={declared_fps!r} fps，样本={sample_count}，最大帧间隔="
+                f"{max_gap_ms:.3f} ms" if max_gap_ms is not None else
+                f"；声明={declared_fps!r} fps，样本={sample_count}"
+            )
+            threshold = f"nominal>={min_fps:g}, measured>={min_measured_fps:g}"
+            measurement_basis = "source_hardware_timestamp_cadence"
+        else:
+            fps = declared_fps
+            fps_pass = None if fps is None or min_fps is None else float(fps) >= float(min_fps)
+            threshold = f">={min_fps:g}" if min_fps is not None else "declared"
+            measurement_basis = "source_acquisition_declaration"
         metrics.append(_metric(
             f"source_{stream}_fps",
             f"Source {stream.upper()} 帧率",
             fps,
             "fps",
-            f">={min_fps:g}" if min_fps is not None else "declared",
+            threshold,
             fps_pass,
             "source",
-            "来自 source/acquisition.json；不是由 Ego 输出帧率反推",
+            fps_note,
             measurement_class="source_capability",
-            measurement_basis="source_acquisition_declaration",
+            measurement_basis=measurement_basis,
         ))
         width_key = "width" if stream == "rgb" else "depth_width"
         height_key = "height" if stream == "rgb" else "depth_height"

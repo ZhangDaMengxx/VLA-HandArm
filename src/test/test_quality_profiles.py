@@ -47,7 +47,7 @@ def test_repository_quality_profiles_are_valid_and_versioned() -> None:
         profile = load_quality_profile(path.stem)
         assert profile["profile_id"] == path.stem
         assert profile["schema_version"] == "1.1"
-        assert profile["revision"] == 2
+        assert profile["revision"] >= 2
         assert all(
             "measurement_class" in spec and "ground_truth_required" in spec
             for spec in profile["metrics"].values()
@@ -63,6 +63,15 @@ def test_profile_threshold_comparisons_keep_strict_boundaries() -> None:
     assert evaluate_threshold(89.9, detection) is False
     assert evaluate_threshold(0.99, retarget) is True
     assert evaluate_threshold(1.0, retarget) is False
+
+
+def test_measured_fps_threshold_requires_nominal_fps() -> None:
+    profile = copy.deepcopy(load_quality_profile("ego_fixed_rgbd_60hz_v1"))
+    profile["acquisition"]["rgb"].pop("min_fps")
+    with pytest.raises(ValueError, match="min_measured_fps requires min_fps"):
+        from quality_profiles import validate_quality_profile
+
+        validate_quality_profile(profile)
 
 
 def test_capture_quality_profile_snapshot_is_immutable(tmp_path: Path) -> None:
@@ -128,8 +137,63 @@ def test_target_profile_does_not_accept_legacy_rgbd_capabilities(tmp_path: Path)
     assert acquisition["quality_profile"] == {
         "path": "quality_profile.json",
         "profile_id": "ego_fixed_rgbd_60hz_v1",
-        "revision": 2,
+        "revision": 4,
     }
+
+
+def test_60hz_profile_requires_measured_hardware_timestamp_cadence(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    capture = create_capture(tmp_path, datetime(2026, 8, 27))
+    source = tmp_path / "rgbd"
+    source.mkdir()
+    profile = load_quality_profile("ego_fixed_rgbd_60hz_v1")
+    record_source(
+        capture,
+        kind="native_rgbd",
+        source=source,
+        config={
+            "rgb_fps": 60,
+            "depth_fps": 60,
+            "rgb_width": 1280,
+            "rgb_height": 800,
+            "depth_width": 848,
+            "depth_height": 480,
+        },
+        hardware_timestamps_available=True,
+        quality_profile=profile,
+    )
+
+    missing = _source_acquisition_metrics(capture.ego, profile)
+    assert _by_key(missing, "source_rgb_fps")["pass"] is False
+    assert _by_key(missing, "source_depth_fps")["pass"] is False
+
+    timestamps = np.arange(121, dtype=np.int64) * 16_667 + 1_000_000
+    pd.DataFrame({
+        "episode_index": np.zeros(len(timestamps), dtype=np.int32),
+        "rgb_timestamp_hw_us": timestamps,
+        "depth_timestamp_hw_us": timestamps + 1_000,
+        "sync_error_ms": np.ones(len(timestamps)),
+    }).to_parquet(capture.source / "stream_index.parquet", index=False)
+
+    measured = _source_acquisition_metrics(capture.ego, profile)
+    rgb = _by_key(measured, "source_rgb_fps")
+    depth = _by_key(measured, "source_depth_fps")
+    assert rgb["pass"] is True
+    assert depth["pass"] is True
+    assert 59.9 < rgb["value"] < 60.1
+    assert rgb["measurement_basis"] == "source_hardware_timestamp_cadence"
+
+    slow_timestamps = np.arange(121, dtype=np.int64) * 16_950 + 1_000_000
+    pd.DataFrame({
+        "episode_index": np.zeros(len(slow_timestamps), dtype=np.int32),
+        "rgb_timestamp_hw_us": slow_timestamps,
+        "depth_timestamp_hw_us": slow_timestamps + 1_000,
+        "sync_error_ms": np.ones(len(slow_timestamps)),
+    }).to_parquet(capture.source / "stream_index.parquet", index=False)
+    slow = _source_acquisition_metrics(capture.ego, profile)
+    assert _by_key(slow, "source_rgb_fps")["pass"] is False
+    assert _by_key(slow, "source_depth_fps")["pass"] is False
 
 
 def test_acceptance_uses_capture_snapshot_and_rejects_override(tmp_path: Path) -> None:

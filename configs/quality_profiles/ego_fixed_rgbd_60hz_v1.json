@@ -1,15 +1,15 @@
 {
   "schema_version": "1.1",
   "profile_id": "ego_fixed_rgbd_60hz_v1",
-  "revision": 2,
+  "revision": 4,
   "status": "target",
-  "description": "Target fixed-camera Ego RGB-D acquisition standard with hardware timestamps.",
+  "description": "Target fixed-camera Ego RGB-D acquisition standard. Nominal 60 fps is mandatory for RGB and raw depth; measured hardware-timestamp cadence must also pass.",
   "source_kinds": ["aligned_rgbd", "native_rgbd"],
   "acquisition": {
     "device_class": "fixed_camera_rgbd",
     "sync_mode": "hardware_timestamp_paired",
-    "rgb": {"required": true, "min_fps": 60, "min_width": 1920, "min_height": 1080},
-    "depth": {"required": true, "min_fps": 60, "min_width": 640, "min_height": 480},
+    "rgb": {"required": true, "min_fps": 60, "min_measured_fps": 59.4, "min_width": 1280, "min_height": 800},
+    "depth": {"required": true, "min_fps": 60, "min_measured_fps": 59.4, "min_width": 848, "min_height": 480},
     "hardware_timestamps": {"required": true},
     "rgb_depth_sync": {"required": true, "max_error_ms": 10}
   },
