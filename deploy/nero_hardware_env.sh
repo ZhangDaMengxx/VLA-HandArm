@@ -37,10 +37,25 @@ if [[ ! -r "${_nero_ws_setup}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
+# ROS-generated setup files read optional variables before assigning defaults, so
+# they cannot be sourced while a caller has Bash nounset enabled.
+_nero_restore_nounset=0
+_nero_setup_status=0
+if [[ $- == *u* ]]; then
+  _nero_restore_nounset=1
+  set +u
+fi
 # shellcheck disable=SC1091
-source "${_nero_ros_setup}"
-# shellcheck disable=SC1090
-source "${_nero_ws_setup}"
+source "${_nero_ros_setup}" || _nero_setup_status=$?
+if ((_nero_setup_status == 0)); then
+  # shellcheck disable=SC1090
+  source "${_nero_ws_setup}" || _nero_setup_status=$?
+fi
+((_nero_restore_nounset == 0)) || set -u
+if ((_nero_setup_status != 0)); then
+  echo "Failed to load the ROS environment" >&2
+  return "${_nero_setup_status}" 2>/dev/null || exit "${_nero_setup_status}"
+fi
 
 export PYAGXARM_ROOT="${NERO_PROJECT_ROOT}/third_party/pyAgxArm/pyAgxArm-master"
 export NERO_ROS_PYTHON_SITE="${NERO_ROS_PYTHON_SITE:-${HOME}/miniconda3/envs/ros-humble/lib/python3.10/site-packages}"
@@ -92,6 +107,7 @@ nero_arm_disable() {
 }
 
 unset _nero_env_dir _nero_ros_setup _nero_ws_setup
+unset _nero_restore_nounset _nero_setup_status
 unset -f _nero_prepend_path
 
 echo "NERO hardware environment loaded."

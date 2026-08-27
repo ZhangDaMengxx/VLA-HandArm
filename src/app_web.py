@@ -3,10 +3,10 @@
 
 布局仿 1.html 的全屏悬浮结构,配色按『可视化工作台-提示词.md』的白色极简科技风。
 后端管线复用 app_gradio.py:subprocess 依次跑 build_canonical / derive_embodiment /
-replay_rerun --serve,用 SSE 把进度/日志/Rerun 地址推给浏览器。Web、视觉、实时 IK 和直接
-真机 CAN/串口由正式 ROS2 Hardware Driver 独占；Web 通过 ROS Humble 子进程订阅状态并
-调用 Service。视觉、IK、数据和本地 mock 继续使用 lerobot-v3。
-Python 3.10，均靠 subprocess 隔离。
+replay_rerun --serve,用 SSE 把进度/日志/Rerun 地址推给浏览器。Web 硬件会话统一经过
+RobotBackend：默认由 ROS2 Hardware Driver 独占 CAN/串口，也可显式切换为 Direct 或 Mock。
+视觉、IK、数据和本地 mock 继续使用 lerobot-v3。
+ROS worker 使用 Python 3.10，并通过 subprocess 与 Web 主运行时隔离。
 
 运行:
     conda activate lerobot-v3
@@ -58,6 +58,13 @@ from ros_humble_env import ros_humble_python, ros_humble_setup, ros_log_dir  # n
 from hand_target_mailbox import HandTarget, LatestTargetMailbox  # noqa: E402
 from hand_target_filter import OneEuroJointFilter  # noqa: E402
 from hardware_lease import HardwareLease  # noqa: E402
+from robot_backend import (  # noqa: E402
+    BackendBusyError,
+    RobotBackend,
+    available_backends,
+    backend_for_request,
+    create_backend,
+)
 from live_ik_scheduler import IKTarget, LatestIKScheduler  # noqa: E402
 from nero_arm import NERO_HOME_POSE, NERO_TRACKING_READY_POSE  # noqa: E402
 from live_wrist_tracking import (  # noqa: E402
@@ -87,6 +94,7 @@ SIM = Path(__file__).resolve().parent
 # 使用命名环境 ros-humble，再回落仓库 venv 或 /usr/bin/python3。
 ROS_SETUP = ros_humble_setup()
 ROS_PYTHON = ros_humble_python()
+CONFIGURED_HARDWARE_BACKEND = create_backend()
 
 
 def _ros_cmd(script_argv: list[str]) -> list[str]:
@@ -533,7 +541,7 @@ def _get_live() -> LiveSession:
 # 手部调试模式:hand_console(串口) + hand_rerun(3D)
 # ---------------------------------------------------------------------------
 class HandDebugSession:
-    """灵巧手会话：真机走 ROS2 Driver，本地 mock 走旧 Console。"""
+    """Backend-neutral hand session using the shared worker protocol."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -545,6 +553,7 @@ class HandDebugSession:
         self._threads: list[threading.Thread] = []
         self._actions: list[dict] = []                 # 缓存动作序列列表
         self.mock = False
+        self.backend: RobotBackend = CONFIGURED_HARDWARE_BACKEND
         self.ready = False                             # console 报了 ready(串口已开)
         self.error: str | None = None                  # 串口打不开等致命错误
         self.port: str | None = None
@@ -555,7 +564,7 @@ class HandDebugSession:
         self._ack_seq = 0
 
     def start(self, mock: bool = False) -> None:
-        """拉起会话。mock=False 订阅 ROS2，不直接打开串口。
+        """拉起会话。mock=False 使用配置的真实硬件 Backend。
 
         **不再起 hand_rerun** —— 3D 改成浏览器端 three.js 直接渲染(web/hand3d.js),
         少一个 conda 子进程、少一个 WASM 查看器,也不占 Rerun 端口。
@@ -564,10 +573,17 @@ class HandDebugSession:
         Driver 就绪与否由 worker 的第一条消息决定(ready / error fatal),
         这里只负责起进程 —— 结果通过 self.error / self.ready 反映,端点据此回报,
         不能默认"起了进程就是在线"。"""
+        selected = backend_for_request(
+            mock=mock, configured=CONFIGURED_HARDWARE_BACKEND)
         if self._running:
+            if self.backend.name != selected.name:
+                raise BackendBusyError(
+                    f"灵巧手当前使用 {self.backend.label}，请先断开再切换到 "
+                    f"{selected.label}")
             return
         self._running = True
-        self.mock = mock
+        self.backend = selected
+        self.mock = selected.mock
         self.error = None
         self.ready = False
         # --hz 决定 ActionPlayer.tick() 的调用周期 = 回放的时间分辨率。
@@ -575,13 +591,9 @@ class HandDebugSession:
         # 回放 30fps 源视频(帧间 33ms)时每帧都得等到 50ms,整段慢 1.5× —— 就是
         # 用户看到的"很延迟"。两处必须一致,所以从那边取常量,别各写一个数。
         from gesture_pack import CONSOLE_HZ, PLAYER_HZ
-        command = (
-            ["python3", "src/hand_console.py", "--mock",
-             "--hz", str(CONSOLE_HZ), "--player-hz", str(PLAYER_HZ)]
-            if mock else
-            _ros_cmd(["src/ros_web_hardware.py", "--device", "hand",
-                      "--hz", str(CONSOLE_HZ)])
-        )
+        command = selected.worker_spec(
+            "hand", hz=CONSOLE_HZ, player_hz=PLAYER_HZ
+        ).command(_ros_cmd)
         self.console = subprocess.Popen(
             command,
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -769,7 +781,7 @@ class HandDebugSession:
 
 
 class ArmDebugSession:
-    """机械臂会话：真机走 ROS2 Driver，本地 mock 走旧 Console。
+    """Backend-neutral arm session using the shared worker protocol.
 
     刻意没和 HandDebugSession 合并成一个基类:手那套已经在真手上验过,重构它的收益
     不如风险大。两边的协议(start/stop/status/command + /ws)保持同构。
@@ -787,6 +799,7 @@ class ArmDebugSession:
         self._running = False
         self._threads: list[threading.Thread] = []
         self.mock = True
+        self.backend: RobotBackend = CONFIGURED_HARDWARE_BACKEND
         self.ready = False
         self.error: str | None = None
         self.channel: str | None = None
@@ -801,20 +814,23 @@ class ArmDebugSession:
         self._combo_waiters_lock = threading.Lock()
 
     def start(self, mock: bool = True, speed: int = 20) -> None:
-        """拉起会话。mock=False 订阅 ROS2，不直接打开 can0。"""
+        """拉起会话。mock=False 使用配置的真实硬件 Backend。"""
+        selected = backend_for_request(
+            mock=mock, configured=CONFIGURED_HARDWARE_BACKEND)
         if self._running:
+            if self.backend.name != selected.name:
+                raise BackendBusyError(
+                    f"机械臂当前使用 {self.backend.label}，请先断开再切换到 "
+                    f"{selected.label}")
             return
         self._running = True
-        self.mock = mock
+        self.backend = selected
+        self.mock = selected.mock
         self.error = None
         self.ready = False
-        command = (
-            ["python3", "src/arm_console.py", "--mock", "--hz", "20",
-             "--speed", str(int(speed))]
-            if mock else
-            _ros_cmd(["src/ros_web_hardware.py", "--device", "arm",
-                      "--hz", "20", "--speed", str(int(speed))])
-        )
+        command = selected.worker_spec(
+            "arm", hz=20, speed=int(speed)
+        ).command(_ros_cmd)
         self.console = subprocess.Popen(
             command,
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -1333,6 +1349,29 @@ async def hardware_lease_status(owner: str | None = Header(default=None,
         "ttl_ms": int(lease.ttl_s * 1000),
         "is_owner": bool(requested and requested == current),
     })
+
+
+def _hardware_backend_payload() -> dict[str, object]:
+    """Build backend status without touching the event loop."""
+    arm_active = (
+        _arm.backend.public_info() if _arm is not None and _arm._running else None
+    )
+    hand_active = (
+        _hand.backend.public_info() if _hand is not None and _hand._running else None
+    )
+    return {
+        "ok": True,
+        "configured": CONFIGURED_HARDWARE_BACKEND.public_info(),
+        "active": {"arm": arm_active, "hand": hand_active},
+        "available": list(available_backends()),
+        "switchable": arm_active is None and hand_active is None,
+    }
+
+
+@app.get("/api/hardware/backend")
+async def hardware_backend_status() -> JSONResponse:
+    """Report the configured real transport and active session backends."""
+    return JSONResponse(_hardware_backend_payload())
 
 
 async def _hardware_release_impl(*, home: bool = True,
@@ -2394,7 +2433,7 @@ async def telemetry(ws: WebSocket) -> None:
 async def hand_start(mock: bool = False,
                      lease_id: str | None = Header(default=None,
                                                     alias="X-Hardware-Lease")) -> JSONResponse:
-    """接入灵巧手。真机订阅 ROS2 Driver；mock 使用本地 Console。
+    """接入灵巧手。真机使用配置 Backend；mock 使用本地 Console。
 
     **默认接真手**(mock=False)。ok 反映 Driver 和关节状态都已就绪，不是只表示
     worker 进程已经启动。
@@ -2403,20 +2442,26 @@ async def hand_start(mock: bool = False,
     if error:
         return error
     hand = _get_hand()
-    hand.start(mock=mock)
+    try:
+        hand.start(mock=mock)
+    except BackendBusyError as exc:
+        return JSONResponse({"ok": False, "msg": str(exc)}, status_code=409)
     await asyncio.get_event_loop().run_in_executor(_executor, hand.wait_ready)
     if hand.error:
         hand.stop()                                   # 起不来就收干净,别留半开的会话
         _release_lease_if_channel_idle("hand", owner)
-        return JSONResponse({"ok": False, "msg": hand.error, "mock": mock},
+        return JSONResponse({"ok": False, "msg": hand.error,
+                             "mock": hand.mock, "backend": hand.backend.name},
                             status_code=503)
-    return JSONResponse({"ok": True, "mock": hand.mock, "port": hand.port})
+    return JSONResponse({"ok": True, "mock": hand.mock, "port": hand.port,
+                         "backend": hand.backend.name,
+                         "capabilities": hand.backend.capabilities.as_dict()})
 
 
 @app.post("/api/hand/stop")
 async def hand_stop(lease_id: str | None = Header(default=None,
                                                   alias="X-Hardware-Lease")) -> JSONResponse:
-    """断开 Web 会话；真机串口继续由 ROS2 Driver 持有。"""
+    """断开 Web 会话；ROS 模式只断客户端，Direct 模式释放串口。"""
     _, error = _require_lease("hand", lease_id)
     if error:
         return error
@@ -2435,6 +2480,9 @@ async def hand_status() -> JSONResponse:
     return JSONResponse({
         "online": bool(alive and h.ready and not h.error),
         "mock": bool(h.mock) if h else False,
+        "backend": h.backend.name if h else CONFIGURED_HARDWARE_BACKEND.name,
+        "capabilities": (h.backend.capabilities.as_dict() if h else
+                         CONFIGURED_HARDWARE_BACKEND.capabilities.as_dict()),
         "port": h.port if h else None,
         "error": h.error if h else None,
         "rerun_url": h.rerun_url if h else None,
@@ -3830,7 +3878,7 @@ async def hand_telemetry(ws: WebSocket) -> None:
 async def arm_start(mock: bool = True, speed: int = 20,
                     lease_id: str | None = Header(default=None,
                                                    alias="X-Hardware-Lease")) -> JSONResponse:
-    """接入机械臂。真机订阅 ROS2 Driver；mock 使用本地 Console。
+    """接入机械臂。真机使用配置 Backend；mock 使用本地 Console。
 
     ⚠ **默认 mock=True**(和手页相反)。臂是 7 自由度工业臂,伤害量级不同,
     要接真机得显式传 mock=false。ok 反映 Driver 和关节状态都已就绪。
@@ -3839,20 +3887,26 @@ async def arm_start(mock: bool = True, speed: int = 20,
     if error:
         return error
     arm = _get_arm()
-    arm.start(mock=mock, speed=speed)
+    try:
+        arm.start(mock=mock, speed=speed)
+    except BackendBusyError as exc:
+        return JSONResponse({"ok": False, "msg": str(exc)}, status_code=409)
     await asyncio.get_event_loop().run_in_executor(_executor, arm.wait_ready)
     if arm.error:
         arm.stop()
         _release_lease_if_channel_idle("arm", owner)
-        return JSONResponse({"ok": False, "msg": arm.error, "mock": mock},
+        return JSONResponse({"ok": False, "msg": arm.error,
+                             "mock": arm.mock, "backend": arm.backend.name},
                             status_code=503)
     return JSONResponse({"ok": True, "mock": arm.mock, "channel": arm.channel,
+                         "backend": arm.backend.name,
+                         "capabilities": arm.backend.capabilities.as_dict(),
                          "limits": arm.limits, "connect_pose": arm.connect_pose,
                          "enabled": (arm.latest or {}).get("enabled", False)})
 
 
 async def _stop_arm_session(*, home: bool) -> dict:
-    """Optionally return to zero, then stop the Web ROS client."""
+    """Optionally return to zero, then stop the Web hardware client."""
     arm = _arm
     if arm is None:
         return {
@@ -3911,7 +3965,7 @@ async def arm_stop(home: bool = False,
                                                   alias="X-Hardware-Lease")) -> JSONResponse:
     """断开 Web 会话；页面离开时可先回全零位。
 
-    真机 CAN 继续由 ROS2 Driver 持有。想回接入位姿走
+    ROS 模式下 CAN 继续由 Driver 持有；Direct 模式下会释放 CAN。想回接入位姿走
     {cmd:"goto_connect_pose"}，那是显式动作。
     """
     _, error = _require_lease("arm", lease_id)
@@ -3952,6 +4006,9 @@ async def arm_status() -> JSONResponse:
     return JSONResponse({
         "online": bool(alive and a.ready and not a.error),
         "mock": bool(a.mock) if a else True,
+        "backend": a.backend.name if a else CONFIGURED_HARDWARE_BACKEND.name,
+        "capabilities": (a.backend.capabilities.as_dict() if a else
+                         CONFIGURED_HARDWARE_BACKEND.capabilities.as_dict()),
         "channel": a.channel if a else None,
         "error": a.error if a else None,
         "limits": a.limits if a else None,

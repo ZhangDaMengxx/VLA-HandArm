@@ -191,11 +191,11 @@ POST /api/voice/invoke     SSE;console_exec.py → arm_console / hand_console
 不做语义猜测 —— 纠错本身出错就是引入新的反向风险。原话和纠正后都落盘
 (`text_raw` / `text`),能事后查纠错有没有纠反。
 
-**真机统一走 ROS2 Driver**:技能执行仍有两个编排入口 —— `runner.py` 直接走 ROS，
-`console_exec.py` 写入 Web 的 arm/hand 会话协议；但 `mock=false` 时这两个会话实际都是
-`ros_web_hardware.py` worker，只调用 Driver Service，不再打开 can0 或 RS485。只有本地
-mock 才启动旧 Console。确认闸(`runner.Gate`)与调用日志两条路**共用一份实现**，不长出
-两套解释。
+**Web 真机默认走 ROS2 Driver**：`robot_backend.py` 统一选择 `ros`、`direct` 或 `mock`
+worker。技能执行仍有两个编排入口 —— `runner.py` 直接走 ROS，`console_exec.py` 写入 Web
+的 arm/hand 会话协议；默认 `WEB_HARDWARE_BACKEND=ros` 时 `mock=false` 会话由
+`ros_web_hardware.py` 调用 Driver Service，`direct` 回退则启动旧 Console 并直接占用硬件。
+两种 Web Backend 复用同一协议、确认闸和调用日志，不复制技能或时间轴逻辑。
 
 四道闸全在服务端强制,前端绕不过去:
 

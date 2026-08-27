@@ -6,12 +6,15 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 SRC = Path(__file__).resolve().parents[1]
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import app_web  # noqa: E402
+from robot_backend import BackendBusyError, create_backend  # noqa: E402
 
 
 class _DummyPipe:
@@ -103,6 +106,60 @@ def test_mock_arm_session_keeps_local_console(monkeypatch):
         "python3", "src/arm_console.py", "--mock"
     ]
     assert processes[0].command[-2:] == ["--speed", "15"]
+
+
+def test_real_hand_session_can_use_direct_backend(monkeypatch):
+    processes = _capture_processes(monkeypatch)
+    monkeypatch.setattr(
+        app_web, "CONFIGURED_HARDWARE_BACKEND", create_backend("direct"))
+    session = app_web.HandDebugSession(asyncio.new_event_loop())
+
+    session.start(mock=False)
+
+    assert processes[0].command[:3] == [
+        "python3", "src/hand_console.py", "--no-mock"
+    ]
+    assert session.backend.name == "direct"
+    assert session.mock is False
+
+
+def test_real_arm_session_can_use_direct_backend(monkeypatch):
+    processes = _capture_processes(monkeypatch)
+    monkeypatch.setattr(
+        app_web, "CONFIGURED_HARDWARE_BACKEND", create_backend("direct"))
+    session = app_web.ArmDebugSession(asyncio.new_event_loop())
+
+    session.start(mock=False, speed=15)
+
+    assert processes[0].command[:3] == [
+        "python3", "src/arm_console.py", "--no-mock"
+    ]
+    assert processes[0].command[-2:] == ["--speed", "15"]
+    assert session.backend.name == "direct"
+
+
+def test_backend_change_requires_disconnected_session(monkeypatch):
+    _capture_processes(monkeypatch)
+    session = app_web.HandDebugSession(asyncio.new_event_loop())
+    session.start(mock=False)
+
+    with pytest.raises(BackendBusyError, match="请先断开"):
+        session.start(mock=True)
+
+
+def test_backend_status_reports_configuration_and_capabilities(monkeypatch):
+    monkeypatch.setattr(app_web, "_arm", None)
+    monkeypatch.setattr(app_web, "_hand", None)
+    monkeypatch.setattr(
+        app_web, "CONFIGURED_HARDWARE_BACKEND", create_backend("ros"))
+
+    payload = app_web._hardware_backend_payload()
+
+    assert payload["configured"]["name"] == "ros"
+    assert payload["configured"]["capabilities"]["tracking"] is True
+    assert payload["configured"]["capabilities"]["per_channel_force"] is False
+    assert payload["active"] == {"arm": None, "hand": None}
+    assert payload["switchable"] is True
 
 
 def test_ros_worker_subscribes_driver_state_and_joint_states():

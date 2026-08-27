@@ -15,6 +15,33 @@ ros2_ws/
 本仓库根目录 `bridge.py` 与 `mcp_server/` 是拆仓前快照。允许用于历史比较，但新功能、
 部署修复和文档应先落到 `robot-mcp-server`，再按需同步共享驱动。
 
+## 统一启动入口
+
+```bash
+cd ~/ros2_ws/lerobotTest
+./start_robot.sh
+```
+
+启动器用数字菜单选择 `1. ROS2`、`2. Direct`、`3. Mock`，以及 Web、独立仓库 Bridge 或
+Web + Bridge + 本地 MCP Server。ROS2 模式由 Hardware Driver 独占 CAN/串口，并等待
+`/nero/driver_state` 的 `ready` 与 `accepting_commands`；机械臂使能仍需操作者单独确认。
+Driver READY 后启动器会先显式失能机械臂，避免继承上一次异常退出遗留的使能状态。
+Direct 模式允许同时启动 Web 与 Bridge，但不协调硬件 owner：Bridge 启动即持有硬件，Web
+后续点击“接入”可能竞争 CAN/串口。`Ctrl+C` 会终止启动器创建的整组进程，
+并先失能由本次启动器使能的机械臂；日志写入 `.runtime/launcher/<timestamp>/`。
+
+无人值守或脚本化运行可显式传参：
+
+```bash
+./start_robot.sh --mode ros --components both --enable-arm no
+./start_robot.sh --mode direct --components web
+./start_robot.sh --mode direct --components both
+./start_robot.sh --mode mock --components all
+```
+
+复制 `.nero_runtime.env.example` 为 `.nero_runtime.env` 可持久化串口、CAN、端口和解释器路径；
+该文件被 Git 忽略。`--enable-arm yes` 会执行真实使能，仅允许在净空、低速和急停可用时使用。
+
 ## 关键模块
 
 | 文件 | 职责 |
@@ -27,6 +54,7 @@ ros2_ws/
 | `src/nero_arm_bridge.py` | 旧脚本型 Driver 过渡副本；正式 package 在独立 ROS 仓库 |
 | `src/ros_driver_state.py` | 无 ROS 依赖的 Driver 连接状态机和读失败 watchdog |
 | `src/ros_web_hardware.py` | Web 真机 ROS2 worker：订阅状态并调用有应答 Service，不持有硬件 |
+| `src/robot_backend.py` | Web 硬件 Backend 选择、worker 启动规格与能力声明 |
 | `src/ros_combo_playback.py` | Web 联合包 ROS2 播放状态机：prepare ACK、approach、CPV 时轴与失败清理 |
 | `src/hand_console.py` | 灵巧手调试和动作播放 |
 | `src/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
@@ -96,8 +124,13 @@ nero_hardware_control
 Driver 发布 `/nero/driver_state` 和 `/diagnostics`。真机加 `--enable-control` 只表示接收
 命令，不会自动使能；使用 `/nero/arm/set_enabled` 明确使能，USB/CAN 重连后也必须重新确认。
 同一时刻不要再启动直接占用 `can0` 或手串口的 Console。
-Web 的 `mock=false` hand/arm 会话会启动 `ros_web_hardware.py`；`mock=true` 才启动本地
-Console。CPV 实时跟随与 Web `combo_pack` keyframe 回放通过 Driver 的
+Web 默认 `WEB_HARDWARE_BACKEND=ros`。此时 `mock=false` hand/arm 会话启动
+`ros_web_hardware.py`，`mock=true` 启动本地 Mock Console。设置为 `direct` 后，原 Web
+API、WebSocket、技能、组合动作和视频跟随不变，但真实会话改为直接启动 `--no-mock`
+Console 并占用 CAN/串口；必须先停止 Hardware Driver。设置为 `mock` 时所有会话空跑。
+Backend 只能在 arm/hand 都断开后切换，当前配置与能力可从 `/api/hardware/backend` 查看。
+
+ROS Backend 的 CPV 实时跟随与 Web `combo_pack` keyframe 回放通过 Driver 的
 begin/set-target/end Service 下发；联合包先等待 prepare ACK，再在 approach 到位后同步启动
 臂手时间轴。正式联合轨迹 Action、逐通道手力控和 clear-error 尚无 Driver 接口，且不会
 回退到直连硬件。

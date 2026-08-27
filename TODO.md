@@ -96,6 +96,9 @@
 - [ ] 在 WSL + usbipd 下执行串口/CAN 拔插测试，确认 `FAULT -> READY` 且不自动使能、不重放旧命令
 - [x] 将硬件 Driver 与底层驱动正式迁入 `nero_inspire_ros2` package（Mock，2026-08-26）
 - [x] 将 Web 真机的直接 CAN/串口 Console 路径改为 ROS 客户端（Mock，2026-08-26）
+- [x] 抽象 Web `RobotBackend`，同时支持 ROS2、Direct 与 Mock 且保持业务协议不变（2026-08-27）
+- [x] 增加根目录交互启动器，统一选择 ROS2/Direct/Mock 与 Web/Bridge/MCP 启动范围（2026-08-27）
+- [x] Direct 启动菜单增加 Web + Bridge 同时启动选项，不改变现有硬件连接逻辑（2026-08-27）
 - [ ] 将 Web hardware lease 与 MCP/Bridge 控制权统一为跨客户端单 owner
 - [x] 保持 MCP Server/X-Token/HTTP 契约不变，为独立 Robot Bridge 增加 ROS2 Backend（Mock，2026-08-26）
 - [x] 审查并清理独立 ROS2 仓库运行脚本中的旧灵巧手关节名（保留旧轨迹导入兼容映射）

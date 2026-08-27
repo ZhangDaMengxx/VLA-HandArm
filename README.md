@@ -39,6 +39,20 @@ ROS2 Driver 同时占用硬件。
 | 查看当前进度和已知问题 | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
 | 部署完整 Web/ROS2 真机主机 | [deploy/README.md](deploy/README.md) |
 
+日常运行统一从仓库根目录启动：
+
+```bash
+cd ~/ros2_ws/lerobotTest
+./start_robot.sh
+```
+
+交互菜单先选择 `1. ROS2`、`2. Direct` 或 `3. Mock`，再选择 Web、Bridge 或完整本地栈。
+ROS2 模式自动加载环境、启动 Hardware Driver、等待臂手 READY，先确认机械臂失能，再单独询问是否使能；
+Direct 模式可启动 Web、Bridge 或两者；两者同时运行时 Bridge 启动即占用硬件，Web 后续点击
+“接入”仍可能竞争 CAN/串口。Mock 不接触硬件。按 `Ctrl+C`
+先失能本次启动器使能的机械臂，再统一停止进程。日志保存在 `.runtime/launcher/`。主机参数需要持久化时执行
+`cp .nero_runtime.env.example .nero_runtime.env` 后修改本机值。
+
 > `mcp_server/` 和根目录 `bridge.py` 是拆仓前的内嵌快照，包含曾经试验过的
 > combo、视觉 mimic 和 `/execute` 能力。它们不是当前 MCP 部署基准；不要从这些
 > 文件推断线上接口，也不要与独立仓库混合部署。
@@ -54,9 +68,22 @@ python src/lerobot_v3/app_web.py
 否则使用 HTTP。`localhost` 开发可以使用 HTTP；局域网摄像头访问需要可信 HTTPS。
 Web、视觉、实时 IK 和数据集使用 Python 3.12 主环境；ROS reader、writer、Web hardware
 worker 和技能 runner 会自动在后台加载 Humble，并使用独立 `ros-humble` Python 3.10
-环境。页面接口、WebSocket 和 13 轴关节顺序不变。真机 Web 会话通过
-`src/ros_web_hardware.py` 订阅 Driver 状态并调用 Service，不直接打开 CAN/串口；本地 mock
-仍使用原 Console。Hardware Driver 仍需显式选择只读或允许控制。
+环境。页面接口、WebSocket 和 13 轴关节顺序不变。`src/robot_backend.py` 将 Web 硬件访问
+统一为 `ros`、`direct`、`mock` 三种 Backend；技能、组合动作和视频跟随继续使用同一套
+JSON worker 协议。默认真实硬件 Backend 是 `ros`：`src/ros_web_hardware.py` 订阅 Driver
+状态并调用 Service，不直接打开 CAN/串口。
+
+```bash
+WEB_HARDWARE_BACKEND=ros python src/lerobot_v3/app_web.py     # 推荐，Driver 持有硬件
+WEB_HARDWARE_BACKEND=direct python src/lerobot_v3/app_web.py  # 回退，Web 持有硬件
+WEB_HARDWARE_BACKEND=mock python src/lerobot_v3/app_web.py    # 全局空跑
+```
+
+原 `/api/arm/start?mock=...` 与 `/api/hand/start?mock=...` 契约不变：`mock=true` 总是本地
+Mock，`mock=false` 使用服务器配置的真实 Backend。运行中的会话不能切换 Backend，必须先
+断开。Direct 与 ROS2 Driver 不得同时访问同一 CAN/串口。Direct 会复用
+`NERO_HAND_PORT`、`NERO_CAN_CHANNEL` 和 `NERO_FIRMWARE`；也可分别用
+`WEB_HAND_PORT`、`WEB_CAN_CHANNEL` 和 `WEB_ARM_FIRMWARE` 覆盖。
 
 主要能力：
 
@@ -180,4 +207,4 @@ deploy/                完整 Web/ROS2 真机主机部署
 
 ---
 
-**最后核对**：2026-08-24
+**最后核对**：2026-08-27

@@ -663,6 +663,10 @@ body {
           </select>
         </label>
         <div class="settings-note" data-i18n="languageNote">选择会保存在当前浏览器中。</div>
+        <div class="settings-field" style="margin-top:12px">
+          <span data-i18n="hardwareBackend">硬件后端</span>
+          <output id="hardwareBackendValue">—</output>
+        </div>
       </div>
     </div>
   </div>
@@ -1818,9 +1822,10 @@ const UI_MESSAGES = {
     documentTitle: "NERO · Inspire — 回放工作台",
     workbench: "回放工作台", replayTab: "回放 Replay", liveTab: "实时 Live · 合体",
     handDebug: "灵巧手调试", armDebug: "机械臂调试",
-    liveTitle: "臂 + 手 合体控制(走 console 路,不走 ROS bridge)",
+    liveTitle: "臂 + 手合体控制",
     fullscreen: "全屏", reconnect: "重连", copyUrl: "复制当前连接 URL",
     settings: "设置", interfaceLanguage: "界面语言", languageNote: "选择会保存在当前浏览器中。",
+    hardwareBackend: "硬件后端",
     gesture: "手势,", mapping: "映射", upload: "上传", waitingVideo: "等待视频输入…",
     uploadVideo: "上传视频", uploadHandResult: "上传手部结果",
     rgbdSource: "RGB-D 源 · 手动设目录", regenerate: "重新生成", viewportFullscreen: "视口全屏",
@@ -1845,9 +1850,10 @@ const UI_MESSAGES = {
     documentTitle: "NERO · Inspire — Replay Workbench",
     workbench: "Replay Workbench", replayTab: "Replay", liveTab: "Live · Combo",
     handDebug: "Hand Debug", armDebug: "Arm Debug",
-    liveTitle: "Combined arm and hand control via the console path (without ROS bridge)",
+    liveTitle: "Combined arm and hand control",
     fullscreen: "Fullscreen", reconnect: "Reconnect", copyUrl: "Copy current connection URL",
     settings: "Settings", interfaceLanguage: "Interface language", languageNote: "Saved in this browser.",
+    hardwareBackend: "Hardware backend",
     gesture: "Gesture, ", mapping: "Mapped", upload: "Upload", waitingVideo: "Waiting for video input…",
     uploadVideo: "Upload video", uploadHandResult: "Upload hand result",
     rgbdSource: "RGB-D source · Choose directory", regenerate: "Regenerate", viewportFullscreen: "Fullscreen viewport",
@@ -2375,6 +2381,22 @@ function setServe(state) {   // "online" | "busy" | "offline"
   $("serveText").dataset.i18n = state;
   $("serveText").textContent = t(state);
 }
+function backendLabel(name) {
+  return ({ ros: "ROS2", direct: "Direct", mock: "Mock" })[name] || name || "—";
+}
+function hardwareOnlineText(status, endpoint) {
+  if (status.mock) return `${t("online")} (Mock)`;
+  const suffix = endpoint ? ` · ${endpoint}` : "";
+  return `${t("online")} · ${backendLabel(status.backend)}${suffix}`;
+}
+async function loadHardwareBackend() {
+  try {
+    const data = await fetch("/api/hardware/backend").then(r => r.json());
+    if ($("hardwareBackendValue")) {
+      $("hardwareBackendValue").textContent = backendLabel(data.configured?.name);
+    }
+  } catch (_) {}
+}
 async function pollStatus() {
   try {
     // 灵巧手调试页:右上角那个灯反映**手的串口**在不在线,而不是 replay 的 serve 状态
@@ -2382,7 +2404,7 @@ async function pollStatus() {
       const h = await (await fetch("/api/hand/status")).json();
       setServe(h.online ? "online" : "offline");
       if (h.online) {
-        $("serveText").textContent = h.mock ? t("online") + "(mock)" : t("online") + " · " + (h.port || "");
+        $("serveText").textContent = hardwareOnlineText(h, h.port || "");
       }
       return;
     }
@@ -2408,7 +2430,7 @@ async function pollStatus() {
       const a = await (await fetch("/api/arm/status")).json();
       setServe(a.online ? "online" : "offline");
       if (a.online) {
-        $("serveText").textContent = a.mock ? t("online") + "(mock)" : t("online") + " · " + (a.channel || "");
+        $("serveText").textContent = hardwareOnlineText(a, a.channel || "");
       }
       if (a.online) applyArmFlags(a.enabled, a.frozen);
       return;
@@ -2419,6 +2441,7 @@ async function pollStatus() {
   } catch (e) { /* 忽略 */ }
 }
 setInterval(pollStatus, 4000); pollStatus();
+loadHardwareBackend();
 loadMetrics(currentRobot());     // 初次加载:显示当前本体的验收缓存(有则显示,无则提示未测)
 
 // 刷新后恢复回放:数据在磁盘上,不用重跑管线。Rerun 那套做不到这件事 —— 地址只在
@@ -2953,7 +2976,7 @@ async function startHandDebug() {
     $("handToggle").textContent = "断开并复位";
     $("handToggle").classList.add("active");
     setServe("online");
-    $("serveText").textContent = j.mock ? "在线(mock)" : "在线 · " + (j.port || "");
+    $("serveText").textContent = hardwareOnlineText(j, j.port || "");
   } catch (e) {
     _handActive = false;
     $("handStatus").innerHTML = '<span class="dot"></span>启动失败: ' + e;
@@ -4575,7 +4598,7 @@ async function startArmDebug() {
     $("armToggle").textContent = "断开";
     $("armToggle").classList.add("active");
     setServe("online");
-    $("serveText").textContent = j.mock ? "在线(mock)" : "在线 · " + (j.channel || "");
+    $("serveText").textContent = hardwareOnlineText(j, j.channel || "");
     // ⚠ 用后端报的**真实**使能状态,别假定"刚接入必然未使能" —— 臂常态是被松灵
     // 客户端使能着的,写死 false 会让下发按钮无故禁用。
     applyArmFlags(!!j.enabled, false);
@@ -5811,7 +5834,7 @@ async function cbStartArm() {
     _cbArmLast = { enabled: !!j.enabled, frozen: false };
     $("cbArmToggle").textContent = "断开";
     $("cbArmToggle").classList.add("active");
-    cbDot("cbArmStatus", "online", j.mock ? "在线(mock)" : "在线 · " + (j.channel || ""));
+    cbDot("cbArmStatus", "online", hardwareOnlineText(j, j.channel || ""));
     cbConnectArmWs();
     cbRefreshFlags();
     cbUpdateBoth();
@@ -5852,7 +5875,7 @@ async function cbStartHand() {
     _cbHandOn = true;
     $("cbHandToggle").textContent = "断开";
     $("cbHandToggle").classList.add("active");
-    cbDot("cbHandStatus", "online", j.mock ? "在线(mock)" : "在线 · " + (j.port || ""));
+    cbDot("cbHandStatus", "online", hardwareOnlineText(j, j.port || ""));
     cbConnectHandWs();
     cbRefreshFlags();
     cbUpdateBoth();
@@ -6695,14 +6718,14 @@ async function cbSyncFromBackend() {
       if (a.limits && a.limits.length === 7) _armLimits = a.limits;
       $("cbArmToggle").textContent = "断开";
       $("cbArmToggle").classList.add("active");
-      cbDot("cbArmStatus", "online", a.mock ? "在线(mock)" : "在线 · " + (a.channel || ""));
+      cbDot("cbArmStatus", "online", hardwareOnlineText(a, a.channel || ""));
       if (!_cbArmWs) cbConnectArmWs();
     }
     if (h.online && !_cbHandOn) {
       _cbHandOn = true;
       $("cbHandToggle").textContent = "断开";
       $("cbHandToggle").classList.add("active");
-      cbDot("cbHandStatus", "online", h.mock ? "在线(mock)" : "在线 · " + (h.port || ""));
+      cbDot("cbHandStatus", "online", hardwareOnlineText(h, h.port || ""));
       if (!_cbHandWs) cbConnectHandWs();
     }
   } catch (_) {}

@@ -23,6 +23,11 @@
 | [deploy/README.md](deploy/README.md) | 完整 Web/ROS2 真机主机部署 | 现行 |
 | [WEB_ACCESS.md](WEB_ACCESS.md) | Web、Windows、WSL、摄像头与 HTTPS | 2026-08-18 |
 
+日常启动入口是根目录 `start_robot.sh`：用数字菜单选择 ROS2、Direct 或 Mock，以及 Web、
+独立 Bridge 和本地 MCP Server 的启动范围。持久化主机参数模板为
+`.nero_runtime.env.example`，完整说明见 `README.md` 与 `deploy/README.md`。Direct 可选择
+Web + Bridge 同时启动，但这不提供跨进程硬件 owner 仲裁，硬件约束见 `HARDWARE.md`。
+
 ## MCP 与 Bridge
 
 现行部署代码不在本仓库，权威来源是：
@@ -152,4 +157,4 @@ q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
 
 ---
 
-**最后全面审查**：2026-08-26
+**最后全面审查**：2026-08-27

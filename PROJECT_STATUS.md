@@ -1,6 +1,6 @@
 # 项目状态
 
-**核对日期**：2026-08-26
+**核对日期**：2026-08-27
 **阶段**：Ego Capture、严格 LeRobot v3 与结构 QA 已完成，设备 Source/物理 QA 与真机安全验证待开展
 
 ## 当前结论
@@ -9,7 +9,7 @@
 |------|------|------|
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
-| Web 传输 | ROS2 控制链 Mock 已验收 | 真机会话不再持有 CAN/串口；基础控制、CPV 跟随、联合包 keyframe 回放、ACK 与失败清理已验证，真机待验 |
+| Web 传输 | 双 Backend 已接入 | Web API/技能/跟随协议不变；真实会话可选 ROS2 Driver 或 Direct，Mock 继续空跑；真机双模式待验 |
 | 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
 | 相机与标定 | 工具已建/真机待验 | eye-in-hand 交互工具已具备；Orbbec 336 原生 SDK Adapter、设备内参与物理手眼结果待相机到货后验证 |
 | VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
@@ -36,6 +36,17 @@
 内嵌实验快照或 Web 工作台，不应出现在部署能力清单中。
 
 ## 最近完成
+
+### 2026-08-27
+
+- 新增 Web `RobotBackend` 抽象及 `ros`、`direct`、`mock` 实现；原 arm/hand API、WebSocket、
+  技能包、组合动作和视频跟随继续复用同一 JSON worker 协议
+- 增加 `WEB_HARDWARE_BACKEND` 配置、`/api/hardware/backend` 能力报告和页面 Backend
+  状态显示；运行中的会话拒绝切换，Direct 明确要求先停止 ROS2 Hardware Driver
+- 新增根目录 `start_robot.sh` 数字菜单，统一启动 ROS2、Direct 或 Mock 的 Web、Bridge 和
+  本地 MCP 组合；集中做硬件/端口检查、Driver READY 等待、机械臂使能确认和进程清理
+- Direct 菜单允许同时启动 Web 与 Bridge；该选项只负责进程编排，不提供跨进程硬件 owner
+  协调，Web 点击接入时仍可能与已持有硬件的 Bridge 竞争
 
 ### 2026-08-26
 

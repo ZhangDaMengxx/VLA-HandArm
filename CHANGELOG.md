@@ -6,6 +6,44 @@
 
 ---
 
+## [2026-08-27] - Web 硬件 Backend 抽象
+
+### Added (新增)
+
+- 新增 `RobotBackend` 及 ROS2、Direct、Mock 三种 worker 实现；通过
+  `WEB_HARDWARE_BACKEND` 选择真实硬件通信方式
+- 新增 `/api/hardware/backend` 和 capability 报告，页面显示当前硬件 Backend
+- 新增根目录 `start_robot.sh` 交互入口，以数字菜单启动 ROS2、Direct 或 Mock 的 Web、
+  独立 Bridge 与本地 MCP 组合；支持 `.nero_runtime.env` 持久化主机参数
+- Direct 数字菜单增加 Web + Bridge 同时启动选项；该选项仅编排两个服务进程，不改变两者
+  各自的硬件直连逻辑
+
+### Changed (变更)
+
+- arm/hand Web 会话不再自行判断 ROS 或 Console；技能、组合动作、视频跟随、HTTP 和
+  WebSocket 继续复用原 JSON worker 协议
+- 在线会话拒绝切换 Backend；Direct 只作为迁移回退，不能与 Hardware Driver 同时占用硬件
+- 启动器集中检查 CAN、串口、端口和 Driver READY；Direct 在启动前拒绝已有硬件占用，
+  `Web + Bridge` 选项不协调启动后的跨进程 owner；ROS2 的机械臂使能保持独立人工确认，
+  `Ctrl+C` 统一清理本次启动的进程
+
+### Fixed (修复)
+
+- ROS 环境脚本加载官方 Humble setup 时临时兼容 Bash `set -u`，修复交互启动器因未定义
+  `AMENT_TRACE_SETUP_FILES` 而在 Hardware Driver 启动前退出
+- 启动器改为在打开硬件前预检全部服务端口，并延后到 Web/Bridge 就绪后再询问机械臂使能；
+  本次启动器使能过机械臂时，异常退出或 `Ctrl+C` 会先尝试失能再停止 Driver
+- 启动器不再继承调用终端的 `PYTHONPATH`，避免 ROS/旧 Conda 环境覆盖 `lerobot-v3` 的
+  `lerobot 0.6.1`；Web 运行时版本也改为在启动真机 Driver 前预检
+- ROS Driver READY 后先显式确认机械臂失能，再启动客户端并询问是否使能，避免沿用上一次
+  进程异常退出遗留的未知使能状态
+
+### Verification (验证)
+
+- Backend 选择、ROS/Direct/Mock worker、能力差异和在线切换拒绝定向测试通过
+- 启动器语法、三种模式 dry-run 与 Web + Bridge Mock 实际启停通过
+- Direct 菜单 `2 -> 3` 与 `--mode direct --components both` dry-run 通过；未执行双进程真机接入
+
 ## [2026-08-26] - 视频手部指尖重定向与腕部范围统一
 
 ### Changed (变更)

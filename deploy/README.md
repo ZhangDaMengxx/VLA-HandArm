@@ -71,6 +71,31 @@ bash deploy/deploy_robot_host.sh --verify   # mock 链路 + 安全闸
 **技能轨迹 npz** 虽在 `src/out/`(生成物目录)里,但已用 `!src/out/robot_traj_*.npz` 破例入库,
 clone 就能跑 trajectory 类技能。其余 `src/out/` 产物仍不入库。
 
+## 日常统一启动
+
+完成一次性部署后，日常不需要逐条输入 source、launch 和 Python 命令：
+
+```bash
+cd ~/ros2_ws/lerobotTest
+./start_robot.sh
+```
+
+菜单选择 `1. ROS2`、`2. Direct` 或 `3. Mock`。ROS2 会检查 USB 串口和 CAN、加载
+`deploy/nero_hardware_env.sh`、启动或复用 Hardware Driver，并等待臂手 READY；随后仍会
+先显式失能，再单独询问是否使能机械臂。Direct 会拒绝已运行的 Driver 和启动前已被占用的
+串口；菜单也允许同时启动 Web 与 Bridge，但 Bridge 启动后会持有硬件，Web 再点击“接入”
+可能产生 CAN/串口竞争。Mock 不访问真机。`Ctrl+C` 会统一停止本次创建的进程，日志位于
+`.runtime/launcher/<timestamp>/`；如果机械臂由本次启动器使能，会先调用失能 Service。
+
+需要固定本机参数时：
+
+```bash
+cp .nero_runtime.env.example .nero_runtime.env
+```
+
+修改其中的稳定串口、CAN、端口或 Python 路径即可；该文件不入 Git。也可用
+`./start_robot.sh --help` 查看非交互参数。
+
 ## 上真机顺序
 
 别跳步。mock 能把整条链路和网页验完,`--dry-run` 能验安全闸,这两步不花钱也不会撞。
@@ -94,10 +119,21 @@ ros2 service call /nero/arm/set_enabled std_srvs/srv/SetBool '{data: true}'
 Driver 会在 usbipd/USB/CAN 断开后进入 `FAULT` 并退避重连。重连不会恢复旧运动命令，也不会
 自动使能机械臂；检查 `/nero/driver_state` 和 `/diagnostics` 后人工重新使能。Driver 运行期间
 不要启动 `arm_console.py`、`hand_console.py` 或其他直接打开同一硬件的进程。
-Web 页面选择真机（`mock=false`）时只启动 ROS worker，不再持有设备；本地 mock 仍使用
-Console。CPV 实时跟随和 Web 联合包 keyframe 回放走 Driver 的三段式 Service；联合包会
-等待 worker 的 prepare ACK，完成 approach 后才启动。正式轨迹 Action 尚未进入 Driver，
-逐通道手力控和 clear-error 也会明确报错，不会静默回退到直连。
+默认 Backend 下，Web 页面选择真机（`mock=false`）时只启动 ROS worker，不再持有设备；
+本地 mock 仍使用 Console。CPV 实时跟随和 Web 联合包 keyframe 回放走 Driver 的三段式
+Service；联合包会等待 worker 的 prepare ACK，完成 approach 后才启动。正式轨迹 Action
+尚未进入 Driver，逐通道手力控和 clear-error 也会明确报错，不会静默回退到直连。
+
+Web 默认使用 `WEB_HARDWARE_BACKEND=ros`。需要临时回退到旧直连链路时，先停止
+Hardware Driver，确认没有其他进程占用 CAN/串口，再启动：
+
+```bash
+WEB_HARDWARE_BACKEND=direct python src/lerobot_v3/app_web.py
+```
+
+不要在 Hardware Driver 仍运行时使用 Direct。切回 ROS 时先断开 Web 的 arm/hand 会话，
+停止 Direct Web，再正常启动 Driver 和默认 Web。页面 API、技能包、组合动作、视频跟随与
+MCP 契约不因 Web Backend 改变。
 
 ## 安全
 

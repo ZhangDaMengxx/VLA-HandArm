@@ -369,6 +369,9 @@ source ~/ros2_ws/install/setup.bash
 - ROS2 Backend 下 mock/真机、CAN 和串口参数全部归 Hardware Driver，Bridge 不直接打开设备。
 - MCP Server 的 `ROBOT_BRIDGE_URL`、`ROBOT_BRIDGE_TOKEN`、`X-Bridge-Token` 和 HTTP 路径不变。
 - `--backend direct` 仅作迁移回退，不能和 Hardware Driver 同时占用设备。
+- 根目录启动器允许 `Direct -> Web + Bridge` 同时启动两个服务进程，但这只是进程编排：
+  Bridge 启动即连接硬件，Web 后续点击“接入”仍会尝试直连同一 CAN/串口。该模式没有跨进程
+  owner 仲裁，不能据此认为双端同时下发是安全的。
 - `/health` 的 `backend` 标识当前后端，arm/hand 状态来自 ROS Driver。
 
 ### 5.2 ROS2 hardware Driver 启动语义
@@ -501,7 +504,8 @@ udevadm info -a -n /dev/ttyUSB0 | grep -i serial
 3. 首次运动使用低速度、小幅度单关节命令，确保急停可立即触达。
 4. 不要依赖软件夹取代替机械限位和现场防护。
 5. 灵巧手的力控值是接触阈值，不是恒定目标力；接触点变化会改变实际夹持效果。
-6. 同一 CAN 或串口设备不要被多个控制程序同时占用。
+6. 同一 CAN 或串口设备不要被多个控制程序同时占用。Direct 的 `Web + Bridge` 菜单不会
+   改变这条约束；它只让两个服务同时在线。
 7. 退出机械臂控制程序只会断开通信，不会自动回零、失能或解除现场风险。
 
 ### 8.1 资产标称参数一致性

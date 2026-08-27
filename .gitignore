@@ -17,6 +17,7 @@
 # ---- 生成物 / 训练输出(可重建,不入库)----
 /outputs/
 /.runtime/
+/.nero_runtime.env
 /datasets/captures/capture_*/
 /datasets/captures/.capture-sequence.lock
 # 注意用 src/out/* 而非 src/out/:目录级忽略会让下面的 ! 例外失效。
