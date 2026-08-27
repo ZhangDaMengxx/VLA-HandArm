@@ -1,12 +1,13 @@
 # 部署到真机主机
 
-> 本文部署的是本仓完整 Web/ROS2 开发栈。这里的 `nero_arm_bridge.py` 是 ROS2 硬件桥，
-> 与独立 `robot-mcp-server/robot-bridge/bridge.py` 的 MCP HTTP Bridge 不是同一进程。
+> 本文部署的是完整 Web/ROS2 开发栈。正式 ROS2 Hardware Driver 位于独立
+> `VLA-HandArm-Ros/nero_inspire_hardware`；它与
+> `robot-mcp-server/robot-bridge/bridge.py` 的 MCP HTTP Bridge 不是同一进程。
 
 ## 为什么整套跑在机械臂那台
 
 `app_web.py` 是**编排器**,不 import rclpy、不发 ROS 消息 —— 它用 `subprocess` 拉起本机的
-`ros_joint_writer.py` / `ros_joint_reader.py` / `skills/runner.py`,再由 `nero_arm_bridge.py`
+`ros_joint_writer.py` / `ros_joint_reader.py` / `ros_web_hardware.py` / `skills/runner.py`,再由 Hardware Driver
 经 CAN/RS485 驱动硬件。这些 `Popen` 走的全是本机绝对路径,所以 **web、runner、bridge 必须同机**,
 而 bridge 必须在插着线的那台。开发机只需浏览器。
 
@@ -19,9 +20,9 @@
 ┌────────────────────────────────────┐      ┌──────────────┐
 │ app_web.py :7860 ──Popen──┐        │◄─────│ 浏览器        │
 │                           ▼        │ HTTP │ VS Code      │
-│              runner / writer /reader│◄─────│ Remote-SSH   │
+│        runner / writer / reader / Web│◄─────│ Remote-SSH   │
 │                           │ ROS2   │ SSH  └──────────────┘
-│              nero_arm_bridge        │
+│           nero_hardware_driver       │
 │                    │ CAN / RS485    │
 │                  臂 + 灵巧手         │
 └────────────────────────────────────┘
@@ -75,14 +76,28 @@ clone 就能跑 trajectory 类技能。其余 `src/out/` 产物仍不入库。
 别跳步。mock 能把整条链路和网页验完,`--dry-run` 能验安全闸,这两步不花钱也不会撞。
 
 ```bash
-source ~/ros2_ws/robot_host_env.sh
+source ~/ros2_ws/lerobotTest/deploy/nero_hardware_env.sh
 conda activate lerobot-v3
 python src/ros_humble_env.py --run src/skills/runner.py --dry-run --once '{"skill_id":"go_home","confirmed":true,"assume_enabled":true}'
-python src/ros_humble_env.py --run src/nero_arm_bridge.py --mock --enable-control   # 假数据,不碰硬件
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch nero_inspire_hardware hardware.launch.py enable_control:=true          # 假数据,不碰硬件
 candump $CAN_IFACE                                       # 确认臂在 CAN 上有回包
-python src/ros_humble_env.py --run src/nero_arm_bridge.py --no-mock                 # 只读真机
-python src/ros_humble_env.py --run src/nero_arm_bridge.py --no-mock --enable-control # 确认角度对了再放开控制
+ros2 launch nero_inspire_hardware hardware.launch.py \
+  arm_mock:=false hand_mock:=false hand_port:=/dev/inspire_hand                    # 只读真机
+ros2 launch nero_inspire_hardware hardware.launch.py \
+  arm_mock:=false hand_mock:=false enable_control:=true hand_port:=/dev/inspire_hand
+# 确认 /nero/driver_state 中 arm/hand 均 READY 后，再显式使能
+ros2 service call /nero/arm/set_enabled std_srvs/srv/SetBool '{data: true}'
 ```
+
+Driver 会在 usbipd/USB/CAN 断开后进入 `FAULT` 并退避重连。重连不会恢复旧运动命令，也不会
+自动使能机械臂；检查 `/nero/driver_state` 和 `/diagnostics` 后人工重新使能。Driver 运行期间
+不要启动 `arm_console.py`、`hand_console.py` 或其他直接打开同一硬件的进程。
+Web 页面选择真机（`mock=false`）时只启动 ROS worker，不再持有设备；本地 mock 仍使用
+Console。CPV 实时跟随和 Web 联合包 keyframe 回放走 Driver 的三段式 Service；联合包会
+等待 worker 的 prepare ACK，完成 approach 后才启动。正式轨迹 Action 尚未进入 Driver，
+逐通道手力控和 clear-error 也会明确报错，不会静默回退到直连。
 
 ## 安全
 

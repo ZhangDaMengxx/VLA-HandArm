@@ -152,6 +152,8 @@ class NeroArm:
         # 固件 ≥1.12 上电自动推送,我们不需要开(见 _enable_can_push)
         self.can_push_auto = False
         self.robot = None
+        self._connected = False
+        self.last_read_ok = False
         # Mock 从远离奇异位形和关节限位的弯肘姿态开始。
         self._target = list(NERO_TRACKING_READY_POSE)
         self._frozen = False
@@ -170,8 +172,13 @@ class NeroArm:
         self.connect_pose: list[float] | None = None
 
     def connect(self) -> bool:
+        self._connected = False
+        self.last_read_ok = False
         if self.mock:
-            self.connect_pose = self.read_angles()
+            self._connected = True
+            self.last_read_ok = True
+            self.last_error = None
+            self.connect_pose = list(self._target)
             # mock 用来直接跑通控制链路，没有真实电机需要单独使能。连接成功后
             # 状态必须与可执行的 move_j 一致，否则上层看到 enabled=false 会拒绝下发。
             self._enabled = True
@@ -250,6 +257,8 @@ class NeroArm:
         # wait=: 使能位在 LowSpd 帧(0x261~0x267),实测 55.4Hz —— 比关节角
         # (222Hz)慢 4 倍,不等就可能读成 False。
         self.read_enabled(wait=self.CONNECT_PROBE_SEC)
+        self._connected = True
+        self.last_read_ok = True
         return True
 
     # SDK 内部的门限(pyAgxArm 工厂里那段),照抄不改进。
@@ -365,16 +374,28 @@ class NeroArm:
         """7 关节角(rad)。读失败回退上次目标,**不抛** —— 上层在定时循环里调它,
         偶发丢帧不该把进程搞挂(和 InspireHand.read_angles 同约定)。"""
         if self.mock:
+            self.last_read_ok = self._connected
+            return list(self._target)
+        if not self._connected or self.robot is None:
+            self.last_read_ok = False
+            self.last_error = "读关节角时设备未连接"
             return list(self._target)
         try:
             ret = self.robot.get_joint_angles()
         except Exception as e:                     # noqa: BLE001
+            self.last_read_ok = False
             self.last_error = f"读关节角异常: {e}"
             return list(self._target)
         if ret is None or ret.msg is None:
+            self.last_read_ok = False
             self.last_error = "读关节角无回复"
             return list(self._target)
+        self.last_read_ok = True
         return list(ret.msg)
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
 
     @property
     def enabled(self) -> bool:
@@ -386,16 +407,21 @@ class NeroArm:
         return self._frozen
 
     def enable(self) -> bool:
-        self._enabled = True
         if self.mock:
+            self._enabled = True
             return True
-        return bool(self.robot.enable())
+        ok = bool(self.robot.enable())
+        self._enabled = ok
+        return ok
 
     def disable(self) -> bool:
-        self._enabled = False
         if self.mock:
+            self._enabled = False
             return True
-        return bool(self.robot.disable())
+        ok = bool(self.robot.disable())
+        if ok:
+            self._enabled = False
+        return ok
 
     def reset(self) -> None:
         """退出急停阻尼模式,并**重新使能电机**。
@@ -662,4 +688,6 @@ class NeroArm:
             except Exception:                      # noqa: BLE001
                 pass
         self.robot = None
+        self._connected = False
+        self.last_read_ok = False
         self._enabled = False

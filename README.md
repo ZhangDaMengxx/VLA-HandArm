@@ -14,10 +14,18 @@ NERO 七自由度机械臂、因时 RH56DFX 灵巧手、Web 调试工作台和 V
 
 ```text
 [MCP client] -- JSON-RPC /mcp --> [MCP Server] -- HTTP --> [robot-bridge]
+                                                           | ROS2 Service
+                                                           v
+                                                  [Hardware Driver]
                                                            | RS485 / CAN
                                                            v
-                                                     [灵巧手 / 机械臂]
+                                                    [灵巧手 / 机械臂]
 ```
+
+MCP Server 的 HTTP 调用、`X-Bridge-Token` 和现有路径不变；ROS2 Backend 位于独立
+`robot-mcp-server/robot-bridge`，Hardware Driver 位于
+`src/nero_inspire_ros2/nero_inspire_hardware`。Direct Backend 只保留为迁移回退，不能与
+ROS2 Driver 同时占用硬件。
 
 ## 从哪里开始
 
@@ -44,16 +52,17 @@ python src/lerobot_v3/app_web.py
 
 服务监听 `0.0.0.0:7860`。若本机存在 `ssl/key.pem` 和 `ssl/cert.pem` 会启用 HTTPS，
 否则使用 HTTP。`localhost` 开发可以使用 HTTP；局域网摄像头访问需要可信 HTTPS。
-Web、视觉、实时 IK、数据集和直接 CAN/串口控制统一使用 Python 3.12 主环境；ROS reader、
-writer 和技能 runner 会自动在后台加载 Humble，并使用独立 `ros-humble` Python 3.10
-环境。页面接口、WebSocket 和 13 轴关节顺序不变。ROS 硬件桥仍需显式选择 Mock、只读真机
-或允许控制，Web 不会在未知硬件状态下自动抢占 CAN/串口。
+Web、视觉、实时 IK 和数据集使用 Python 3.12 主环境；ROS reader、writer、Web hardware
+worker 和技能 runner 会自动在后台加载 Humble，并使用独立 `ros-humble` Python 3.10
+环境。页面接口、WebSocket 和 13 轴关节顺序不变。真机 Web 会话通过
+`src/ros_web_hardware.py` 订阅 Driver 状态并调用 Service，不直接打开 CAN/串口；本地 mock
+仍使用原 Console。Hardware Driver 仍需显式选择只读或允许控制。
 
 主要能力：
 
 - 机械臂、灵巧手和合体 3D 状态与调试；实时视频跟随只在“实时 Live · 合体”页提供
 - 浏览器 MediaPipe Tasks Hand Landmarker；页面按本机能力选择自动、CPU/WASM 或 GPU/WebGL，macOS 显示 Apple GPU（WebGL/Metal）
-- 切换功能页或关闭浏览器时，灵巧手张开、机械臂按安全条件回伸直位，随后释放串口和 CAN
+- 切换功能页或关闭浏览器时，灵巧手张开、机械臂按安全条件回伸直位，随后结束 Web ROS 客户端；CAN/串口继续由 Driver 持有
 - `/ws/hand/mimic` 同时输出 7 轴机械臂与 6 轴灵巧手目标；Mock 和真机共用协议与 IK 链
 - 单一按钮完成当前手腕位置/姿态的联合锚定、冻结和重新锚定；首个有效手帧即可点击，随后固定采集 12 帧并做离群点剔除
 - 锚点使用机械臂当前关节 FK，页面显示采样进度与位置/姿态抖动，避免启动跳变或无限等待稳定
@@ -64,9 +73,17 @@ writer 和技能 runner 会自动在后台加载 Humble，并使用独立 `ros-h
 
 实时手部控制保持 MediaPipe 21 点与 dex-retargeting 后端协议不变。浏览器不再在
 WebSocket 返回后逐帧追加硬件 HTTP 请求；后端以 30Hz 投递最新目标并等待
-`hand_console` 的真实 RS485 ACK。滤波状态按 WebSocket 隔离，超过 200ms 无有效目标、
+Hardware Driver 的 ROS Service ACK。滤波状态按 WebSocket 隔离，超过 200ms 无有效目标、
 硬件离线或连接断开时重置。实现与验收说明见
 [src/web/MEDIAPIPE_TASKS_MIGRATION.md](src/web/MEDIAPIPE_TASKS_MIGRATION.md)。
+
+机械臂实时跟随使用 `/nero/arm/tracking_begin`、`set_tracking_joints` 和 `tracking_end`
+三段式 Service。Driver 会在普通点位运动、失能、急停、故障、断线或退出时清理 CPV 模式；
+Web 保留 `tracking_token`/`frame_id` 等待真实 ACK，不把仅写入进程管道当作执行成功。
+联合录制包同样复用这三段式 CPV Service：Web 先等待 `combo_prepare` 的 worker ACK，
+首帧 approach 到位后再同步启动臂手时间轴，结束、停止、失能或故障都会退出 CPV。
+Driver 尚未提供正式轨迹 Action，因此当前能力是 Web worker 内的 keyframe 播放，不等同于
+通用 ROS2 `FollowJointTrajectory`。
 
 合体跟随同时传输 MediaPipe world landmarks 和 image landmarks：前者用于手型重定向与
 手掌姿态，后者通过手掌表观尺度估计腕部相对位置。该单目位置明确标记为
@@ -79,11 +96,11 @@ IK 失败、急停/冻结、未使能或断线都会停止机械臂目标投递�
 
 页面内切换会等待复位和断开完成；浏览器关闭或刷新则通过 `pagehide/sendBeacon` 尽力通知
 服务端。每个标签页通过 `sessionStorage` 持有独立硬件租约，页面每 2 秒续租；服务端在
-约 8 秒未收到 heartbeat 后保持最后位置并释放串口/CAN，不主动发送手复位或臂回零命令。
+约 8 秒未收到 heartbeat 后保持最后位置并释放 Web 控制租约，不主动发送手复位或臂回零命令。
 hand/arm 分别只有一个 owner；另一标签页点击原有“接入”按钮会直接替换对应 owner，先保持
-当前位置断开旧串口或 CAN，再建立新连接，不影响另一硬件通道。旧标签页在下一次 heartbeat
+当前位置结束旧 ROS 客户端，再建立新连接，不影响另一硬件通道。旧标签页在下一次 heartbeat
 后显示离线。机械臂断开不发送 disable，保持原使能状态；主动断开、切页和 `pagehide` 仍
-执行正常复位流程。
+执行正常复位流程。该 Web 租约尚未与 MCP 共用；Web 与 MCP 当前不得同时发送运动命令。
 
 ## VLA 数据管线
 

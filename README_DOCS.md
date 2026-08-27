@@ -141,7 +141,8 @@ q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
    `src/HAND_LIMIT_AUDIT_2026_08_21.md`。
 2. Git 历史中存在 `ssl/key.pem`；应轮换并另行处理跟踪/历史清理。
 3. 摄像头真手链已有延迟样本及 GPU/CPU/Apple GPU 选择控件，One Euro 大死区台阶已修正；新门限真机复测、跨浏览器/macOS 和同幅度速度对照仍未闭环。
-4. 合体腕姿跟随已完成 Mock、IK 和 Three.js 验收；灵巧手与机械臂 IK 已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。
+4. 合体腕姿跟随已完成 Mock、IK、Three.js 和 ROS2 CPV Service 验收；灵巧手与机械臂 IK
+   已按 latest-only 异步解耦，但双链路性能和真实机械臂尚未验证，单目位置也不是绝对米制真值。
 5. 页面内切换会等待硬件复位和断开；浏览器关闭使用 `pagehide/sendBeacon` 尽力通知，
    服务端 heartbeat/lease watchdog、hand/arm 独立 owner 和重复标签页自动替换已实现。
    仍需真机覆盖 owner 替换、进程强杀、断网和超时释放，确认保持位置断开通道的现场行为。
@@ -151,4 +152,4 @@ q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
 
 ---
 
-**最后全面审查**：2026-08-24
+**最后全面审查**：2026-08-26

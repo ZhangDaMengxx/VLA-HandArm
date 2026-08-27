@@ -24,7 +24,10 @@ ros2_ws/
 | `src/hand_feasibility.py` | 通用灵巧手 commissioning、Profile 和安全投影 |
 | `configs/hands/*.json` | 手型资产标称角、Adapter 和探测策略 |
 | `src/nero_arm.py` | NERO CAN/SDK 封装和运行时限位 |
-| `src/nero_arm_bridge.py` | ROS2 硬件桥；真机默认只监控 |
+| `src/nero_arm_bridge.py` | 旧脚本型 Driver 过渡副本；正式 package 在独立 ROS 仓库 |
+| `src/ros_driver_state.py` | 无 ROS 依赖的 Driver 连接状态机和读失败 watchdog |
+| `src/ros_web_hardware.py` | Web 真机 ROS2 worker：订阅状态并调用有应答 Service，不持有硬件 |
+| `src/ros_combo_playback.py` | Web 联合包 ROS2 播放状态机：prepare ACK、approach、CPV 时轴与失败清理 |
 | `src/hand_console.py` | 灵巧手调试和动作播放 |
 | `src/hand_target_filter.py` | 摄像头真手目标的 One Euro 滤波和分辨率门限 |
 | `src/hand_target_mailbox.py` | 摄像头 latest-target 调度、控制权和 ACK 背压 |
@@ -50,7 +53,7 @@ ros2_ws/
 ## 开发环境
 
 命名 Conda 环境 `lerobot-v3` 是主运行时，覆盖 Web、RGB/RGB-D EGO、RobotDataset、
-实时/离线 IK、Rerun、直接 CAN/串口控制和离线测试。已验收版本为
+实时/离线 IK、Rerun、本地 mock/独立直连调试工具和离线测试。已验收版本为
 Python `3.12.13`、`lerobot 0.6.1`、CPU Torch `2.7.1`、`torchcodec 0.4.0`、
 MediaPipe `0.10.14`、Pinocchio `4.1.0`、dex-retargeting `0.5.0` 和 Rerun `0.26.2`：
 
@@ -83,11 +86,21 @@ python src/ros_humble_env.py --check
 ```
 
 `app_web.py` 自动在后台为 ROS 子进程加载 `/opt/ros/humble/setup.bash` 和工作区
-`install/setup.bash`，用户不需要切换环境。手动启动桥时也从 V3 入口转交：
+`install/setup.bash`，用户不需要切换环境。正式 Hardware Driver 从 ROS 工作区启动：
 
 ```bash
-python src/ros_humble_env.py --run src/nero_arm_bridge.py --mock --enable-control
+source ~/ros2_ws/lerobotTest/deploy/nero_hardware_env.sh
+nero_hardware_control
 ```
+
+Driver 发布 `/nero/driver_state` 和 `/diagnostics`。真机加 `--enable-control` 只表示接收
+命令，不会自动使能；使用 `/nero/arm/set_enabled` 明确使能，USB/CAN 重连后也必须重新确认。
+同一时刻不要再启动直接占用 `can0` 或手串口的 Console。
+Web 的 `mock=false` hand/arm 会话会启动 `ros_web_hardware.py`；`mock=true` 才启动本地
+Console。CPV 实时跟随与 Web `combo_pack` keyframe 回放通过 Driver 的
+begin/set-target/end Service 下发；联合包先等待 prepare ACK，再在 approach 到位后同步启动
+臂手时间轴。正式联合轨迹 Action、逐通道手力控和 clear-error 尚无 Driver 接口，且不会
+回退到直连硬件。
 
 不要用是否能 import 来推断真机已经可用；CAN、串口、使能、急停和工作区仍需单独确认。
 

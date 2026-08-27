@@ -191,11 +191,11 @@ POST /api/voice/invoke     SSE;console_exec.py → arm_console / hand_console
 不做语义猜测 —— 纠错本身出错就是引入新的反向风险。原话和纠正后都落盘
 (`text_raw` / `text`),能事后查纠错有没有纠反。
 
-**为什么走 console 不走 ROS**:技能执行有两个后端 —— `runner.py`(ROS bridge)和
-`console_exec.py`(两个 console)。臂走 can0、手走 RS485,console **独占**它们;ROS
-bridge 会抢同一条通道,后果不是报错而是**互相覆盖**(见 `COMBO_DEBUG.md`)。真机验过
-的是 console 那条,所以语音走它。确认闸(`runner.Gate`)与调用日志两条路**共用一份
-实现**,不长出两套解释。
+**真机统一走 ROS2 Driver**:技能执行仍有两个编排入口 —— `runner.py` 直接走 ROS，
+`console_exec.py` 写入 Web 的 arm/hand 会话协议；但 `mock=false` 时这两个会话实际都是
+`ros_web_hardware.py` worker，只调用 Driver Service，不再打开 can0 或 RS485。只有本地
+mock 才启动旧 Console。确认闸(`runner.Gate`)与调用日志两条路**共用一份实现**，不长出
+两套解释。
 
 四道闸全在服务端强制,前端绕不过去:
 

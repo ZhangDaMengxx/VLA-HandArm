@@ -350,48 +350,63 @@ MOUNT_RPY = "0 0 1.570796"
 |------|------|------|
 | 灵巧手驱动 | `src/inspire_hand.py` | RS485 包帧、寄存器、角度/通道转换 |
 | 机械臂驱动 | `src/nero_arm.py` | pyAgxArm、CAN、使能、运动和遥测 |
-| HTTP 硬件代理 | `bridge.py` | MCP 服务使用的本机 HTTP 接口 |
-| ROS2 桥 | `src/nero_arm_bridge.py` | ROS2 轨迹话题与 `/joint_states` |
+| HTTP Robot Bridge | `robot-mcp-server/robot-bridge/bridge.py` | 保持 MCP HTTP/Token 契约，通过 ROS2 Backend 调 Driver |
+| ROS2 硬件 Driver | `src/nero_inspire_ros2/nero_inspire_hardware` | 独占 CAN/RS485、重连、状态诊断、ROS2 控制与 `/joint_states` |
+| Web ROS2 worker | `src/ros_web_hardware.py` | 订阅 Driver 状态、调用控制 Service，不打开硬件设备 |
 | 灵巧手控制台 | `src/hand_console.py` | 单独调试灵巧手 |
 | 机械臂控制台 | `src/arm_console.py` | 单独调试机械臂，默认 mock 和 20% 速度 |
 | 装配体生成 | `src/build_nero_inspire.py` | 生成并验证臂、法兰、手装配 URDF |
 
-### 5.1 HTTP bridge 启动语义
+### 5.1 HTTP Robot Bridge 启动语义
 
 ```bash
-# mock：臂和手均不连接真实硬件
-python bridge.py --mock --host 127.0.0.1 --port 9000
-
-# Linux 真机
-python bridge.py --hand-port /dev/ttyUSB0 --host 127.0.0.1 --port 9000
-
-# Windows 真机示例
-python bridge.py --hand-port COM5 --host 127.0.0.1 --port 9000
+cd ~/ros2_ws/robot-mcp-server/robot-bridge
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+.venv-ros/bin/python bridge.py --backend ros --host 127.0.0.1 --port 9000
 ```
 
-- 不加 `--mock` 时，灵巧手连接失败会终止 bridge 启动，不会静默回退 mock。
-- 真机模式下机械臂连接失败只会告警，bridge 仍可继续提供灵巧手功能。
-- `/health` 中 `hand` 和 `arm` 分别表示两套控制器是否存在，`mock` 表示当前是否为空跑。
-- HTTP bridge 连接机械臂后不会自动使能；运动端点仍需遵守对应的使能和安全检查。
+- ROS2 Backend 下 mock/真机、CAN 和串口参数全部归 Hardware Driver，Bridge 不直接打开设备。
+- MCP Server 的 `ROBOT_BRIDGE_URL`、`ROBOT_BRIDGE_TOKEN`、`X-Bridge-Token` 和 HTTP 路径不变。
+- `--backend direct` 仅作迁移回退，不能和 Hardware Driver 同时占用设备。
+- `/health` 的 `backend` 标识当前后端，arm/hand 状态来自 ROS Driver。
 
-### 5.2 ROS2 bridge 启动语义
+### 5.2 ROS2 hardware Driver 启动语义
 
-`src/nero_arm_bridge.py` 默认臂和手都使用 mock。真机必须显式传
-`--no-mock`，且真机默认只监控；只有再传 `--enable-control` 才订阅控制话题。
+正式入口 `nero_inspire_hardware` 默认臂和手都使用 mock 且只监控。真机必须显式设置
+`arm_mock:=false hand_mock:=false`；只有 `enable_control:=true` 才创建控制 Topic 和
+Service。该参数不会自动使能真实机械臂。
 
 ```bash
-# 无硬件空跑，默认允许控制话题
-python3 src/nero_arm_bridge.py --mock
+# 无硬件空跑，只监控
+ros2 launch nero_inspire_hardware hardware.launch.py
 
-# 真机，只监控
-python3 src/nero_arm_bridge.py --no-mock
+# 无硬件空跑并验证控制链
+ros2 launch nero_inspire_hardware hardware.launch.py enable_control:=true
 
-# 真机并显式允许控制
-python3 src/nero_arm_bridge.py --no-mock --enable-control --firmware v120
+# 真机并显式允许控制；首次上机先保持 enable_control:=false，只读确认后再切 true
+ros2 launch nero_inspire_hardware hardware.launch.py \
+  arm_mock:=false hand_mock:=false enable_control:=true \
+  firmware:=auto hand_port:=/dev/inspire_hand
+
+# 状态与诊断
+ros2 topic echo /nero/driver_state
+ros2 topic echo /diagnostics
+
+# 明确使能；Driver 重连后必须重新人工执行
+ros2 service call /nero/arm/set_enabled std_srvs/srv/SetBool '{data: true}'
 ```
 
-注意：ROS2 bridge 当前固件选项不含 `auto`；需要自动探测时优先使用
-`src/arm_console.py` 或直接调用 `NeroArm(firmware="auto")`。
+Driver 分别维护 arm/hand 的 `DISCONNECTED -> CONNECTING -> READY/FAULT` 状态。
+连续读失败会停止发布该设备的旧角度、关闭句柄并指数退避重连；另一个健康设备仍可继续
+发布自己的部分 `JointState`。运动命令使用 volatile QoS，Driver 重启或重连不会重放旧目标。
+重连只恢复通信，不自动使能电机。当前轨迹兼容 Topic 仍只执行最后一个路点，完整轨迹执行
+后续迁移到 `FollowJointTrajectory` Action。
+
+Web 真机会话通过 `ros_web_hardware.py` 访问上述 Topic/Service，不再启动直连 Console。
+本地 mock 仍可使用 `hand_console.py`/`arm_console.py`。CPV 实时跟随通过正式 Driver 的
+三段式 Service 执行；完整轨迹 Action、逐通道手力控和 clear-error 必须显式拒绝，禁止为
+保留页面能力而回退直连。
 
 ---
 

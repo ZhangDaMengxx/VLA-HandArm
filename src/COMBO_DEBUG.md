@@ -243,8 +243,9 @@ mock 下已验:
 | 技能包格式 | ✅ `gesture_pack.py` | ✅ `combo_pack.py`(臂+手同一个包) |
 | 视频 → 关节 | ✅ 6 维 | ❌(`derive_embodiment.py` 出 13 维,但没页面能送真机) |
 
-**播放器跑在 `arm_console` 进程里**,不在 web 层:CPV 要 `arm.move_cpv_pos()`,而 can0
-被 console 独占。web 层先投递 `combo_prepare`，到位后再投递 `combo_start`，并轮询
+**播放器跑在机械臂会话 worker 里**,不在 Web 主进程。真机时由
+`ros_web_hardware.py` 通过 Driver 的 CPV Service 下发，本地 mock 才使用 `arm_console`。
+Web 先投递并等待 `combo_prepare` ACK，到位后再投递 `combo_start`，并轮询
 `/api/combo/play/status` ——
 进度**捎在臂遥测里**回来。语音说包名走的是同一条路(见 `README.md` 的「三种 kind」)。
 
@@ -278,13 +279,13 @@ mock 下已验:
 | 层 | 在哪 | 查什么 |
 |---|---|---|
 | web | `_combo_start()` | 臂/手未接入、臂未使能、急停中(`frozen`)、`mode == stream` |
-| console | `ComboPlayer.preflight()` | 臂未使能、**`ctrl_mode != CAN_CTRL`**、手没连上 |
+| worker | `ComboPlayer.preflight()` | 臂未使能；直连 Console 还检查 **`ctrl_mode != CAN_CTRL`** |
 
-`ctrl_mode` 那条只在 console 层,而它是**「跑完了但臂没动」的唯一防线**:松灵客户端把臂
+`ctrl_mode` 那条只在直连 Console 层:松灵客户端把臂
 留在 ETHERNET 模式时,CPV 帧发出去**不报错也不动**(SDK 的 `_cpv_po_joints_flag` 就是靠
 `ctrl_mode` 门控的)。web 层查不了 —— 它没有 `NeroArm` 句柄。
 
-`arm_console` 还在 CPV 之前做两件事:**逐点查限位**(只查不夹)和 **`approach`** ——
+机械臂 worker 还在 CPV 之前做两件事:**逐点查限位**(只查不夹)和 **`approach`** ——
 以 50% 速度挪到首帧,挡住过大的初始落差。approach 是主循环中的非阻塞状态：
 每个遥测 tick 继续读取并发布真实关节角，同时检查 0.5° 到位窗；所以 Web 3D 会显示
 这段真实运动，而不是停住后跳到首帧。20s 超时、失能或急停都会拒绝正式回放。

@@ -4,7 +4,8 @@
 布局仿 1.html 的全屏悬浮结构,配色按『可视化工作台-提示词.md』的白色极简科技风。
 后端管线复用 app_gradio.py:subprocess 依次跑 build_canonical / derive_embodiment /
 replay_rerun --serve,用 SSE 把进度/日志/Rerun 地址推给浏览器。Web、视觉、实时 IK 和直接
-CAN/串口控制使用 lerobot-v3；只有 rclpy reader/writer/runner 在后台使用 ROS Humble
+真机 CAN/串口由正式 ROS2 Hardware Driver 独占；Web 通过 ROS Humble 子进程订阅状态并
+调用 Service。视觉、IK、数据和本地 mock 继续使用 lerobot-v3。
 Python 3.10，均靠 subprocess 隔离。
 
 运行:
@@ -532,8 +533,7 @@ def _get_live() -> LiveSession:
 # 手部调试模式:hand_console(串口) + hand_rerun(3D)
 # ---------------------------------------------------------------------------
 class HandDebugSession:
-    """灵巧手调试会话:console 独占串口,rerun 显示 3D,都走子进程。
-    和 LiveSession 的区别:不走 ROS,不需要臂,只要 V3 主环境里的 pyserial。"""
+    """灵巧手会话：真机走 ROS2 Driver，本地 mock 走旧 Console。"""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -555,13 +555,13 @@ class HandDebugSession:
         self._ack_seq = 0
 
     def start(self, mock: bool = False) -> None:
-        """拉起会话:只起 hand_console(串口)。mock=False(默认)= 真开 /dev/ttyUSB0。
+        """拉起会话。mock=False 订阅 ROS2，不直接打开串口。
 
         **不再起 hand_rerun** —— 3D 改成浏览器端 three.js 直接渲染(web/hand3d.js),
         少一个 conda 子进程、少一个 WASM 查看器,也不占 Rerun 端口。
         hand_rerun.py 保留,命令行仍可用(`hand_console.py | hand_rerun.py --serve`)。
 
-        串口开成没开成由 console 的第一条消息决定(ready / error fatal),
+        Driver 就绪与否由 worker 的第一条消息决定(ready / error fatal),
         这里只负责起进程 —— 结果通过 self.error / self.ready 反映,端点据此回报,
         不能默认"起了进程就是在线"。"""
         if self._running:
@@ -570,16 +570,20 @@ class HandDebugSession:
         self.mock = mock
         self.error = None
         self.ready = False
-        # console:系统 python3(pyserial 在那儿),独占 RS485 串口
-        flag = "--mock" if mock else "--no-mock"
         # --hz 决定 ActionPlayer.tick() 的调用周期 = 回放的时间分辨率。
         # 取 gesture_pack.CONSOLE_HZ(30)而不是写死 20:20Hz 的 tick 是 50ms,
         # 回放 30fps 源视频(帧间 33ms)时每帧都得等到 50ms,整段慢 1.5× —— 就是
         # 用户看到的"很延迟"。两处必须一致,所以从那边取常量,别各写一个数。
         from gesture_pack import CONSOLE_HZ, PLAYER_HZ
+        command = (
+            ["python3", "src/hand_console.py", "--mock",
+             "--hz", str(CONSOLE_HZ), "--player-hz", str(PLAYER_HZ)]
+            if mock else
+            _ros_cmd(["src/ros_web_hardware.py", "--device", "hand",
+                      "--hz", str(CONSOLE_HZ)])
+        )
         self.console = subprocess.Popen(
-            ["python3", "src/hand_console.py", flag,
-             "--hz", str(CONSOLE_HZ), "--player-hz", str(PLAYER_HZ)],
+            command,
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self._threads = [threading.Thread(target=self._pump_console, daemon=True)]
@@ -606,7 +610,7 @@ class HandDebugSession:
             self.loop.call_soon_threadsafe(self._cancel_ack_waiters)
         except RuntimeError:
             pass
-        # 主动退出默认复位；watchdog 超时只释放串口，不发新的位置目标。
+        # 主动退出默认复位；watchdog 超时只结束客户端，不发新的位置目标。
         if self.console and self.console.stdin and self.console.poll() is None:
             try:
                 with self._stdin_lock:
@@ -765,11 +769,10 @@ class HandDebugSession:
 
 
 class ArmDebugSession:
-    """机械臂调试会话:arm_console.py 独占 can0。结构和 HandDebugSession 同构。
+    """机械臂会话：真机走 ROS2 Driver，本地 mock 走旧 Console。
 
     刻意没和 HandDebugSession 合并成一个基类:手那套已经在真手上验过,重构它的收益
-    不如风险大。两边的协议(start/stop/status/command + /ws)是同构的,合体页面
-    同时开两个会话即可 —— 通道不冲突(RS485 vs CAN),各自独立。
+    不如风险大。两边的协议(start/stop/status/command + /ws)保持同构。
 
     ⚠ 和手的实质差异:
       · 默认 mock=True(臂是 7 自由度工业臂,不做"连上就能动")
@@ -794,22 +797,26 @@ class ArmDebugSession:
         self._tracking_waiters: dict[str, asyncio.Future] = {}
         self._tracking_seq = 0
         self._tracking_active = False
+        self._combo_waiters: dict[str, tuple[threading.Event, dict]] = {}
+        self._combo_waiters_lock = threading.Lock()
 
     def start(self, mock: bool = True, speed: int = 20) -> None:
-        """拉起 arm_console。mock=True 是默认 —— 和手页相反,理由见类注释。"""
+        """拉起会话。mock=False 订阅 ROS2，不直接打开 can0。"""
         if self._running:
             return
         self._running = True
         self.mock = mock
         self.error = None
         self.ready = False
-        flag = "--mock" if mock else "--no-mock"
+        command = (
+            ["python3", "src/arm_console.py", "--mock", "--hz", "20",
+             "--speed", str(int(speed))]
+            if mock else
+            _ros_cmd(["src/ros_web_hardware.py", "--device", "arm",
+                      "--hz", "20", "--speed", str(int(speed))])
+        )
         self.console = subprocess.Popen(
-            # --firmware 不传 = 用 arm_console 的默认 auto(探到什么用什么)。
-            # 之前这里什么都不传,而 arm_console 的默认是 "default",于是真机上
-            # 一直用错的 driver 在跑 —— 这台臂是 1.11,该走 v111。
-            ["python3", "src/arm_console.py", flag, "--hz", "20",
-             "--speed", str(int(speed))],
+            command,
             cwd=str(REPO), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self._threads = [threading.Thread(target=self._pump_console, daemon=True)]
@@ -856,6 +863,7 @@ class ArmDebugSession:
         self.latest = None
         self.connect_pose = None
         self._tracking_active = False
+        self._cancel_combo_waiters()
 
     def _pump_console(self) -> None:
         assert self.console is not None and self.console.stdout is not None
@@ -879,7 +887,7 @@ class ArmDebugSession:
                 # 松灵客户端使能着。塞进 latest,让 status/前端立刻拿到正确状态,
                 # 不用等第一帧 state。
                 self.latest = {"enabled": row.get("enabled", False),
-                               "frozen": False,
+                               "frozen": row.get("frozen", False),
                                "speed_percent": row.get("speed_percent")}
             elif typ == "error" and row.get("fatal"):
                 self.error = row.get("msg") or "CAN 打开失败"
@@ -887,10 +895,15 @@ class ArmDebugSession:
                 self.latest = row
             elif typ == "ack" and row.get("cmd") == "tracking_angles":
                 token = row.get("tracking_token")
+                if row.get("ok") is False:
+                    self._tracking_active = False
                 if token:
                     self.loop.call_soon_threadsafe(
                         self._resolve_tracking_ack, token, row
                     )
+            if (typ in ("ack", "error")
+                    and row.get("cmd") == "combo_prepare"):
+                self._resolve_combo_ack(row)
             if (typ in ("combo_ready", "combo_failed", "combo_done")
                     or (typ == "error" and row.get("cmd") in
                         ("combo_prepare", "combo_start"))
@@ -919,6 +932,51 @@ class ArmDebugSession:
             return {"ok": True, "sent": cmd}
         except Exception as e:                          # noqa: BLE001
             return {"ok": False, "msg": str(e)}
+
+    def command_wait_combo_prepare(self, cmd: dict,
+                                   timeout: float = 8.0) -> dict:
+        """Return only after the worker accepts or rejects ``combo_prepare``."""
+        token = str(cmd.get("token") or "")
+        if not token:
+            return {"ok": False, "msg": "combo token 为空"}
+        completed = threading.Event()
+        result: dict = {}
+        with self._combo_waiters_lock:
+            self._combo_waiters[token] = (completed, result)
+        sent = self.command(cmd)
+        if not sent.get("ok"):
+            with self._combo_waiters_lock:
+                self._combo_waiters.pop(token, None)
+            return sent
+        if not completed.wait(max(0.1, timeout)):
+            with self._combo_waiters_lock:
+                self._combo_waiters.pop(token, None)
+            return {"ok": False, "msg": "等待 ROS combo_prepare 应答超时"}
+        return {"ok": result.get("type") == "ack" and result.get("ok", False),
+                **result}
+
+    def _resolve_combo_ack(self, row: dict) -> None:
+        token = str(row.get("token") or "")
+        with self._combo_waiters_lock:
+            if token:
+                waiter = self._combo_waiters.pop(token, None)
+            elif len(self._combo_waiters) == 1:
+                _, waiter = self._combo_waiters.popitem()
+            else:
+                waiter = None
+        if waiter is None:
+            return
+        completed, result = waiter
+        result.update(row)
+        completed.set()
+
+    def _cancel_combo_waiters(self) -> None:
+        with self._combo_waiters_lock:
+            waiters = list(self._combo_waiters.values())
+            self._combo_waiters.clear()
+        for completed, result in waiters:
+            result.update({"type": "error", "msg": "机械臂会话已关闭"})
+            completed.set()
 
     async def send_tracking_angles_wait_ack(
         self, angles: tuple[float, ...], frame_id: object
@@ -1020,6 +1078,21 @@ _hand_target_mailbox: LatestTargetMailbox | None = None
 _arm_target_mailbox: LatestTargetMailbox | None = None
 _combo_pending_lock = threading.Lock()
 _combo_pending: dict | None = None
+
+
+def _skill_hardware_state() -> tuple[bool, bool]:
+    """Return ROS availability and the arm's best known enable state."""
+    live_on = bool(_live is not None and _live.reader is not None
+                   and _live.reader.poll() is None)
+    arm_on = bool(_arm is not None and _arm.ready and _arm.console is not None
+                  and _arm.console.poll() is None and not _arm.error)
+    hand_on = bool(_hand is not None and _hand.ready and _hand.console is not None
+                   and _hand.console.poll() is None and not _hand.error)
+    if arm_on:
+        arm_enabled = bool((_arm.latest or {}).get("enabled", False))
+    else:
+        arm_enabled = bool(_live.arm_enabled) if live_on and _live else False
+    return live_on or arm_on or hand_on, arm_enabled
 
 
 def _get_arm() -> ArmDebugSession:
@@ -1630,14 +1703,14 @@ async def skills(reload: bool = False) -> JSONResponse:
         reg = get_registry(reload=reload)
     except RegistryError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    live_on = _live is not None and _live.reader is not None
+    live_on, arm_enabled = _skill_hardware_state()
     return JSONResponse({
         "version": reg.version,
         "count": len(reg),
         "skills": reg.to_public(),
         "warnings": reg.warnings,
         "live_session": live_on,        # 前端据此灰掉 requires:[live_session] 的技能
-        "arm_enabled": bool(_live.arm_enabled) if _live else False,
+        "arm_enabled": arm_enabled,
     })
 
 
@@ -1671,6 +1744,7 @@ async def skills_invoke(payload: dict) -> StreamingResponse:
         global _skill_proc
         _stop_skill()                                     # 单实例:先停旧的
         live = _get_live()
+        _, arm_enabled = _skill_hardware_state()
         env = {
             "skill_id": payload.get("skill_id"),
             "params": payload.get("params") or {},
@@ -1680,7 +1754,7 @@ async def skills_invoke(payload: dict) -> StreamingResponse:
             "transcript": payload.get("transcript"),
             "confidence": payload.get("confidence"),
             # 使能表态只认服务端跟踪的状态,前端说了不算
-            "assume_enabled": bool(live.arm_enabled),
+            "assume_enabled": arm_enabled,
         }
         _skill_proc = subprocess.Popen(
             _ros_cmd(["src/skills/runner.py", "--once", json.dumps(env)]),
@@ -1926,9 +2000,13 @@ def _combo_start(pack, rel: str) -> tuple[bool, str, int]:
         _combo_pending = {"token": token, "name": pack.name, "path": rel,
                           "frames": len(pack.frames), "duration_ms": pack.duration_ms,
                           "phase": "preparing", "hand_pack": hand_pack}
-    sent = arm.command({"cmd": "combo_prepare", "token": token,
-                        "name": pack.name, "mode": pack.mode, "waypoints": wps})
+    sent = arm.command_wait_combo_prepare(
+        {"cmd": "combo_prepare", "token": token, "name": pack.name,
+         "mode": pack.mode, "waypoints": wps})
     if not sent.get("ok"):
+        # The worker may have accepted prepare just after our timeout.  Always
+        # cancel by token so a late ready event cannot leave CPV armed.
+        arm.command({"cmd": "combo_stop", "token": token})
         with _combo_pending_lock:
             if _combo_pending and _combo_pending.get("token") == token:
                 _combo_pending = None
@@ -1955,14 +2033,14 @@ def _voice_play_combo(rel: str, rec: dict) -> JSONResponse:
 
     ok, msg, code = _combo_start(pack, rel)
     rec["pack_name"] = pack.name
-    _log_invocation({**rec, "result": "done" if ok else "gate_rejected",
+    _log_invocation({**rec, "result": "preparing" if ok else "gate_rejected",
                      "reason": None if ok else msg, "frames": len(pack.frames)})
     if not ok:
         return JSONResponse({"ok": False, "msg": msg}, status_code=code)
     return JSONResponse({"ok": True, "kind": "combo_pack", "name": pack.name,
                          "frames": len(pack.frames),
                          "duration_ms": pack.duration_ms,
-                         "note": "已开始回放;进度看合体页『录制包』栏"})
+                         "note": "机械臂 worker 已接受并开始准备;进度看合体页『录制包』栏"})
 
 
 def _console_sess_view(get_sess):
@@ -2316,10 +2394,10 @@ async def telemetry(ws: WebSocket) -> None:
 async def hand_start(mock: bool = False,
                      lease_id: str | None = Header(default=None,
                                                     alias="X-Hardware-Lease")) -> JSONResponse:
-    """接入灵巧手:打开 /dev/ttyUSB0。3D 由浏览器端 three.js 负责,这里不起渲染进程。
+    """接入灵巧手。真机订阅 ROS2 Driver；mock 使用本地 Console。
 
-    **默认接真手**(mock=False)。ok 反映的是**串口真的打开了**,不是"进程起来了" ——
-    串口打不开时返回 ok=false + 原因,前端据此保持"离线",不能显示成在线。
+    **默认接真手**(mock=False)。ok 反映 Driver 和关节状态都已就绪，不是只表示
+    worker 进程已经启动。
     """
     owner, error = _require_lease("hand", lease_id, acquire=True)
     if error:
@@ -2338,7 +2416,7 @@ async def hand_start(mock: bool = False,
 @app.post("/api/hand/stop")
 async def hand_stop(lease_id: str | None = Header(default=None,
                                                   alias="X-Hardware-Lease")) -> JSONResponse:
-    """断开:console 先复位手到安全张开位,再关串口。"""
+    """断开 Web 会话；真机串口继续由 ROS2 Driver 持有。"""
     _, error = _require_lease("hand", lease_id)
     if error:
         return error
@@ -3752,10 +3830,10 @@ async def hand_telemetry(ws: WebSocket) -> None:
 async def arm_start(mock: bool = True, speed: int = 20,
                     lease_id: str | None = Header(default=None,
                                                    alias="X-Hardware-Lease")) -> JSONResponse:
-    """接入机械臂:打开 can0。3D 由浏览器端 three.js 负责。
+    """接入机械臂。真机订阅 ROS2 Driver；mock 使用本地 Console。
 
     ⚠ **默认 mock=True**(和手页相反)。臂是 7 自由度工业臂,伤害量级不同,
-    要接真机得显式传 mock=false。ok 反映的是 CAN 真的通了且读到关节角。
+    要接真机得显式传 mock=false。ok 反映 Driver 和关节状态都已就绪。
     """
     owner, error = _require_lease("arm", lease_id, acquire=True)
     if error:
@@ -3774,7 +3852,7 @@ async def arm_start(mock: bool = True, speed: int = 20,
 
 
 async def _stop_arm_session(*, home: bool) -> dict:
-    """Optionally return to zero, then always release the CAN session."""
+    """Optionally return to zero, then stop the Web ROS client."""
     arm = _arm
     if arm is None:
         return {
@@ -3831,10 +3909,10 @@ async def _stop_arm_session(*, home: bool) -> dict:
 async def arm_stop(home: bool = False,
                    lease_id: str | None = Header(default=None,
                                                   alias="X-Hardware-Lease")) -> JSONResponse:
-    """断开 CAN；页面离开时可先回全零位，手动断开默认维持原语义。
+    """断开 Web 会话；页面离开时可先回全零位。
 
-    原样把臂交回给原来的控制方(常态是松灵客户端)。想回接入位姿走
-    {cmd:"goto_connect_pose"},那是显式动作。理由见 ARM_DEBUG.md。
+    真机 CAN 继续由 ROS2 Driver 持有。想回接入位姿走
+    {cmd:"goto_connect_pose"}，那是显式动作。
     """
     _, error = _require_lease("arm", lease_id)
     if error:

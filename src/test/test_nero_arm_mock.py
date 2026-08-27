@@ -8,8 +8,11 @@ from nero_arm import (NERO_ARM_LIMITS, NERO_HOME_POSE,
 
 def test_mock_starts_bent_and_away_from_joint_limits():
     arm = NeroArm(mock=True)
+    assert arm.connected is False
     arm.connect()
 
+    assert arm.connected is True
+    assert arm.last_read_ok is True
     assert arm.target == NERO_TRACKING_READY_POSE
     assert arm.target[3] >= math.radians(60.0)
     margins = [
@@ -34,3 +37,15 @@ def test_mock_angles_do_not_move_without_a_command():
 
 def test_home_pose_is_the_straight_zero_pose():
     assert NERO_HOME_POSE == [0.0] * 7
+
+
+def test_mock_disconnect_invalidates_read_health():
+    arm = NeroArm(mock=True)
+    arm.connect()
+    arm.disconnect()
+
+    assert arm.connected is False
+    assert arm.last_read_ok is False
+    assert arm.enabled is False
+    assert arm.read_angles() == NERO_TRACKING_READY_POSE
+    assert arm.last_read_ok is False

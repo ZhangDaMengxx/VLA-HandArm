@@ -637,7 +637,7 @@ body {
   <div class="seg-nav">
     <button class="seg-btn active" data-view="replay" data-i18n="replayTab">回放 Replay</button>
     <button class="seg-btn" data-view="live" data-i18n="liveTab" data-i18n-title="liveTitle"
-      title="臂 + 手 合体控制(走 console 路,不走 ROS bridge)">实时 Live · 合体</button>
+      title="臂 + 手合体控制">实时 Live · 合体</button>
     <button class="seg-btn" data-view="hand" data-i18n="handDebug">灵巧手调试</button>
     <button class="seg-btn" data-view="arm" data-i18n="armDebug">机械臂调试</button>
   </div>
@@ -1130,8 +1130,7 @@ body {
 
 <!-- ===== 合体页(实时 Live):臂 + 手一起 =====
      布局和灵巧手调试页刻意一致:左竖 tab 栏 + 中央 3D + 右侧只读监视。
-     ⚠ 走的是 **console 路**(arm_console 独占 can0 / hand_console 独占 RS485),
-     不走 ROS bridge —— bridge 会抢同一条 CAN 和同一个串口,两条路不能同时在。 -->
+     真机通过 ROS Web worker 访问正式 Hardware Driver；mock 仍使用本地 Console。 -->
 <nav class="tab-rail" id="comboRail" style="display:none;" role="tablist"
      aria-label="合体调试功能">
   <button class="tab-btn" role="tab" data-tab="conn" aria-selected="true"

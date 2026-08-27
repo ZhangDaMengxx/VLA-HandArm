@@ -92,7 +92,13 @@
 
 ## P1 ROS2 与数据
 
-- [ ] 审查独立 ROS2 仓库是否仍有旧灵巧手关节名
+- [x] 为 ROS2 硬件 Driver 增加 arm/hand 独立状态、诊断、读 watchdog 与退避重连（Mock，2026-08-26）
+- [ ] 在 WSL + usbipd 下执行串口/CAN 拔插测试，确认 `FAULT -> READY` 且不自动使能、不重放旧命令
+- [x] 将硬件 Driver 与底层驱动正式迁入 `nero_inspire_ros2` package（Mock，2026-08-26）
+- [x] 将 Web 真机的直接 CAN/串口 Console 路径改为 ROS 客户端（Mock，2026-08-26）
+- [ ] 将 Web hardware lease 与 MCP/Bridge 控制权统一为跨客户端单 owner
+- [x] 保持 MCP Server/X-Token/HTTP 契约不变，为独立 Robot Bridge 增加 ROS2 Backend（Mock，2026-08-26）
+- [x] 审查并清理独立 ROS2 仓库运行脚本中的旧灵巧手关节名（保留旧轨迹导入兼容映射）
 - [ ] 验证 `ros2_control`、JointTrajectoryController 和 RViz2
 - [ ] 完成灵巧手路径碰撞检查，并接入 retargeting 约束
 - [ ] 按确认后的限位重新评估或录制手势包
@@ -154,6 +160,11 @@
   - [x] 将 `lerobot-v3` 提升为 Web/视觉/IK/数据/直接 CAN 与串口的主运行时；新增
     `ros-humble` Python 3.10 薄环境，Web 自动为 rclpy reader/writer/runner 加载 Humble
   - [x] 保持 Web API、WebSocket、13 轴关节顺序与硬件控制类不变；硬件桥模式继续显式选择
+  - [x] Web 真机 hand/arm 会话改为 ROS2 worker，订阅 Driver 状态并通过 Service 下发基础控制，不再直接占用 CAN/串口
+  - [x] 为 Driver 增加 CPV 三段式 Service 并恢复 Web 真机实时跟随（Mock，2026-08-26）
+  - [x] 让 Web 联合包 keyframe 回放复用 CPV Service，并等待 prepare ACK、处理失败与完成清理（Mock，2026-08-26）
+  - [ ] 为 Driver 增加完整轨迹 Action、逐通道手力控与 clear-error 接口
+  - [ ] 将 Web hardware lease 与 MCP/Bridge 控制权统一为跨客户端单 owner
   - 新 3 帧 Capture 的 `meta/data/videos`、真实 task 字段和根级 `environment/` 快照通过官方加载及 `verify_dataset.py --strict-v3`
   - 旧 0.4.4 Ego/RobotDataset 可由 0.6.1 回读，但旧 `tasks.parquet` 仅有匿名索引列，不满足 strict-v3；保留原样，不就地改写
   - 四个 LeRobot 生成入口在 `save_episode()` 后显式 `finalize()`，命令返回前完成 Parquet footer、视频和元数据落盘

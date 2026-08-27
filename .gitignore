@@ -8,6 +8,7 @@
 /third_party/xr-teleoperate/
 /third_party/unitree-sdk2/
 /third_party/OrbbecSDK/
+/third_party/pyorbbecsdk-2-main/
 # 项目维护的上游适配层需要入库。
 !/third_party/overlays/
 *.zip

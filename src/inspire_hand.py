@@ -236,6 +236,7 @@ class InspireHand:
         # mock 目标缓存:按 URDF 下限起(四指=张开)
         self._target_rad = [HAND_LIMITS[n][0] for n in HAND_JOINTS]
         self.last_error: str | None = None
+        self.last_read_ok = False
 
     # ---- 弧度 ⇄ raw(0-1000),逐通道方向 ----
     def rad_to_raw(self, name: str, rad: float) -> int:
@@ -260,7 +261,9 @@ class InspireHand:
 
     # ---- 连接 ----
     def connect(self) -> bool:
+        self.last_read_ok = False
         if self.cfg.mock:
+            self.last_read_ok = True
             return True
         import serial                                  # 只在真机路径 import
         self._sp = serial.Serial(self.cfg.port, self.cfg.baudrate,
@@ -277,6 +280,7 @@ class InspireHand:
         if self.cfg.initialize_runtime:
             self.set_speed(self.cfg.init_speed)
             self.set_force(self.cfg.init_force)
+        self.last_read_ok = True
         return True
 
     def disconnect(self) -> None:
@@ -286,6 +290,7 @@ class InspireHand:
             except Exception:                          # noqa: BLE001
                 pass
         self._sp = None
+        self.last_read_ok = False
 
     @property
     def connected(self) -> bool:
@@ -384,13 +389,16 @@ class InspireHand:
 
     # ---- 弧度接口(bridge / 上层用)----
     def read_angles(self) -> List[float]:
-        """当前 6 驱动关节角(rad,项目顺序)。读失败回退上次目标,不抛 —— bridge 在
-        100Hz 定时器里调它,偶发丢帧不该把节点搞挂。"""
+        """当前 6 驱动关节角(rad,项目顺序)。读失败回退上次目标,不抛 —— Driver 在
+        定时器里调它,偶发丢帧不该把节点搞挂；last_read_ok 负责标记数据是否新鲜。"""
         if self.cfg.mock:
+            self.last_read_ok = True
             return list(self._target_rad)
         vals = self.read_regs("ANGLE_ACT", 12, "6h")
         if vals is None:
+            self.last_read_ok = False
             return list(self._target_rad)
+        self.last_read_ok = True
         # 厂商通道 → 项目顺序(PROJECT_TO_VENDOR 自逆,同一数组即可)
         return [self.raw_to_rad(n, vals[PROJECT_TO_VENDOR[i]])
                 for i, n in enumerate(HAND_JOINTS)]

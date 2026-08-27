@@ -1,6 +1,6 @@
 # 项目状态
 
-**核对日期**：2026-08-25
+**核对日期**：2026-08-26
 **阶段**：Ego Capture、严格 LeRobot v3 与结构 QA 已完成，设备 Source/物理 QA 与真机安全验证待开展
 
 ## 当前结论
@@ -9,13 +9,13 @@
 |------|------|------|
 | 硬件驱动 | 开发中 | 臂/手驱动已具备，仍需系统真机验收 |
 | Web 手部追踪 | 真机主链已通 | 本机能力检测、GPU/CPU/Apple GPU 清单、Legacy 自动降级、21点 retarget、One Euro 滤波和真手驱动已接入 |
-| Web 传输 | 真机验证通过 | 前端单帧在途、后端 latest-target、真实 ACK、停止清理已实现 |
+| Web 传输 | ROS2 控制链 Mock 已验收 | 真机会话不再持有 CAN/串口；基础控制、CPV 跟随、联合包 keyframe 回放、ACK 与失败清理已验证，真机待验 |
 | 合体视频跟随 | Mock 已验收 | 联合锚定、腕姿映射和 7+6 目标已闭环；手与 latest-only IK 异步解耦，真臂未验证 |
 | 相机与标定 | 工具已建/真机待验 | eye-in-hand 交互工具已具备；Orbbec 336 原生 SDK Adapter、设备内参与物理手眼结果待相机到货后验证 |
 | VLA 数据管线 | Capture/严格 v3/结构 QA 已验收 | 全链绑定同一 Capture，坐标和质量口径固化；Python 3.12 + LeRobot 0.6.1、episode sidecar 与 Capture 完整性校验通过，设备 Source 与物理 QA 证据待接入 |
-| MCP/Bridge | 已拆仓 | 现行代码在 `/home/zhang123/ros2_ws/robot-mcp-server` |
-| ROS2 | 待复核 | 独立仓库的关节命名和真机控制仍需验证 |
-| 运行环境 | 主链已统一 | `lerobot-v3` 承接 Web/视觉/IK/数据/直接硬件；ROS Humble 自动分流到 Python 3.10 薄环境 |
+| MCP/Bridge | ROS2 Backend Mock 已验收 | HTTP API、MCP 调用和 X-Token 不变；Bridge 通过有应答 ROS Service 调 Driver，真机待验 |
+| ROS2 | Web/MCP 控制链已接入 | Driver、诊断、重连、Bridge、Web 基础控制、CPV 跟随与 Web 联合包已接通；正式轨迹 Action、统一 owner 和真机拔插仍待完成 |
+| 运行环境 | 主链已统一 | `lerobot-v3` 承接 Web/视觉/IK/数据；ROS Humble 自动分流 Hardware Driver、Web worker 和 Bridge 到 Python 3.10 |
 | 目录与文档 | 已归整 | 源码迁到 `src/`，测试集中到 `src/test/`，第三方资产集中到 `third_party/` |
 
 ## MCP 现行基准
@@ -36,6 +36,27 @@
 内嵌实验快照或 Web 工作台，不应出现在部署能力清单中。
 
 ## 最近完成
+
+### 2026-08-26
+
+- 将脚本型 ROS Bridge 第一阶段收敛为硬件 Driver：arm/hand 独立
+  `DISCONNECTED/CONNECTING/READY/FAULT` 状态、连续读失败 watchdog、指数退避重连、
+  `/nero/driver_state` 与 `/diagnostics` 已实现
+- 增加机械臂使能、复位和急停 Service；真机控制模式不再自动使能，重连后必须人工确认
+- 轨迹 Topic 改用 volatile QoS，避免节点重启或 USB 重连后重放旧运动目标；mock ROS 链路、
+  13 轴 `/joint_states` 和失能 Service 已验证，真机拔插尚未执行
+- 在 `VLA-HandArm-Ros` 增加 `nero_inspire_interfaces` 与正式
+  `nero_inspire_hardware` package，统一当前 13 轴关节命名并完成 colcon 构建/测试
+- 独立 `robot-mcp-server/robot-bridge` 增加 ROS2 Backend；现有 HTTP 路径、MCP 调用和
+  `X-Bridge-Token` 保持不变，mock 下已验证状态、臂手运动、速度/力控、急停拒绝和复位
+- Web `mock=false` hand/arm 会话改为 `ros_web_hardware.py`，订阅
+  `/nero/driver_state`、`/joint_states` 并调用 Driver Service，不再打开串口或 `can0`；
+  隔离 ROS 域验证状态、手速度/力/角度、臂速度/关节目标与失能拒绝，定向回归 `77 passed`
+- 为真机 Web 增加 CPV begin/set-target/end Service，失能、急停、故障、断线和退出均会
+  清理 CPV；Web 联合包 keyframe 回放已复用该 Service，prepare 会等待明确 ACK，Mock
+  端到端验证首帧 approach、逐帧目标和完成退出 CPV；正式轨迹 Action 仍未实现
+- 技能页的在线/使能判断已读取当前 ROS arm/hand session，不再只依赖旧 `_live` 会话状态；
+  Web 与 MCP 的控制 owner 尚未统一，不允许同时发送运动命令
 
 ### 2026-08-25
 

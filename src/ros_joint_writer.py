@@ -23,7 +23,8 @@ import sys
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
+                       QoSReliabilityPolicy)
 from builtin_interfaces.msg import Duration
 from std_msgs.msg import Bool, String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -100,8 +101,10 @@ def _check_force_like(key: str, val) -> str | None:
 class JointWriter(Node):
     def __init__(self) -> None:
         super().__init__("nero_web_joint_writer")
+        # 运动命令不能在 Driver 重启/重连后重放历史值。
         qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
-                         durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+                         reliability=QoSReliabilityPolicy.RELIABLE,
+                         durability=QoSDurabilityPolicy.VOLATILE)
         self.arm_pub = self.create_publisher(
             JointTrajectory, "/arm_controller/joint_trajectory", qos)
         self.hand_pub = self.create_publisher(
